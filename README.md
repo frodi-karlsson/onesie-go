@@ -49,4 +49,4 @@ remain in the onesie command.
 
 Run `make check` for lint and race enabled tests. Run `make tidy` to verify the module files.
 The live suite is available with `make test-integration`. It reads `TYPESAFE_API_KEY`,
-`OPENROUTER_API_KEY` and `BERGET_API_KEY` from the environment or a local `.env` file.
+`OPENROUTER_API_KEY` from the environment or a local `.env` file.
