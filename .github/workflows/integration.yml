@@ -1,0 +1,36 @@
+name: Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run the live suite
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          BERGET_API_KEY: ${{ secrets.BERGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          for name in TYPESAFE_API_KEY OPENROUTER_API_KEY BERGET_API_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Set $name as a repository secret"
+              exit 1
+            fi
+          done
+          make test-integration
