@@ -284,51 +284,6 @@ func TestLiveSystemOne(t *testing.T) {
 			t.Error("the usage carries no cost")
 		}
 	})
-
-	t.Run("should answer all three question types in request order under berget", func(t *testing.T) {
-		t.Parallel()
-
-		result, err := liveBergetClient(t).SystemOne(liveContext(t, time.Minute), onesie.Request{
-			State: urgentState,
-			Questions: onesie.Questions{
-				{ID: "z_urgent", Question: onesie.Noul{Instructions: "Does this message convey urgency?"}},
-				{
-					ID: "a_team",
-					Question: onesie.Choice{
-						Instructions: "Which team should handle this?",
-						Criteria: onesie.Criteria{
-							{Name: "billing", Desc: "Payments, invoicing, payouts, refunds"},
-							{Name: "technical", Desc: "Bugs, outages, integrations"},
-						},
-					},
-				},
-				{
-					ID: "m_frustration",
-					Question: onesie.Score{
-						Instructions: "How frustrated is the customer?",
-						Criteria:     onesie.Levels("Calm", "Frustrated", "Very angry"),
-					},
-				},
-			},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		for _, id := range []string{"z_urgent", "a_team", "m_frustration"} {
-			if _, ok := result.Answers[id]; !ok {
-				t.Errorf("no answer for %s", id)
-			}
-		}
-
-		if result.RequestID == "" {
-			t.Error("the request id is empty, want it from x-request-id")
-		}
-
-		if result.Model == "" {
-			t.Error("the response names no model")
-		}
-	})
 }
 
 func TestLiveListModels(t *testing.T) {
@@ -371,35 +326,6 @@ func TestLiveListModels(t *testing.T) {
 			if model.Name == "" {
 				t.Errorf("a model came back with no name: %+v", model)
 			}
-		}
-	})
-
-	t.Run("should list the system-one models under berget, the default alias among them", func(t *testing.T) {
-		t.Parallel()
-
-		models, err := liveBergetClient(t).ListModels(liveContext(t, 30*time.Second))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(models) == 0 {
-			t.Fatalf("no models came back")
-		}
-
-		found := false
-
-		for _, model := range models {
-			if model.Name == "" {
-				t.Errorf("a model came back with no name: %+v", model)
-			}
-
-			if strings.Contains(model.Description, onesie.BergetDefaultModel) {
-				found = true
-			}
-		}
-
-		if !found {
-			t.Errorf("no model lists the %s alias: %+v", onesie.BergetDefaultModel, models)
 		}
 	})
 }
@@ -505,44 +431,6 @@ func TestLiveErrors(t *testing.T) {
 			t.Errorf("error = %q, want one line naming questions.q.criteria.false", message)
 		}
 	})
-
-	t.Run("should return ErrAuthentication for a malformed key under berget", func(t *testing.T) {
-		t.Parallel()
-
-		_ = bergetKey(t)
-
-		client, err := onesie.New(
-			onesie.WithProvider(onesie.Berget()),
-			onesie.WithAPIKey("sk_ber_definitely-not-a-real-key"),
-			onesie.WithUserAgent("onesie-integration"),
-		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		_, err = client.SystemOne(liveContext(t, 30*time.Second), onesie.Request{
-			State:     "x",
-			Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "Is this a test?"}}},
-		})
-
-		if !errors.Is(err, onesie.ErrAuthentication) {
-			t.Fatalf("error got %v, want ErrAuthentication", err)
-		}
-	})
-
-	t.Run("should return ErrNotFound for jev-latest, which berget does not serve", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := liveBergetClient(t).SystemOne(liveContext(t, 30*time.Second), onesie.Request{
-			State:     "x",
-			Model:     onesie.DefaultModel,
-			Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "Is this a test?"}}},
-		})
-
-		if !errors.Is(err, onesie.ErrNotFound) || !strings.Contains(err.Error(), "Model not found") {
-			t.Fatalf("error got %v, want ErrNotFound saying Model not found", err)
-		}
-	})
 }
 
 func liveClient(t *testing.T, opts ...onesie.Option) *onesie.Client {
@@ -564,21 +452,6 @@ func liveOpenRouterClient(t *testing.T) *onesie.Client {
 	client, err := onesie.New(
 		onesie.WithProvider(onesie.OpenRouter()),
 		onesie.WithAPIKey(openRouterKey(t)),
-		onesie.WithUserAgent("onesie-integration"),
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	return client
-}
-
-func liveBergetClient(t *testing.T) *onesie.Client {
-	t.Helper()
-
-	client, err := onesie.New(
-		onesie.WithProvider(onesie.Berget()),
-		onesie.WithAPIKey(bergetKey(t)),
 		onesie.WithUserAgent("onesie-integration"),
 	)
 	if err != nil {

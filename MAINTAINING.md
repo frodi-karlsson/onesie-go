@@ -8,8 +8,8 @@ live API suite.
 
 ## Repository settings
 
-The scheduled integration workflow reads `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY` and
-`BERGET_API_KEY`. They must be configured as Actions secrets in this repository. The CLI
+The scheduled integration workflow reads `TYPESAFE_API_KEY` and `OPENROUTER_API_KEY`.
+They must be configured as Actions secrets in this repository. The CLI
 repository also uses them, but GitHub does not reveal their values for copying.
 
 The CLI repository also has signing, notarization and Homebrew secrets. This library does not
