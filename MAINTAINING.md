@@ -3,6 +3,7 @@
 ## Development
 
 Run `make check` before pushing. It runs `golangci-lint` and the race enabled unit suite.
+Run `make vuln` to scan the module with `govulncheck`, which CI also runs.
 Run `make tidy` after changing imports or the Go version. Run `make test-integration` for the
 live API suite.
 

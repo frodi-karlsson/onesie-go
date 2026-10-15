@@ -1,4 +1,6 @@
-.PHONY: check test test-integration lint fmt tidy
+GOVULNCHECK_VERSION := v1.8.0
+
+.PHONY: check test test-integration lint fmt tidy vuln
 
 check: ## Run lint and race enabled tests
 	@$(MAKE) --no-print-directory lint
@@ -19,3 +21,6 @@ fmt: ## Format the Go source
 tidy: ## Tidy and verify the module
 	go mod tidy
 	go mod verify
+
+vuln: ## Scan the module for known vulnerabilities
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
