@@ -60,6 +60,11 @@ func TestClientSystemOneURL(t *testing.T) {
 			options: []onesie.Option{onesie.WithProvider(onesie.Berget())},
 			want:    "https://api.berget.ai/v1/systemone",
 		},
+		{
+			name:    "should add the API path to levanto's base URL",
+			options: []onesie.Option{onesie.WithProvider(onesie.Levanto())},
+			want:    "https://sage.levanto.ai/v1/systemone",
+		},
 	}
 
 	for _, tc := range tests {
@@ -334,6 +339,57 @@ func TestNew(t *testing.T) {
 		}
 	})
 
+	t.Run("should read LEVANTO_API_KEY and ignore the TypeSafe env vars under levanto", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+
+		client, err := onesie.New(
+			onesie.WithEnv(mockEnv(map[string]string{
+				onesie.EnvAPIKey:       "sk-typesafe",
+				onesie.EnvBaseURL:      "https://typesafe.example",
+				onesie.EnvDefaultModel: "onesie-1.2.0",
+				"LEVANTO_API_KEY":      "lv_live_test",
+			})),
+			onesie.WithProvider(onesie.Levanto()),
+			onesie.WithHTTPClient(&http.Client{Transport: transport}),
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		req := transport.last()
+		if got := req.Header.Get("Authorization"); got != "Bearer lv_live_test" {
+			t.Errorf("Authorization = %q, want the Levanto key", got)
+		}
+
+		if got := req.URL.String(); got != "https://sage.levanto.ai/v1/systemone" {
+			t.Errorf("url = %s, want the Levanto default", got)
+		}
+
+		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.LevantoDefaultModel+`"`) {
+			t.Errorf("body = %s, want the Levanto default model", transport.lastBody())
+		}
+	})
+
+	t.Run("should name LEVANTO_API_KEY in the no key error under levanto", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-typesafe"})),
+			onesie.WithProvider(onesie.Levanto()))
+		if err == nil {
+			t.Fatalf("expected an error, got none")
+		}
+
+		if !strings.Contains(err.Error(), "LEVANTO_API_KEY") {
+			t.Errorf("error = %q, want it to name LEVANTO_API_KEY", err.Error())
+		}
+	})
+
 	t.Run("should reject a zero provider", func(t *testing.T) {
 		t.Parallel()
 
@@ -437,6 +493,29 @@ func TestClientSystemOne(t *testing.T) {
 
 		if result.RequestID != "c9ee9293" {
 			t.Errorf("request id got %q, want c9ee9293", result.RequestID)
+		}
+	})
+
+	t.Run("should fill the request id from x-request-id under levanto", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Request-Id", "07114a10")
+			w.Header().Set("X-TypeSafe-Request-Id", "req_wrong")
+			_, _ = io.WriteString(w, shortAnswer)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.Levanto()))
+
+		result, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.RequestID != "07114a10" {
+			t.Errorf("request id got %q, want 07114a10", result.RequestID)
 		}
 	})
 
@@ -1413,7 +1492,10 @@ func TestClientVerifyKey(t *testing.T) {
 
 	const (
 		typesafeListing = `{"models":[{"name":"jev-latest","description":"alias","release_date":"2026-08-01"}]}`
-		bergetListing   = `{"object":"list","data":[{"id":"Qwen/Qwen3.5-2B","model_type":"system-one",` +
+		levantoListing  = `{"models":[{"name":"levanto-sage-v1.4","description":"Levanto Sage decision model",` +
+			`"release_date":"2026-10-04"},{"name":"sage-latest","description":"Alias of levanto-sage-v1.4.",` +
+			`"release_date":"2026-10-04"}]}`
+		bergetListing = `{"object":"list","data":[{"id":"Qwen/Qwen3.5-2B","model_type":"system-one",` +
 			`"aliases":["systemone"],"release_date":"2026-09-23"}]}`
 		bergetAnswer = `{"model":"Qwen/Qwen3.5-2B","answers":{"key":{"type":"noul","noul":0.9}},` +
 			`"usage":{"input_tokens":22,"output_tokens":15}}`
@@ -1437,6 +1519,13 @@ func TestClientVerifyKey(t *testing.T) {
 			listing:    typesafeListing,
 			wantPaths:  []string{"GET /v1/models"},
 			wantModels: 1,
+		},
+		{
+			name:       "should only list the models on levanto, whose list needs the key",
+			provider:   onesie.Levanto(),
+			listing:    levantoListing,
+			wantPaths:  []string{"GET /v1/models"},
+			wantModels: 2,
 		},
 		{
 			name:       "should list the models and ask one question on berget, whose list needs no key",
@@ -2046,6 +2135,19 @@ func TestProviderResolveModel(t *testing.T) {
 
 		if got := onesie.Berget().ResolveModel("laya-latest", env); got != "laya-latest" {
 			t.Errorf("ResolveModel = %s, want laya-latest", got)
+		}
+	})
+
+	t.Run("should default to sage-latest and ignore TYPESAFE_DEFAULT_MODEL under levanto", func(t *testing.T) {
+		t.Parallel()
+
+		env := lookupFrom(map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"})
+		if got := onesie.Levanto().ResolveModel("", env); got != "sage-latest" {
+			t.Errorf("ResolveModel = %s, want sage-latest", got)
+		}
+
+		if got := onesie.Levanto().ResolveModel("levanto-sage-v1.4", env); got != "levanto-sage-v1.4" {
+			t.Errorf("ResolveModel = %s, want levanto-sage-v1.4", got)
 		}
 	})
 

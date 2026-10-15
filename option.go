@@ -16,6 +16,9 @@ const (
 	// BergetDefaultModel is the model a Berget request carries when it names none. It is Berget's
 	// alias for its default System One model.
 	BergetDefaultModel = "systemone"
+	// LevantoDefaultModel is the model a Levanto request carries when it names none. It is Levanto's
+	// alias for its newest Sage model.
+	LevantoDefaultModel = "sage-latest"
 	// DefaultAttemptTimeout bounds one HTTP attempt, not the whole call.
 	DefaultAttemptTimeout = 10 * time.Second
 	// DefaultMaxResponseBytes caps how much of a response body is read.
@@ -46,7 +49,7 @@ func WithAPIKey(key string) Option {
 func WithProvider(p Provider) Option {
 	return func(c *Client) error {
 		if p.decodeModels == nil {
-			return &ValidationError{Message: "provider must come from TypeSafe, OpenRouter, Berget or ProviderNamed"}
+			return &ValidationError{Message: "provider must come from TypeSafe, OpenRouter, Berget, Levanto or ProviderNamed"}
 		}
 
 		c.provider = p

@@ -39,6 +39,22 @@ func TestNewAPIError(t *testing.T) {
 			message:  "onesie: 404 Model not found: jev-latest",
 		},
 		{
+			name:   "should read the detail of a Levanto 422 for an unknown model",
+			status: 422,
+			body: `{"detail":[{"loc":["body","model"],"msg":"unknown model 'jev-latest'; GET /v1/models ` +
+				`lists the accepted names (levanto-sage-v1.4, sage-latest)","type":"value_error"}]}`,
+			sentinel: ErrUnprocessableEntity,
+			message: "onesie: 422 model: unknown model 'jev-latest'; GET /v1/models lists the accepted names " +
+				"(levanto-sage-v1.4, sage-latest)",
+		},
+		{
+			name:     "should read the detail of a Levanto 401",
+			status:   401,
+			body:     `{"detail":"API key required. Provide a valid Levanto API key."}`,
+			sentinel: ErrAuthentication,
+			message:  "onesie: 401 API key required. Provide a valid Levanto API key.",
+		},
+		{
 			name:   "should read the nested message of a Berget 401",
 			status: 401,
 			body: `{"error":{"code":"invalid_api_key","message":"Invalid API key format","param":null,` +

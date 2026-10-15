@@ -24,9 +24,10 @@ jobs:
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LEVANTO_API_KEY: ${{ secrets.LEVANTO_API_KEY }}
         run: |
           set -euo pipefail
-          for name in TYPESAFE_API_KEY OPENROUTER_API_KEY; do
+          for name in TYPESAFE_API_KEY OPENROUTER_API_KEY LEVANTO_API_KEY; do
             if [ -z "${!name}" ]; then
               echo "::error::Set $name as a repository secret"
               exit 1

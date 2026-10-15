@@ -20,6 +20,7 @@ func TestProviderNamed(t *testing.T) {
 		{name: "should return typesafe for an empty name", input: "", want: "typesafe"},
 		{name: "should return openrouter for openrouter", input: "openrouter", want: "openrouter"},
 		{name: "should return berget for berget", input: "berget", want: "berget"},
+		{name: "should return levanto for levanto", input: "levanto", want: "levanto"},
 		{name: "should trim the name", input: " openrouter ", want: "openrouter"},
 	}
 
@@ -46,7 +47,7 @@ func TestProviderNamed(t *testing.T) {
 			t.Fatalf("error got %v, want ErrValidation", err)
 		}
 
-		for _, want := range []string{"nope", "typesafe", "openrouter", "berget"} {
+		for _, want := range []string{"nope", "typesafe", "openrouter", "berget", "levanto"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error = %q, want it to name %q", err.Error(), want)
 			}

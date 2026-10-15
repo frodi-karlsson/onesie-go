@@ -38,9 +38,9 @@ fmt.Println(urgent.Noul)
 ```
 
 The client uses the TypeSafe provider by default and reads `TYPESAFE_API_KEY`. Pass
-`onesie.WithAPIKey` for explicit credentials, `onesie.WithProvider` to select OpenRouter or Berget,
-and `onesie.WithHTTPClient` to supply a transport. Requests accept a context so the calling service
-can set its own deadline and cancellation policy.
+`onesie.WithAPIKey` for explicit credentials, `onesie.WithProvider` to select OpenRouter, Berget or
+Levanto, and `onesie.WithHTTPClient` to supply a transport. Requests accept a context so the calling
+service can set its own deadline and cancellation policy.
 
 Use the CLI for streams, question files, shell assertions, caching and calibration. Those workflows
 remain in the onesie command.
@@ -49,4 +49,4 @@ remain in the onesie command.
 
 Run `make check` for lint and race enabled tests. Run `make tidy` to verify the module files.
 The live suite is available with `make test-integration`. It reads `TYPESAFE_API_KEY`,
-`OPENROUTER_API_KEY` from the environment or a local `.env` file.
+`OPENROUTER_API_KEY` and `LEVANTO_API_KEY` from the environment or a local `.env` file.

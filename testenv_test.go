@@ -41,6 +41,22 @@ func openRouterKey(t *testing.T) string {
 	return ""
 }
 
+func levantoKey(t *testing.T) string {
+	t.Helper()
+
+	if key := strings.TrimSpace(os.Getenv("LEVANTO_API_KEY")); key != "" {
+		return key
+	}
+
+	if key := fromDotEnv(t, "LEVANTO_API_KEY"); key != "" {
+		return key
+	}
+
+	t.Skip("no LEVANTO_API_KEY in the environment or .env, skipping the Levanto live cases")
+
+	return ""
+}
+
 func fromDotEnv(t *testing.T, name string) string {
 	t.Helper()
 

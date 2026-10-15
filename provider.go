@@ -16,9 +16,11 @@ func ProviderNamed(name string) (Provider, error) {
 		return OpenRouter(), nil
 	case "berget":
 		return Berget(), nil
+	case "levanto":
+		return Levanto(), nil
 	default:
 		return Provider{}, &ValidationError{
-			Message: "unknown provider " + name + ". Use typesafe, openrouter or berget",
+			Message: "unknown provider " + name + ". Use typesafe, openrouter, berget or levanto",
 		}
 	}
 }
@@ -65,7 +67,21 @@ func Berget() Provider {
 	}
 }
 
-// Provider is a host that serves the System One API. Build one with TypeSafe, OpenRouter or Berget.
+// Levanto serves the same wire protocol with its Sage models, which do not include jev-latest.
+func Levanto() Provider {
+	return Provider{
+		Name:            "levanto",
+		BaseURL:         "https://sage.levanto.ai",
+		EnvAPIKey:       "LEVANTO_API_KEY",
+		defaultModel:    LevantoDefaultModel,
+		requestIDHeader: "X-Request-Id",
+		modelsPath:      "/v1/models",
+		decodeModels:    decodeTypeSafeModels,
+	}
+}
+
+// Provider is a host that serves the System One API. Build one with TypeSafe, OpenRouter, Berget or
+// Levanto.
 // An empty env var name means the provider reads nothing from the environment for that setting.
 type Provider struct {
 	Name            string
