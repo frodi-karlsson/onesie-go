@@ -83,7 +83,7 @@ func isNil(question Question) bool {
 	return value.Kind() == reflect.Pointer && value.IsNil()
 }
 
-// Question is one of Noul, Choice or Score. The interface is closed, because validate is
+// Question is one of Noul, Choice, Score or Box. The interface is closed, because validate is
 // unexported, so no type outside this package can satisfy it.
 type Question interface {
 	json.Marshaler
@@ -187,6 +187,24 @@ func (q Score) validate(name string) error {
 			name, len(q.Criteria),
 		),
 	}
+}
+
+// Box asks where something is in an image and is answered with the edges of a box around it. It
+// needs an image in the request and a model that serves it.
+type Box struct {
+	Instructions any
+}
+
+// MarshalJSON encodes the question in the shape the API expects.
+func (q Box) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Type         string `json:"type"`
+		Instructions any    `json:"instructions"`
+	}{Type: "box", Instructions: q.Instructions})
+}
+
+func (Box) validate(string) error {
+	return nil
 }
 
 func marshalObject(pairs []pair) ([]byte, error) {

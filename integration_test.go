@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -327,6 +328,78 @@ func TestLiveSystemOne(t *testing.T) {
 
 		if result.Model == "" {
 			t.Error("the response names no model")
+		}
+	})
+
+	t.Run("should see the red square and not see one on an empty canvas", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		empty, err := onesie.NewImage(emptyPNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		result, err := liveClient(t).SystemOne(liveContext(t, time.Minute), onesie.Request{
+			State: map[string]any{"square": "image-square", "empty": "image-empty"},
+			Questions: onesie.Questions{
+				{ID: "in_square", Question: onesie.Noul{Instructions: "Is there a red square in `square`?"}},
+				{ID: "in_empty", Question: onesie.Noul{Instructions: "Is there a red square in `empty`?"}},
+			},
+			Assets: onesie.Assets{"image-square": square, "image-empty": empty},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got, _ := result.Noul("in_square"); got == nil || got.Noul < 0.8 {
+			t.Errorf("in_square = %+v, want a clear yes", got)
+		}
+
+		if got, _ := result.Noul("in_empty"); got == nil || got.Noul > 0.2 {
+			t.Errorf("in_empty = %+v, want a clear no", got)
+		}
+	})
+
+	t.Run("should box the red square on jev-preview", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		result, err := liveClient(t).SystemOne(liveContext(t, time.Minute), onesie.Request{
+			State:     map[string]any{"photo": "image-square"},
+			Model:     "jev-preview",
+			Questions: onesie.Questions{{ID: "square", Question: onesie.Box{Instructions: "the red square in `photo`"}}},
+			Assets:    onesie.Assets{"image-square": square},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		got, err := result.Box("square")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// The square's edges are 0.25, 0.25, 0.5 and 0.5. Box is experimental, so the tolerance
+		// starts loose and is meant to tighten once real answers have been seen.
+		const tolerance = 0.05
+
+		want := onesie.Edges{Top: 0.25, Bottom: 0.5, Left: 0.25, Right: 0.5}
+		for name, pair := range map[string][2]float64{
+			"top": {got.Edges.Top, want.Top}, "bottom": {got.Edges.Bottom, want.Bottom},
+			"left": {got.Edges.Left, want.Left}, "right": {got.Edges.Right, want.Right},
+		} {
+			if math.Abs(pair[0]-pair[1]) > tolerance {
+				t.Errorf("%s = %.3f, want %.2f within %.2f. Box: %+v", name, pair[0], pair[1], tolerance, got)
+			}
 		}
 	})
 }

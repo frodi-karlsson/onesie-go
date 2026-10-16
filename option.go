@@ -34,6 +34,10 @@ const (
 	EnvBaseURL = "TYPESAFE_BASE_URL"
 	// EnvDefaultModel names the environment variable overriding the default model.
 	EnvDefaultModel = "TYPESAFE_DEFAULT_MODEL"
+	// HeaderImages turns on images and Box questions. SystemOne sends it on a request that needs it.
+	HeaderImages = "TypeSafe-Danger-Zone-Images"
+	// HeaderLongContext raises the context limits. Send it with WithHeader to opt a client in.
+	HeaderLongContext = "TypeSafe-Danger-Zone-Long-Context"
 )
 
 // WithAPIKey sets the API key, taking precedence over the environment.

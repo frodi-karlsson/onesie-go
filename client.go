@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -152,7 +153,7 @@ func (c *Client) VerifyKey(ctx context.Context, opts ...RequestOption) ([]ModelC
 // SystemOne answers named questions about a state. Every question is evaluated in parallel and in
 // isolation, so batching is cheaper than one call per question.
 func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOption) (*Result, error) {
-	if err := ValidateQuestions(req.Questions); err != nil {
+	if err := ValidateRequest(req); err != nil {
 		return nil, err
 	}
 
@@ -161,9 +162,14 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		model = c.defaultModel
 	}
 
-	body, err := MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions})
+	body, err := MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
 	if err != nil {
 		return nil, err
+	}
+
+	if needsImages(req) {
+		// Cloned, so the caller's slice is never written through.
+		opts = append(slices.Clone(opts), WithRequestHeader(HeaderImages, "true"))
 	}
 
 	result := &Result{}
@@ -192,6 +198,18 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 	return result, nil
 }
 
+func needsImages(req Request) bool {
+	if len(req.Assets) > 0 {
+		return true
+	}
+
+	return slices.ContainsFunc(req.Questions, func(named NamedQuestion) bool {
+		_, isBox := named.Question.(Box)
+
+		return isBox
+	})
+}
+
 // MarshalBody encodes a request exactly as SystemOne sends it. A printed body and a sent body come
 // from this one encoder, which is what makes a printed body safe to replay.
 func MarshalBody(req Request) ([]byte, error) {
@@ -199,7 +217,8 @@ func MarshalBody(req Request) ([]byte, error) {
 		State     any       `json:"state"`
 		Model     string    `json:"model"`
 		Questions Questions `json:"questions"`
-	}{State: req.State, Model: req.Model, Questions: req.Questions})
+		Assets    Assets    `json:"assets,omitempty"`
+	}{State: req.State, Model: req.Model, Questions: req.Questions, Assets: req.Assets})
 }
 
 // MarshalQuestionsBody encodes a request with no state, the body a question only print produces and
@@ -212,10 +231,12 @@ func MarshalQuestionsBody(req Request) ([]byte, error) {
 }
 
 // Request is one evaluation. All questions see the same state and are answered independently.
+// Assets are the images the state and questions reference.
 type Request struct {
 	State     any
 	Questions Questions
 	Model     string
+	Assets    Assets
 }
 
 // SystemOneRaw sends a prepared request body through the SystemOne retry loop and returns the
