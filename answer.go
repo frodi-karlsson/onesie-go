@@ -63,6 +63,21 @@ func (r *Result) Score(name string) (*ScoreAnswer, error) {
 	return typed, nil
 }
 
+// Box returns the named answer, or an AnswerError when it is absent or of another type.
+func (r *Result) Box(name string) (*BoxAnswer, error) {
+	found, err := r.answer(name)
+	if err != nil {
+		return nil, err
+	}
+
+	typed, ok := found.(*BoxAnswer)
+	if !ok {
+		return nil, &AnswerError{Name: name, Want: "box", Got: found.Kind()}
+	}
+
+	return typed, nil
+}
+
 // UnmarshalJSON decodes each answer into its concrete type, dispatching on the wire type field.
 func (r *Result) UnmarshalJSON(data []byte) error {
 	var wire struct {
@@ -125,6 +140,8 @@ func decodeAnswer(raw json.RawMessage) (Answer, error) {
 		decoded = &ChoiceAnswer{}
 	case "score":
 		decoded = &ScoreAnswer{}
+	case "box":
+		decoded = &BoxAnswer{}
 	default:
 		return nil, fmt.Errorf("unknown answer type %q", probe.Type)
 	}
@@ -136,11 +153,11 @@ func decodeAnswer(raw json.RawMessage) (Answer, error) {
 	return decoded, nil
 }
 
-// Answer is one of NoulAnswer, ChoiceAnswer or ScoreAnswer.
+// Answer is one of NoulAnswer, ChoiceAnswer, ScoreAnswer or BoxAnswer.
 type Answer interface {
 	json.Marshaler
 
-	// Kind reports the wire type, one of noul, choice or score.
+	// Kind reports the wire type, one of noul, choice, score or box.
 	Kind() string
 }
 
@@ -221,4 +238,33 @@ func (a *ScoreAnswer) MarshalJSON() ([]byte, error) {
 		Type: "score", Score: a.Score, Confidence: a.Confidence,
 		Legend: a.Legend, Probabilities: a.Probabilities,
 	})
+}
+
+// BoxAnswer is a Box's edges, each a fraction of the image from its top left corner. The edges are
+// not range checked here, so one bad box cannot fail every other answer in its result.
+type BoxAnswer struct {
+	Edges      Edges   `json:"box"`
+	Confidence float64 `json:"confidence"`
+}
+
+// Kind reports the wire type.
+func (*BoxAnswer) Kind() string {
+	return "box"
+}
+
+// MarshalJSON re-emits the wire shape, including the type discriminator.
+func (a *BoxAnswer) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Type       string  `json:"type"`
+		Edges      Edges   `json:"box"`
+		Confidence float64 `json:"confidence"`
+	}{Type: "box", Edges: a.Edges, Confidence: a.Confidence})
+}
+
+// Edges are the sides of a box, as fractions of the image's width and height.
+type Edges struct {
+	Top    float64 `json:"top"`
+	Bottom float64 `json:"bottom"`
+	Left   float64 `json:"left"`
+	Right  float64 `json:"right"`
 }

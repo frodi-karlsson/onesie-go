@@ -228,3 +228,58 @@ func loadSample(t *testing.T) *onesie.Result {
 
 	return &result
 }
+
+func TestResultBox(t *testing.T) {
+	t.Parallel()
+
+	const body = `{"model":"jev-1.14.0","answers":{` +
+		`"mug":{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":0.92},` +
+		`"there":{"type":"noul","noul":0.9}},"usage":{}}`
+
+	var result onesie.Result
+	if err := json.Unmarshal([]byte(body), &result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	t.Run("should decode a box answer", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := result.Box("mug")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := onesie.BoxAnswer{
+			Edges:      onesie.Edges{Top: 0.25, Bottom: 0.82, Left: 0.44, Right: 0.84},
+			Confidence: 0.92,
+		}
+		if *got != want {
+			t.Errorf("box = %+v, want %+v", *got, want)
+		}
+	})
+
+	t.Run("should refuse a noul read as a box", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := result.Box("there")
+
+		var answerErr *onesie.AnswerError
+		if !errors.As(err, &answerErr) || answerErr.Want != "box" || answerErr.Got != "noul" {
+			t.Fatalf("error = %v, want an AnswerError wanting box and getting noul", err)
+		}
+	})
+
+	t.Run("should marshal back to the wire shape with its type", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := json.Marshal(result.Answers["mug"])
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := `{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":0.92}`
+		if string(got) != want {
+			t.Errorf("json = %s, want %s", got, want)
+		}
+	})
+}

@@ -50,6 +50,11 @@ func TestQuestionMarshalJSON(t *testing.T) {
 			want: `{"type":"score","instructions":"How severe?","criteria":["Cosmetic","Degraded","Blocking"]}`,
 		},
 		{
+			name:     "should marshal a box with only its instructions",
+			question: onesie.Box{Instructions: "the coffee mug in `photo`"},
+			want:     `{"type":"box","instructions":"the coffee mug in ` + "`photo`" + `"}`,
+		},
+		{
 			name:     "should marshal structured instructions",
 			question: onesie.Noul{Instructions: map[string]any{"question": "Same person?"}},
 			want:     `{"type":"noul","instructions":{"question":"Same person?"}}`,
