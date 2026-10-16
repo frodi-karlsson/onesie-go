@@ -42,6 +42,12 @@ The client uses the TypeSafe provider by default and reads `TYPESAFE_API_KEY`. P
 Levanto, and `onesie.WithHTTPClient` to supply a transport. Requests accept a context so the calling
 service can set its own deadline and cancellation policy.
 
+Images and Box questions are experimental on TypeSafe's side. Put an `onesie.Image` from
+`onesie.NewImage` in `Request.Assets` under a reference, and write the reference where the image
+belongs, usually as a state value. `SystemOne` checks the request with `ValidateRequest` and sends
+the images header itself. Pass `onesie.WithHeader(onesie.HeaderLongContext, "true")` to opt a
+client into long context.
+
 Use the CLI for streams, question files, shell assertions, caching and calibration. Those workflows
 remain in the onesie command.
 
