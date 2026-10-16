@@ -1952,6 +1952,30 @@ func TestMarshalBody(t *testing.T) {
 				`{"a":{"type":"noul","instructions":"q"}}}`,
 		},
 		{
+			name: "should write assets after the questions",
+			req: onesie.Request{
+				State: map[string]any{"photo": "image-1"},
+				Model: "m",
+				Questions: onesie.Questions{
+					{ID: "q", Question: onesie.Noul{Instructions: "a dog in `photo`"}},
+				},
+				Assets: onesie.Assets{"image-1": {Format: "png", Data: []byte{1}}},
+			},
+			want: `{"state":{"photo":"image-1"},"model":"m","questions":` +
+				`{"q":{"type":"noul","instructions":"a dog in ` + "`photo`" + `"}},` +
+				`"assets":{"image-1":{"type":"image","format":"png","data_base64":"AQ=="}}}`,
+		},
+		{
+			name: "should leave out an empty assets map",
+			req: onesie.Request{
+				State:     "s",
+				Model:     "m",
+				Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "q"}}},
+				Assets:    onesie.Assets{},
+			},
+			want: `{"state":"s","model":"m","questions":{"q":{"type":"noul","instructions":"q"}}}`,
+		},
+		{
 			name: "should keep the questions in slice order",
 			req: onesie.Request{
 				State: "s",

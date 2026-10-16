@@ -199,7 +199,8 @@ func MarshalBody(req Request) ([]byte, error) {
 		State     any       `json:"state"`
 		Model     string    `json:"model"`
 		Questions Questions `json:"questions"`
-	}{State: req.State, Model: req.Model, Questions: req.Questions})
+		Assets    Assets    `json:"assets,omitempty"`
+	}{State: req.State, Model: req.Model, Questions: req.Questions, Assets: req.Assets})
 }
 
 // MarshalQuestionsBody encodes a request with no state, the body a question only print produces and
@@ -212,10 +213,12 @@ func MarshalQuestionsBody(req Request) ([]byte, error) {
 }
 
 // Request is one evaluation. All questions see the same state and are answered independently.
+// Assets are the images the state and questions reference.
 type Request struct {
 	State     any
 	Questions Questions
 	Model     string
+	Assets    Assets
 }
 
 // SystemOneRaw sends a prepared request body through the SystemOne retry loop and returns the
