@@ -39,6 +39,12 @@ func emptyPNG(t *testing.T) []byte {
 	return encodePNG(t, canvas(canvasWidth, canvasHeight, image.Rectangle{}))
 }
 
+func sizedPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+
+	return encodePNG(t, canvas(width, height, image.Rectangle{}))
+}
+
 func encodePNG(t *testing.T, img image.Image) []byte {
 	t.Helper()
 
