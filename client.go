@@ -153,6 +153,15 @@ func (c *Client) VerifyKey(ctx context.Context, opts ...RequestOption) ([]ModelC
 // SystemOne answers named questions about a state. Every question is evaluated in parallel and in
 // isolation, so batching is cheaper than one call per question.
 func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOption) (*Result, error) {
+	images := requestCarriesImages(req)
+
+	// Before ValidateRequest, so a provider that reads no images is not asked to shrink one.
+	if images {
+		if err := c.provider.CheckImages(); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := ValidateRequest(req); err != nil {
 		return nil, err
 	}
@@ -167,9 +176,11 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	if needsImages(req) {
-		// Cloned, so the caller's slice is never written through.
-		opts = append(slices.Clone(opts), WithRequestHeader(HeaderImages, "true"))
+	if images {
+		body, opts, err = c.withImages(body, opts)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	result := &Result{}
@@ -196,18 +207,6 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 	}
 
 	return result, nil
-}
-
-func needsImages(req Request) bool {
-	if len(req.Assets) > 0 {
-		return true
-	}
-
-	return slices.ContainsFunc(req.Questions, func(named NamedQuestion) bool {
-		_, isBox := named.Question.(Box)
-
-		return isBox
-	})
 }
 
 // MarshalBody encodes a request exactly as SystemOne sends it. A printed body and a sent body come
@@ -246,12 +245,35 @@ func (c *Client) SystemOneRaw(
 	body json.RawMessage,
 	opts ...RequestOption,
 ) (json.RawMessage, error) {
+	if bodyCarriesImages(body) {
+		if err := c.provider.CheckImages(); err != nil {
+			return nil, err
+		}
+
+		sent, imageOpts, err := c.withImages(body, opts)
+		if err != nil {
+			return nil, err
+		}
+
+		body, opts = sent, imageOpts
+	}
+
 	res, err := c.do(ctx, http.MethodPost, systemOnePath, body, nil, opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return res.body, nil
+}
+
+func (c *Client) withImages(body []byte, opts []RequestOption) ([]byte, []RequestOption, error) {
+	sent, extra, err := c.provider.imageSender()(body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Cloned, so the caller's slice is never written through.
+	return sent, append(slices.Clone(opts), extra...), nil
 }
 
 // ListModels reports the model names this account may send.
