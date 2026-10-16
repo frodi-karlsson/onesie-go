@@ -402,6 +402,80 @@ func TestLiveSystemOne(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("should see the red square through openrouter's inline parts", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		empty, err := onesie.NewImage(emptyPNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		req := onesie.Request{
+			State: map[string]any{"square": "image-square", "empty": "image-empty"},
+			Model: "typesafe/jev-1.14",
+			Questions: onesie.Questions{
+				{ID: "in_square", Question: onesie.Noul{Instructions: "Is there a red square in `square`?"}},
+				{ID: "in_empty", Question: onesie.Noul{Instructions: "Is there a red square in `empty`?"}},
+				{ID: "box", Question: onesie.Box{Instructions: "the red square in `square`"}},
+			},
+			Assets: onesie.Assets{"image-square": square, "image-empty": empty},
+		}
+
+		client := liveOpenRouterClient(t)
+
+		result, err := client.SystemOne(liveContext(t, time.Minute), req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got, _ := result.Noul("in_square"); got == nil || got.Noul < 0.8 {
+			t.Errorf("in_square = %+v, want a clear yes", got)
+		}
+
+		if got, _ := result.Noul("in_empty"); got == nil || got.Noul > 0.2 {
+			t.Errorf("in_empty = %+v, want a clear no", got)
+		}
+
+		box, err := result.Box("box")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := onesie.Edges{Top: 0.25, Bottom: 0.5, Left: 0.25, Right: 0.5}
+		for name, pair := range map[string][2]float64{
+			"top": {box.Edges.Top, want.Top}, "bottom": {box.Edges.Bottom, want.Bottom},
+			"left": {box.Edges.Left, want.Left}, "right": {box.Edges.Right, want.Right},
+		} {
+			if math.Abs(pair[0]-pair[1]) > 0.05 {
+				t.Errorf("%s = %.3f, want %.2f within 0.05. Box: %+v", name, pair[0], pair[1], box)
+			}
+		}
+
+		body, err := onesie.MarshalBody(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		raw, err := client.SystemOneRaw(liveContext(t, time.Minute), body)
+		if err != nil {
+			t.Fatalf("raw: unexpected error: %v", err)
+		}
+
+		var replayed onesie.Result
+		if err := json.Unmarshal(raw, &replayed); err != nil {
+			t.Fatalf("decoding the raw answer: %v", err)
+		}
+
+		if got, _ := replayed.Noul("in_square"); got == nil || got.Noul < 0.8 {
+			t.Errorf("raw in_square = %+v, want a clear yes", got)
+		}
+	})
 }
 
 func TestLiveListModels(t *testing.T) {
