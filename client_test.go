@@ -1354,6 +1354,69 @@ func TestClientSystemOne(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("should send assets and the images header", func(t *testing.T) {
+		t.Parallel()
+
+		img, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err = client.SystemOne(t.Context(), onesie.Request{
+			State:     map[string]any{"photo": "image-a"},
+			Questions: oneNoul(),
+			Assets:    onesie.Assets{"image-a": img},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := transport.last().Header.Get(onesie.HeaderImages); got != "true" {
+			t.Errorf("%s = %q, want true", onesie.HeaderImages, got)
+		}
+
+		if !strings.Contains(transport.lastBody(), `"assets":{"image-a":{"type":"image","format":"png"`) {
+			t.Errorf("body = %.200s, want the asset", transport.lastBody())
+		}
+	})
+
+	t.Run("should send no images header without assets", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		if _, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := transport.last().Header.Get(onesie.HeaderImages); got != "" {
+			t.Errorf("%s = %q, want it absent", onesie.HeaderImages, got)
+		}
+	})
+
+	t.Run("should refuse a box without an image before any request", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err := client.SystemOne(t.Context(), onesie.Request{
+			State:     "s",
+			Questions: onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug"}}},
+		})
+		if !errors.Is(err, onesie.ErrValidation) {
+			t.Fatalf("error = %v, want ErrValidation", err)
+		}
+
+		if len(transport.requests) != 0 {
+			t.Errorf("requests = %d, want none", len(transport.requests))
+		}
+	})
 }
 
 func TestClientListModels(t *testing.T) {
