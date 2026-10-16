@@ -254,25 +254,39 @@ func (c *Client) SystemOneRaw(
 	body json.RawMessage,
 	opts ...RequestOption,
 ) (json.RawMessage, error) {
-	if bodyCarriesImages(body) {
-		if err := c.provider.CheckImages(); err != nil {
-			return nil, err
-		}
-
-		sent, imageOpts, err := c.withImages(body, opts)
-		if err != nil {
-			return nil, err
-		}
-
-		body, opts = sent, imageOpts
+	prepared, sendOpts, err := c.prepareRaw(body, opts)
+	if err != nil {
+		return nil, err
 	}
 
-	res, err := c.do(ctx, http.MethodPost, systemOnePath, body, nil, opts...)
+	res, err := c.do(ctx, http.MethodPost, systemOnePath, prepared, nil, sendOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return res.body, nil
+}
+
+func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (json.RawMessage, []RequestOption, error) {
+	trimmed, longContext, err := takeLongContext(body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if longContext {
+		// Cloned, so the caller's slice is never written through.
+		opts = append(slices.Clone(opts), WithLongContext())
+	}
+
+	if !bodyCarriesImages(trimmed) {
+		return trimmed, opts, nil
+	}
+
+	if refusal := c.provider.CheckImages(); refusal != nil {
+		return nil, nil, refusal
+	}
+
+	return c.withImages(trimmed, opts)
 }
 
 func (c *Client) withImages(body []byte, opts []RequestOption) ([]byte, []RequestOption, error) {

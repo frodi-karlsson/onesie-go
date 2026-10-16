@@ -2151,6 +2151,68 @@ func TestClientSystemOneRaw(t *testing.T) {
 			}
 		})
 	}
+
+	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter()} {
+		t.Run("should send a raw body's long_context as the header on "+provider.Name, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example",
+				onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			body := json.RawMessage(`{"state":"s","model":"m","long_context":true,"questions":{}}`)
+			if _, err := client.SystemOneRaw(t.Context(), body); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := transport.lastBody(); got != `{"state":"s","model":"m","questions":{}}` {
+				t.Errorf("body = %s, want it without long_context", got)
+			}
+
+			if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "true" {
+				t.Errorf("%s = %q, want true", onesie.HeaderLongContext, got)
+			}
+		})
+	}
+
+	t.Run("should not write long context through the caller's options", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		opts := make([]onesie.RequestOption, 0, 4)
+
+		if _, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","long_context":true}`), opts...); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s"}`), opts...); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "" {
+			t.Errorf("%s = %q on the second call, want it absent", onesie.HeaderLongContext, got)
+		}
+	})
+
+	t.Run("should refuse a bad long_context before the provider's image refusal", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example",
+			onesie.WithProvider(onesie.Levanto()), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(
+			`{"state":"r","questions":{},"long_context":"yes","assets":{"r":{"format":"png","data_base64":"AQ=="}}}`))
+		if err == nil || !strings.Contains(err.Error(), "long_context must be true or false") {
+			t.Fatalf("error = %v, want the long_context refusal", err)
+		}
+
+		if len(transport.requests) != 0 {
+			t.Errorf("requests = %d, want none", len(transport.requests))
+		}
+	})
 }
 
 func newTestClient(t *testing.T, url string, opts ...onesie.Option) (*onesie.Client, *mockClock) {
