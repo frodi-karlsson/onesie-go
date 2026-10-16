@@ -50,6 +50,7 @@ func OpenRouter() Provider {
 		requestIDHeader: "X-Generation-Id",
 		modelsPath:      "/v1/models?output_modalities=decisions",
 		decodeModels:    decodeOpenRouterModels,
+		sendImages:      inlineParts,
 	}
 }
 
@@ -63,6 +64,7 @@ func Berget() Provider {
 		requestIDHeader:    "X-Request-Id",
 		modelsPath:         "/v1/models/",
 		decodeModels:       decodeBergetModels,
+		noImages:           true,
 		modelsAnswerAnyKey: true,
 	}
 }
@@ -77,6 +79,7 @@ func Levanto() Provider {
 		requestIDHeader: "X-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
+		noImages:        true,
 	}
 }
 
@@ -94,6 +97,8 @@ type Provider struct {
 	requestIDHeader string
 	modelsPath      string
 	decodeModels    func([]byte) ([]ModelCard, error)
+	sendImages      func(body []byte) ([]byte, []RequestOption, error)
+	noImages        bool
 
 	modelsAnswerAnyKey bool
 }
