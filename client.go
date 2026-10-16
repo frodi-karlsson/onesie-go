@@ -176,6 +176,11 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
+	if req.LongContext {
+		// Cloned, so the caller's slice is never written through.
+		opts = append(slices.Clone(opts), WithLongContext())
+	}
+
 	if images {
 		body, opts, err = c.withImages(body, opts)
 		if err != nil {
@@ -213,29 +218,33 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 // from this one encoder, which is what makes a printed body safe to replay.
 func MarshalBody(req Request) ([]byte, error) {
 	return json.Marshal(struct {
-		State     any       `json:"state"`
-		Model     string    `json:"model"`
-		Questions Questions `json:"questions"`
-		Assets    Assets    `json:"assets,omitempty"`
-	}{State: req.State, Model: req.Model, Questions: req.Questions, Assets: req.Assets})
+		State       any       `json:"state"`
+		Model       string    `json:"model"`
+		Questions   Questions `json:"questions"`
+		LongContext bool      `json:"long_context,omitempty"`
+		Assets      Assets    `json:"assets,omitempty"`
+	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
 }
 
 // MarshalQuestionsBody encodes a request with no state, the body a question only print produces and
 // -f accepts. It is a second encoder because a null or empty state is legitimate.
 func MarshalQuestionsBody(req Request) ([]byte, error) {
 	return json.Marshal(struct {
-		Model     string    `json:"model"`
-		Questions Questions `json:"questions"`
-	}{Model: req.Model, Questions: req.Questions})
+		Model       string    `json:"model"`
+		Questions   Questions `json:"questions"`
+		LongContext bool      `json:"long_context,omitempty"`
+	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext})
 }
 
 // Request is one evaluation. All questions see the same state and are answered independently.
-// Assets are the images the state and questions reference.
+// Assets are the images the state and questions reference. LongContext raises the context limits
+// on a provider that has them.
 type Request struct {
-	State     any
-	Questions Questions
-	Model     string
-	Assets    Assets
+	State       any
+	Questions   Questions
+	Model       string
+	Assets      Assets
+	LongContext bool
 }
 
 // SystemOneRaw sends a prepared request body through the SystemOne retry loop and returns the

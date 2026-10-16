@@ -1505,6 +1505,69 @@ func TestClientSystemOne(t *testing.T) {
 			t.Error("SystemOne wrote into the caller's spare capacity")
 		}
 	})
+
+	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Levanto(), onesie.Berget()} {
+		t.Run("should send long context as the header and never the key on "+provider.Name, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example",
+				onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			if _, err := client.SystemOne(t.Context(), onesie.Request{
+				State: "s", Questions: oneNoul(), LongContext: true,
+			}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "true" {
+				t.Errorf("%s = %q, want true", onesie.HeaderLongContext, got)
+			}
+
+			if body := transport.lastBody(); strings.Contains(body, "long_context") {
+				t.Errorf("body = %s, want no long_context", body)
+			}
+		})
+	}
+
+	t.Run("should not write long context through the caller's options in SystemOne", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		opts := make([]onesie.RequestOption, 0, 4)
+
+		if _, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul(), LongContext: true}, opts...); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()}, opts...); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "" {
+			t.Errorf("%s = %q on the second call, want it absent", onesie.HeaderLongContext, got)
+		}
+	})
+
+	t.Run("should send one long context header beside a client wide one", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example",
+			onesie.WithHeader(onesie.HeaderLongContext, "true"),
+			onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		if _, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()},
+			onesie.WithLongContext()); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := transport.last().Header.Values(onesie.HeaderLongContext); len(got) != 1 {
+			t.Errorf("%s = %v, want one value", onesie.HeaderLongContext, got)
+		}
+	})
 }
 
 func TestClientListModels(t *testing.T) {
@@ -2203,6 +2266,14 @@ func TestMarshalBody(t *testing.T) {
 			want: `{"state":"s","model":"m","questions":{"q":{"type":"noul","instructions":"q"}}}`,
 		},
 		{
+			name: "should write long_context after the questions when it is on",
+			req: onesie.Request{
+				State: "s", Model: "m", LongContext: true,
+				Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "q"}}},
+			},
+			want: `{"state":"s","model":"m","questions":{"q":{"type":"noul","instructions":"q"}},"long_context":true}`,
+		},
+		{
 			name: "should keep the questions in slice order",
 			req: onesie.Request{
 				State: "s",
@@ -2242,6 +2313,14 @@ func TestMarshalQuestionsBody(t *testing.T) {
 		req  onesie.Request
 		want string
 	}{
+		{
+			name: "should write long_context when it is on",
+			req: onesie.Request{
+				Model: "m", LongContext: true,
+				Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "q"}}},
+			},
+			want: `{"model":"m","questions":{"q":{"type":"noul","instructions":"q"}},"long_context":true}`,
+		},
 		{
 			name: "should omit the state entirely",
 			req: onesie.Request{
