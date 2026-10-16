@@ -48,6 +48,9 @@ belongs, usually as a state value. `SystemOne` checks the request with `Validate
 the images header itself. Pass `onesie.WithHeader(onesie.HeaderLongContext, "true")` to opt a
 client into long context.
 
+Each provider gets images the way it reads them: TypeSafe as the assets map, OpenRouter as inline
+image parts, and Levanto and Berget refuse them, as `Provider.CheckImages` reports.
+
 Use the CLI for streams, question files, shell assertions, caching and calibration. Those workflows
 remain in the onesie command.
 

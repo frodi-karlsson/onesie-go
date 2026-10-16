@@ -1417,6 +1417,94 @@ func TestClientSystemOne(t *testing.T) {
 			t.Errorf("requests = %d, want none", len(transport.requests))
 		}
 	})
+
+	t.Run("should send inline parts and no assets or images header to openrouter", func(t *testing.T) {
+		t.Parallel()
+
+		img, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example",
+			onesie.WithProvider(onesie.OpenRouter()), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err = client.SystemOne(t.Context(), onesie.Request{
+			State:     map[string]any{"photo": "image-a"},
+			Questions: oneNoul(),
+			Assets:    onesie.Assets{"image-a": img},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		body := transport.lastBody()
+		if !strings.Contains(body, `"state":{"photo":{"type":"image_url","image_url":{"url":"data:image/png;base64,`) {
+			t.Errorf("body = %.200s, want the image as an inline part", body)
+		}
+
+		if strings.Contains(body, `"assets"`) {
+			t.Errorf("body = %.200s, want no assets", body)
+		}
+
+		if got := transport.last().Header.Get(onesie.HeaderImages); got != "" {
+			t.Errorf("%s = %q, want it absent", onesie.HeaderImages, got)
+		}
+	})
+
+	for _, provider := range []onesie.Provider{onesie.Levanto(), onesie.Berget()} {
+		t.Run("should refuse images and a box on "+provider.Name+" before any request", func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example",
+				onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			// Too small for the API, so the refusal has to come before ValidateRequest's own.
+			small := onesie.Image{Format: "png", Data: []byte{1}}
+
+			for _, req := range []onesie.Request{
+				{State: map[string]any{"photo": "image-a"}, Questions: oneNoul(), Assets: onesie.Assets{"image-a": small}},
+				{State: "s", Questions: onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug"}}}},
+			} {
+				_, err := client.SystemOne(t.Context(), req)
+				if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), "takes no images or box questions") {
+					t.Errorf("error = %v, want the provider's refusal", err)
+				}
+			}
+
+			if len(transport.requests) != 0 {
+				t.Errorf("requests = %d, want none", len(transport.requests))
+			}
+		})
+	}
+
+	t.Run("should not write through the caller's options", func(t *testing.T) {
+		t.Parallel()
+
+		img, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		opts := make([]onesie.RequestOption, 1, 4)
+		opts[0] = onesie.WithRequestHeader("X-Caller", "1")
+
+		_, err = client.SystemOne(t.Context(), onesie.Request{
+			State: map[string]any{"photo": "image-a"}, Questions: oneNoul(), Assets: onesie.Assets{"image-a": img},
+		}, opts...)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if spare := opts[:cap(opts)][1]; spare != nil {
+			t.Error("SystemOne wrote into the caller's spare capacity")
+		}
+	})
 }
 
 func TestClientListModels(t *testing.T) {
@@ -1921,6 +2009,82 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 			if string(got) != tc.response {
 				t.Errorf("returned body = %s, want %s", got, tc.response)
+			}
+		})
+	}
+
+	withAssets := json.RawMessage(`{"state":{"photo":"r"},"model":"m","questions":{"q":{"type":"noul",` +
+		`"instructions":"q"}},"assets":{"r":{"type":"image","format":"png","data_base64":"AQ=="}}}`)
+
+	t.Run("should send a raw body's assets and the images header to typesafe", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		if _, err := client.SystemOneRaw(t.Context(), withAssets); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := transport.lastBody(); got != string(withAssets) {
+			t.Errorf("body = %s, want it as sent", got)
+		}
+
+		if got := transport.last().Header.Get(onesie.HeaderImages); got != "true" {
+			t.Errorf("%s = %q, want true", onesie.HeaderImages, got)
+		}
+	})
+
+	t.Run("should rewrite a raw body into inline parts for openrouter", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example",
+			onesie.WithProvider(onesie.OpenRouter()), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		if _, err := client.SystemOneRaw(t.Context(), withAssets); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := `{"state":{"photo":{"type":"image_url","image_url":{"url":"data:image/png;base64,AQ=="}}},` +
+			`"model":"m","questions":{"q":{"type":"noul","instructions":"q"}}}`
+		if got := transport.lastBody(); got != want {
+			t.Errorf("body\ngot  %s\nwant %s", got, want)
+		}
+	})
+
+	t.Run("should refuse a raw body with images on levanto before any request", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example",
+			onesie.WithProvider(onesie.Levanto()), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err := client.SystemOneRaw(t.Context(), withAssets)
+		if !errors.Is(err, onesie.ErrValidation) {
+			t.Fatalf("error = %v, want ErrValidation", err)
+		}
+
+		if len(transport.requests) != 0 {
+			t.Errorf("requests = %d, want none", len(transport.requests))
+		}
+	})
+
+	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Levanto(), onesie.Berget()} {
+		t.Run("should send a raw text body as it is on "+provider.Name, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example",
+				onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			body := json.RawMessage(`{"state":"a < b","model":"m","questions":{},"assets":{}}`)
+			if _, err := client.SystemOneRaw(t.Context(), body); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := transport.lastBody(); got != string(body) {
+				t.Errorf("body = %s, want it as sent", got)
 			}
 		})
 	}
