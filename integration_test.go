@@ -476,6 +476,30 @@ func TestLiveSystemOne(t *testing.T) {
 			t.Errorf("raw in_square = %+v, want a clear yes", got)
 		}
 	})
+
+	t.Run("should accept long context in the request and in a raw body", func(t *testing.T) {
+		t.Parallel()
+
+		client := liveClient(t)
+		req := onesie.Request{State: urgentState, Questions: onesie.Questions{
+			{ID: "urgent", Question: onesie.Noul{Instructions: "Is this urgent?"}},
+		}, LongContext: true}
+
+		if _, err := client.SystemOne(liveContext(t, time.Minute), req); err != nil {
+			t.Fatalf("SystemOne: unexpected error: %v", err)
+		}
+
+		body, err := onesie.MarshalBody(onesie.Request{
+			State: urgentState, Model: "jev-latest", Questions: req.Questions, LongContext: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := client.SystemOneRaw(liveContext(t, time.Minute), body); err != nil {
+			t.Fatalf("SystemOneRaw: unexpected error: %v", err)
+		}
+	})
 }
 
 func TestLiveListModels(t *testing.T) {

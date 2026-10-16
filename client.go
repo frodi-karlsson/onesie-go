@@ -176,6 +176,11 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
+	if req.LongContext {
+		// Cloned, so the caller's slice is never written through.
+		opts = append(slices.Clone(opts), WithLongContext())
+	}
+
 	if images {
 		body, opts, err = c.withImages(body, opts)
 		if err != nil {
@@ -213,29 +218,33 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 // from this one encoder, which is what makes a printed body safe to replay.
 func MarshalBody(req Request) ([]byte, error) {
 	return json.Marshal(struct {
-		State     any       `json:"state"`
-		Model     string    `json:"model"`
-		Questions Questions `json:"questions"`
-		Assets    Assets    `json:"assets,omitempty"`
-	}{State: req.State, Model: req.Model, Questions: req.Questions, Assets: req.Assets})
+		State       any       `json:"state"`
+		Model       string    `json:"model"`
+		Questions   Questions `json:"questions"`
+		LongContext bool      `json:"long_context,omitempty"`
+		Assets      Assets    `json:"assets,omitempty"`
+	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
 }
 
 // MarshalQuestionsBody encodes a request with no state, the body a question only print produces and
 // -f accepts. It is a second encoder because a null or empty state is legitimate.
 func MarshalQuestionsBody(req Request) ([]byte, error) {
 	return json.Marshal(struct {
-		Model     string    `json:"model"`
-		Questions Questions `json:"questions"`
-	}{Model: req.Model, Questions: req.Questions})
+		Model       string    `json:"model"`
+		Questions   Questions `json:"questions"`
+		LongContext bool      `json:"long_context,omitempty"`
+	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext})
 }
 
 // Request is one evaluation. All questions see the same state and are answered independently.
-// Assets are the images the state and questions reference.
+// Assets are the images the state and questions reference. LongContext raises the context limits
+// on a provider that has them.
 type Request struct {
-	State     any
-	Questions Questions
-	Model     string
-	Assets    Assets
+	State       any
+	Questions   Questions
+	Model       string
+	Assets      Assets
+	LongContext bool
 }
 
 // SystemOneRaw sends a prepared request body through the SystemOne retry loop and returns the
@@ -245,25 +254,43 @@ func (c *Client) SystemOneRaw(
 	body json.RawMessage,
 	opts ...RequestOption,
 ) (json.RawMessage, error) {
-	if bodyCarriesImages(body) {
-		if err := c.provider.CheckImages(); err != nil {
-			return nil, err
-		}
-
-		sent, imageOpts, err := c.withImages(body, opts)
-		if err != nil {
-			return nil, err
-		}
-
-		body, opts = sent, imageOpts
+	prepared, sendOpts, err := c.prepareRaw(body, opts)
+	if err != nil {
+		return nil, err
 	}
 
-	res, err := c.do(ctx, http.MethodPost, systemOnePath, body, nil, opts...)
+	res, err := c.do(ctx, http.MethodPost, systemOnePath, prepared, nil, sendOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return res.body, nil
+}
+
+func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (json.RawMessage, []RequestOption, error) {
+	trimmed, longContext, err := takeLongContext(body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if longContext {
+		// Cloned, so the caller's slice is never written through.
+		opts = append(slices.Clone(opts), WithLongContext())
+	}
+
+	if !bodyCarriesImages(trimmed) {
+		return trimmed, opts, nil
+	}
+
+	if refusal := c.provider.CheckImages(); refusal != nil {
+		return nil, nil, refusal
+	}
+
+	if fault := checkBodyImages(trimmed); fault != nil {
+		return nil, nil, fault
+	}
+
+	return c.withImages(trimmed, opts)
 }
 
 func (c *Client) withImages(body []byte, opts []RequestOption) ([]byte, []RequestOption, error) {

@@ -36,7 +36,8 @@ const (
 	EnvDefaultModel = "TYPESAFE_DEFAULT_MODEL"
 	// HeaderImages turns on images and Box questions. SystemOne sends it on a request that needs it.
 	HeaderImages = "TypeSafe-Danger-Zone-Images"
-	// HeaderLongContext raises the context limits. Send it with WithHeader to opt a client in.
+	// HeaderLongContext raises the context limits. Set Request.LongContext or pass WithLongContext
+	// rather than sending it by hand.
 	HeaderLongContext = "TypeSafe-Danger-Zone-Long-Context"
 )
 
@@ -286,6 +287,11 @@ func WithRequestHeader(name, value string) RequestOption {
 
 		return nil
 	}
+}
+
+// WithLongContext raises the context limits for one call, through HeaderLongContext.
+func WithLongContext() RequestOption {
+	return WithRequestHeader(HeaderLongContext, "true")
 }
 
 // RequestOption overrides client settings for one call.

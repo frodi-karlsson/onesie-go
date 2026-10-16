@@ -45,8 +45,11 @@ service can set its own deadline and cancellation policy.
 Images and Box questions are experimental on TypeSafe's side. Put an `onesie.Image` from
 `onesie.NewImage` in `Request.Assets` under a reference, and write the reference where the image
 belongs, usually as a state value. `SystemOne` checks the request with `ValidateRequest` and sends
-the images header itself. Pass `onesie.WithHeader(onesie.HeaderLongContext, "true")` to opt a
-client into long context.
+the images header itself.
+
+Set `Request.LongContext`, or pass `onesie.WithLongContext()` to one call, to raise the context
+limits. A body from `MarshalBody` carries it as `long_context`, which `SystemOneRaw` turns back
+into the header, since TypeSafe refuses the key itself.
 
 Each provider gets images the way it reads them: TypeSafe as the assets map, OpenRouter as inline
 image parts, and Levanto and Berget refuse them, as `Provider.CheckImages` reports.
