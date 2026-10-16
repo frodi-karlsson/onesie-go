@@ -2213,6 +2213,74 @@ func TestClientSystemOneRaw(t *testing.T) {
 			t.Errorf("requests = %d, want none", len(transport.requests))
 		}
 	})
+
+	t.Run("should refuse an unreferenced asset alike through SystemOne and SystemOneRaw on every provider", func(t *testing.T) {
+		t.Parallel()
+
+		img := onesie.Image{Format: "png", Data: []byte{1}}
+		req := onesie.Request{State: "no image named here", Model: "m", Questions: oneNoul(), Assets: onesie.Assets{"image-x": img}}
+
+		body, err := onesie.MarshalBody(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var messages []string
+
+		for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter()} {
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example",
+				onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			_, rawErr := client.SystemOneRaw(t.Context(), body)
+			_, typedErr := client.SystemOne(t.Context(), req)
+
+			for _, err := range []error{rawErr, typedErr} {
+				if !errors.Is(err, onesie.ErrValidation) {
+					t.Fatalf("%s: error = %v, want ErrValidation", provider.Name, err)
+				}
+
+				messages = append(messages, err.Error())
+			}
+
+			if len(transport.requests) != 0 {
+				t.Errorf("%s: requests = %d, want none", provider.Name, len(transport.requests))
+			}
+		}
+
+		for _, message := range messages[1:] {
+			if message != messages[0] {
+				t.Errorf("messages differ: %q and %q", messages[0], message)
+			}
+		}
+	})
+
+	for _, bad := range []struct {
+		name, body, want string
+	}{
+		{name: "a bad format", body: `{"state":"r","questions":{},"assets":{"r":{"format":"gif","data_base64":"AQ=="}}}`, want: "has format 'gif'"},
+		{name: "data that is not a string", body: `{"state":"r","questions":{},"assets":{"r":{"format":"png","data_base64":1}}}`, want: "needs data_base64 as a string"},
+		{name: "assets that are not an object", body: `{"state":"r","questions":{},"assets":[1]}`, want: "assets must be an object of images"},
+	} {
+		for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter()} {
+			t.Run("should refuse "+bad.name+" in a raw body on "+provider.Name+" before any request", func(t *testing.T) {
+				t.Parallel()
+
+				transport := &recordingTransport{body: shortAnswer}
+				client, _ := newTestClient(t, "https://api.example",
+					onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+				_, err := client.SystemOneRaw(t.Context(), json.RawMessage(bad.body))
+				if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), bad.want) {
+					t.Fatalf("error = %v, want %q", err, bad.want)
+				}
+
+				if len(transport.requests) != 0 {
+					t.Errorf("requests = %d, want none", len(transport.requests))
+				}
+			})
+		}
+	}
 }
 
 func newTestClient(t *testing.T, url string, opts ...onesie.Option) (*onesie.Client, *mockClock) {

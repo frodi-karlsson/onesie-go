@@ -286,6 +286,10 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (json.Ra
 		return nil, nil, refusal
 	}
 
+	if fault := checkBodyImages(trimmed); fault != nil {
+		return nil, nil, fault
+	}
+
 	return c.withImages(trimmed, opts)
 }
 
