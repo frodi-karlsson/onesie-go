@@ -425,6 +425,20 @@ func TestClientSystemOne(t *testing.T) {
 		})
 	}
 
+	t.Run("should report an empty 200 body", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL)
+
+		_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+		if !errors.Is(err, onesie.ErrResponse) || !strings.Contains(err.Error(), "empty response body") {
+			t.Fatalf("error = %v, want ErrResponse naming an empty response body", err)
+		}
+	})
+
 	t.Run("should fill the request id from x-generation-id under openrouter", func(t *testing.T) {
 		t.Parallel()
 
@@ -2074,6 +2088,30 @@ func TestClientSystemOneRaw(t *testing.T) {
 				t.Errorf("returned body = %s, want %s", got, tc.response)
 			}
 		})
+	}
+
+	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Berget(), onesie.Levanto()} {
+		for _, body := range []string{"", "<!DOCTYPE html><html></html>"} {
+			t.Run("should return a 200 body it cannot read unchanged on "+provider.Name+": "+body, func(t *testing.T) {
+				t.Parallel()
+
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = io.WriteString(w, body)
+				}))
+				defer server.Close()
+
+				client, _ := newTestClient(t, server.URL, onesie.WithProvider(provider))
+
+				got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","model":"m","questions":{}}`))
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if string(got) != body {
+					t.Errorf("body = %q, want %q", got, body)
+				}
+			})
+		}
 	}
 
 	withAssets := json.RawMessage(`{"state":{"photo":"r"},"model":"m","questions":{"q":{"type":"noul",` +

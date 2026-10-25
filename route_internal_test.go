@@ -1,9 +1,17 @@
 package onesie
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 )
+
+const plainAnswer = `{"model":"plain","answers":{"q":{"type":"noul","noul":0.25}},"usage":{"input_tokens":1,"output_tokens":0}}`
 
 func TestRouteRefuse(t *testing.T) {
 	t.Parallel()
@@ -58,4 +66,423 @@ func TestRouteRefuse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClientSystemOne(t *testing.T) {
+	t.Parallel()
+
+	ask := func(model string) Request {
+		return Request{Model: model, State: "s", Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}}}
+	}
+
+	t.Run("should post to the route the model picks, in its encoding, and read its decoded answers", func(t *testing.T) {
+		t.Parallel()
+
+		client, rec := newFakeClient(t, http.StatusOK, `{"result":`+plainAnswer+`}`)
+
+		result, err := client.SystemOne(t.Context(), ask("wrapped"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		sent := rec.only(t)
+		if sent.path != "/wrapped" || !strings.HasPrefix(sent.body, `{"input":{"state":"s","model":"wrapped"`) {
+			t.Errorf("sent %s %s, want /wrapped with the body under input", sent.path, sent.body)
+		}
+
+		noul, err := result.Noul("q")
+		if err != nil || noul.Noul != 0.25 {
+			t.Errorf("Noul = %v, %v, want 0.25", noul, err)
+		}
+	})
+
+	t.Run("should post a request with no model to the default model's route", func(t *testing.T) {
+		t.Parallel()
+
+		client, rec := newFakeClient(t, http.StatusOK, plainAnswer)
+
+		if _, err := client.SystemOne(t.Context(), ask("")); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if sent := rec.only(t); sent.path != "/plain" || !strings.Contains(sent.body, `"model":"plain"`) {
+			t.Errorf("sent %s %s, want /plain naming the default model", sent.path, sent.body)
+		}
+	})
+
+	refusals := []struct {
+		name    string
+		req     Request
+		opts    []Option
+		reqOpts []RequestOption
+		wantErr string
+	}{
+		{
+			name:    "should refuse a box question with no assets on a route that takes images only",
+			req:     Request{Model: "wrapped", State: "s", Questions: Questions{{ID: "b", Question: Box{Instructions: "the mug"}}}},
+			wantErr: "onesie: the fake provider takes no box questions",
+		},
+		{
+			name: "should refuse images on a route that takes neither",
+			req: Request{
+				Model: "bare", State: "img", Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}},
+				Assets: Assets{"img": Image{Format: "png", Data: []byte{1}}},
+			},
+			wantErr: "onesie: the fake provider takes no images or box questions. The typesafe and openrouter providers do",
+		},
+		{
+			name:    "should refuse long context asked for on the request",
+			req:     Request{Model: "wrapped", State: "s", Questions: ask("").Questions, LongContext: true},
+			wantErr: "onesie: the fake provider takes no long context",
+		},
+		{
+			name:    "should refuse long context asked for by WithLongContext",
+			req:     ask("wrapped"),
+			reqOpts: []RequestOption{WithLongContext()},
+			wantErr: "onesie: the fake provider takes no long context",
+		},
+		{
+			name:    "should refuse long context asked for by a client header",
+			req:     ask("wrapped"),
+			opts:    []Option{WithHeader(HeaderLongContext, "true")},
+			wantErr: "onesie: the fake provider takes no long context",
+		},
+		{
+			name:    "should report a failing request option rather than refuse",
+			req:     ask("wrapped"),
+			reqOpts: []RequestOption{WithRequestAttemptTimeout(0), WithLongContext()},
+			wantErr: "onesie: attempt timeout must be positive",
+		},
+		{name: "should report an encode error", req: ask("broken"), wantErr: "encode failed"},
+	}
+
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, rec := newFakeClient(t, http.StatusOK, plainAnswer, tc.opts...)
+
+			_, err := client.SystemOne(t.Context(), tc.req, tc.reqOpts...)
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+
+			if n := rec.count(); n != 0 {
+				t.Errorf("sent %d requests, want none", n)
+			}
+		})
+	}
+
+	t.Run("should send a long context header that is not true", func(t *testing.T) {
+		t.Parallel()
+
+		client, rec := newFakeClient(t, http.StatusOK, `{"result":`+plainAnswer+`}`, WithHeader(HeaderLongContext, "false"))
+
+		if _, err := client.SystemOne(t.Context(), ask("wrapped")); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if sent := rec.only(t); sent.longContext != "false" {
+			t.Errorf("long context header = %q, want false", sent.longContext)
+		}
+	})
+
+	unusable := []struct {
+		name     string
+		response string
+	}{
+		{name: "should hold the raw body when decode fails", response: `{"nope":1}`},
+		{name: "should hold the raw body when the decoded body lacks an answer", response: `{"result":{"model":"w","answers":{},"usage":{}}}`},
+	}
+
+	for _, tc := range unusable {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, _ := newFakeClient(t, http.StatusOK, tc.response)
+
+			_, err := client.SystemOne(t.Context(), ask("wrapped"))
+
+			var unusableErr *ResponseError
+			if !errors.As(err, &unusableErr) || string(unusableErr.Body) != tc.response {
+				t.Fatalf("error = %v, want a ResponseError holding %s", err, tc.response)
+			}
+		})
+	}
+
+	t.Run("should not decode an error response", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newFakeClient(t, http.StatusBadRequest, `{"error":"bad question"}`)
+
+		_, err := client.SystemOne(t.Context(), ask("wrapped"))
+
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || !strings.Contains(err.Error(), "bad question") {
+			t.Fatalf("error = %v, want an APIError naming bad question", err)
+		}
+	})
+}
+
+func TestClientSystemOneRaw(t *testing.T) {
+	t.Parallel()
+
+	const questions = `"state":"s","questions":{"q":{"type":"noul","instructions":"q"}}`
+
+	t.Run("should post to the route the body's model picks and return the decoded body", func(t *testing.T) {
+		t.Parallel()
+
+		client, rec := newFakeClient(t, http.StatusOK, `{"result":`+plainAnswer+`}`)
+
+		got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"model":"wrapped",`+questions+`}`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if string(got) != plainAnswer {
+			t.Errorf("body = %s, want %s", got, plainAnswer)
+		}
+
+		if sent := rec.only(t); sent.path != "/wrapped" || sent.body != `{"input":{"model":"wrapped",`+questions+`}}` {
+			t.Errorf("sent %s %s, want /wrapped with the body under input", sent.path, sent.body)
+		}
+	})
+
+	routes := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "should route a trimmed model", body: `{"model":" wrapped ",` + questions + `}`, want: "/wrapped"},
+		{name: "should route a body with no model on the default model", body: `{` + questions + `}`, want: "/plain"},
+		{name: "should route a blank model on the default model", body: `{"model":"  ",` + questions + `}`, want: "/plain"},
+		{name: "should route a model that is not a string on the default model", body: `{"model":1,` + questions + `}`, want: "/plain"},
+		{name: "should route a top level that is not an object on the default model", body: `[1]`, want: "/plain"},
+	}
+
+	for _, tc := range routes {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			response := plainAnswer
+			if tc.want == "/wrapped" {
+				response = `{"result":` + plainAnswer + `}`
+			}
+
+			client, rec := newFakeClient(t, http.StatusOK, response)
+
+			if _, err := client.SystemOneRaw(t.Context(), json.RawMessage(tc.body)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if sent := rec.only(t); sent.path != tc.want {
+				t.Errorf("path = %s, want %s", sent.path, tc.want)
+			}
+		})
+	}
+
+	refusals := []struct {
+		name    string
+		body    string
+		opts    []Option
+		reqOpts []RequestOption
+		wantErr string
+	}{
+		{
+			name:    "should refuse a box question on a route that takes images only",
+			body:    `{"model":"wrapped","state":"s","questions":{"b":{"type":"box","instructions":"the mug"}}}`,
+			wantErr: "onesie: the fake provider takes no box questions",
+		},
+		{
+			name:    "should refuse images on a route that takes neither",
+			body:    `{"model":"bare","state":"img","questions":{},"assets":{"img":{"format":"png","data_base64":"AQ=="}}}`,
+			wantErr: "onesie: the fake provider takes no images or box questions. The typesafe and openrouter providers do",
+		},
+		{
+			name:    "should refuse long context the body asks for",
+			body:    `{"model":"wrapped",` + questions + `,"long_context":true}`,
+			wantErr: "onesie: the fake provider takes no long context",
+		},
+		{
+			name:    "should refuse long context asked for by WithLongContext",
+			body:    `{"model":"wrapped",` + questions + `}`,
+			reqOpts: []RequestOption{WithLongContext()},
+			wantErr: "onesie: the fake provider takes no long context",
+		},
+		{
+			name:    "should refuse long context asked for by a client header",
+			body:    `{"model":"wrapped",` + questions + `}`,
+			opts:    []Option{WithHeader(HeaderLongContext, "true")},
+			wantErr: "onesie: the fake provider takes no long context",
+		},
+		{
+			name:    "should report a failing request option rather than refuse",
+			body:    `{"model":"wrapped",` + questions + `}`,
+			reqOpts: []RequestOption{WithRequestAttemptTimeout(0), WithLongContext()},
+			wantErr: "onesie: attempt timeout must be positive",
+		},
+		{name: "should report an encode error", body: `{"model":"broken",` + questions + `}`, wantErr: "encode failed"},
+	}
+
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, rec := newFakeClient(t, http.StatusOK, plainAnswer, tc.opts...)
+
+			_, err := client.SystemOneRaw(t.Context(), json.RawMessage(tc.body), tc.reqOpts...)
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+
+			if n := rec.count(); n != 0 {
+				t.Errorf("sent %d requests, want none", n)
+			}
+		})
+	}
+
+	t.Run("should hold the raw body when decode fails", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newFakeClient(t, http.StatusOK, `{"nope":1}`)
+
+		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"model":"wrapped",`+questions+`}`))
+
+		var unusableErr *ResponseError
+		if !errors.As(err, &unusableErr) || string(unusableErr.Body) != `{"nope":1}` {
+			t.Fatalf("error = %v, want a ResponseError holding the raw body", err)
+		}
+	})
+
+	t.Run("should not decode an error response", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newFakeClient(t, http.StatusBadRequest, `{"error":"bad question"}`)
+
+		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"model":"wrapped",`+questions+`}`))
+
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("error = %v, want an APIError", err)
+		}
+	})
+}
+
+func newFakeClient(t *testing.T, status int, response string, opts ...Option) (*Client, *recorder) {
+	t.Helper()
+
+	rec := &recorder{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		rec.add(sentRequest{path: req.URL.Path, body: string(body), longContext: req.Header.Get(HeaderLongContext)})
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, response)
+	}))
+	t.Cleanup(server.Close)
+
+	base := []Option{
+		WithEnv(func(string) (string, bool) { return "", false }),
+		WithAPIKey("sk-test"),
+		WithBaseURL(server.URL),
+		WithProvider(fakeProvider()),
+	}
+
+	client, err := New(append(base, opts...)...)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	return client, rec
+}
+
+func fakeProvider() Provider {
+	keep := func(body []byte) ([]byte, []RequestOption, error) { return body, nil, nil }
+
+	return Provider{
+		Name:         "fake",
+		BaseURL:      "http://fake.invalid",
+		defaultModel: "plain",
+		modelsPath:   "/models",
+		decodeModels: decodeTypeSafeModels,
+		routeFor: func(model string) route {
+			switch model {
+			case "wrapped":
+				return route{
+					path:   "/wrapped",
+					takes:  capabilities{images: true},
+					images: keep,
+					encode: func(body []byte) ([]byte, error) {
+						return []byte(`{"input":` + string(body) + `}`), nil
+					},
+					decode: unwrapResult,
+				}
+			case "bare":
+				return route{path: "/bare", encode: identity, decode: identity}
+			case "broken":
+				return route{
+					path:   "/broken",
+					takes:  takesEverything(),
+					encode: func([]byte) ([]byte, error) { return nil, errors.New("encode failed") },
+					decode: identity,
+				}
+			default:
+				return route{path: "/plain", takes: takesEverything(), images: keep, encode: identity, decode: identity}
+			}
+		},
+	}
+}
+
+func unwrapResult(body []byte) ([]byte, error) {
+	var wire struct {
+		Result json.RawMessage `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return nil, err
+	}
+
+	if wire.Result == nil {
+		return nil, errors.New("no result")
+	}
+
+	return wire.Result, nil
+}
+
+type recorder struct {
+	mu       sync.Mutex
+	requests []sentRequest
+}
+
+func (r *recorder) add(sent sentRequest) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.requests = append(r.requests, sent)
+}
+
+func (r *recorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return len(r.requests)
+}
+
+func (r *recorder) only(t *testing.T) sentRequest {
+	t.Helper()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.requests) != 1 {
+		t.Fatalf("sent %d requests, want 1", len(r.requests))
+	}
+
+	return r.requests[0]
+}
+
+type sentRequest struct {
+	path        string
+	body        string
+	longContext string
 }

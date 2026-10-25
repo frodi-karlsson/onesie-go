@@ -188,7 +188,7 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 
 	result := &Result{}
 
-	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(body), result, opts...)
+	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(body), result, via.decode, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -257,12 +257,18 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(prepared), nil, sendOpts...)
+	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(prepared), nil, identity, sendOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return res.body, nil
+	// Decoded here, not in do, so a body that is empty or not JSON comes back as it is.
+	decoded, err := via.decode(res.body)
+	if err != nil {
+		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
+	}
+
+	return decoded, nil
 }
 
 func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, []byte, []RequestOption, error) {
@@ -349,7 +355,7 @@ func (c *Client) encode(via route, needs capabilities, body []byte, opts []Reque
 func (c *Client) ListModels(ctx context.Context, opts ...RequestOption) ([]ModelCard, error) {
 	var raw json.RawMessage
 
-	res, err := c.do(ctx, http.MethodGet, c.provider.modelsPath, nil, &raw, opts...)
+	res, err := c.do(ctx, http.MethodGet, c.provider.modelsPath, nil, &raw, identity, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -373,6 +379,7 @@ func (c *Client) do(
 	ctx context.Context,
 	method, path string,
 	body, out any,
+	decode func([]byte) ([]byte, error),
 	opts ...RequestOption,
 ) (*rawResponse, error) {
 	cfg := requestConfig{
@@ -443,7 +450,7 @@ func (c *Client) do(
 		}
 
 		if res.status >= 200 && res.status < 300 {
-			return res, decodeInto(res, url, out)
+			return res, decodeInto(res, url, out, decode)
 		}
 
 		apiErr := newAPIError(res.status, res.header, c.provider.requestIDHeader, res.body, c.clock.Now())
@@ -618,7 +625,7 @@ func (c *Client) backOff(
 	return nil
 }
 
-func decodeInto(res *rawResponse, url string, out any) error {
+func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]byte, error)) error {
 	if out == nil {
 		return nil
 	}
@@ -635,7 +642,12 @@ func decodeInto(res *rawResponse, url string, out any) error {
 		}
 	}
 
-	if err := json.Unmarshal(res.body, out); err != nil {
+	body, err := decode(res.body)
+	if err != nil {
+		return &ResponseError{Status: res.status, Body: res.body, Err: err}
+	}
+
+	if err = json.Unmarshal(body, out); err != nil {
 		return &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
 
