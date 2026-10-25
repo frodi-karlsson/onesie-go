@@ -139,3 +139,47 @@ func TestDecodeBergetModels(t *testing.T) {
 		}
 	})
 }
+
+func TestProviderRoute(t *testing.T) {
+	t.Parallel()
+
+	images := capabilities{images: true, box: true, longContext: true}
+	text := capabilities{longContext: true}
+
+	tests := []struct {
+		name     string
+		provider Provider
+		want     capabilities
+	}{
+		{name: "should give typesafe one route that takes everything", provider: TypeSafe(), want: images},
+		{name: "should give openrouter one route that takes everything", provider: OpenRouter(), want: images},
+		{name: "should give berget one route that takes long context only", provider: Berget(), want: text},
+		{name: "should give levanto one route that takes long context only", provider: Levanto(), want: text},
+	}
+
+	for _, tc := range tests {
+		for _, model := range []string{"", tc.provider.defaultModel, "some-other-model"} {
+			t.Run(tc.name+" for model "+model, func(t *testing.T) {
+				t.Parallel()
+
+				got := tc.provider.route(model)
+				if got.path != systemOnePath || got.takes != tc.want {
+					t.Errorf("route(%q) = path %q takes %+v, want path %q takes %+v",
+						model, got.path, got.takes, systemOnePath, tc.want)
+				}
+
+				if got.encode == nil || got.decode == nil {
+					t.Errorf("route(%q) has a nil encode or decode", model)
+				}
+			})
+		}
+	}
+
+	t.Run("should take everything on a provider built outside the package", func(t *testing.T) {
+		t.Parallel()
+
+		if got := (Provider{Name: "mine"}).route("m").takes; got != takesEverything() {
+			t.Errorf("takes = %+v, want everything", got)
+		}
+	})
+}

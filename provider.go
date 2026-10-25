@@ -37,6 +37,13 @@ func TypeSafe() Provider {
 		requestIDHeader: "X-TypeSafe-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
+		routeFor: oneRoute(route{
+			path:   systemOnePath,
+			takes:  takesEverything(),
+			images: assetsMap,
+			encode: identity,
+			decode: identity,
+		}),
 	}
 }
 
@@ -50,7 +57,13 @@ func OpenRouter() Provider {
 		requestIDHeader: "X-Generation-Id",
 		modelsPath:      "/v1/models?output_modalities=decisions",
 		decodeModels:    decodeOpenRouterModels,
-		sendImages:      inlineParts,
+		routeFor: oneRoute(route{
+			path:   systemOnePath,
+			takes:  takesEverything(),
+			images: inlineParts,
+			encode: identity,
+			decode: identity,
+		}),
 	}
 }
 
@@ -64,8 +77,13 @@ func Berget() Provider {
 		requestIDHeader:    "X-Request-Id",
 		modelsPath:         "/v1/models/",
 		decodeModels:       decodeBergetModels,
-		noImages:           true,
 		modelsAnswerAnyKey: true,
+		routeFor: oneRoute(route{
+			path:   systemOnePath,
+			takes:  capabilities{longContext: true},
+			encode: identity,
+			decode: identity,
+		}),
 	}
 }
 
@@ -79,7 +97,12 @@ func Levanto() Provider {
 		requestIDHeader: "X-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
-		noImages:        true,
+		routeFor: oneRoute(route{
+			path:   systemOnePath,
+			takes:  capabilities{longContext: true},
+			encode: identity,
+			decode: identity,
+		}),
 	}
 }
 
@@ -97,8 +120,7 @@ type Provider struct {
 	requestIDHeader string
 	modelsPath      string
 	decodeModels    func([]byte) ([]ModelCard, error)
-	sendImages      func(body []byte) ([]byte, []RequestOption, error)
-	noImages        bool
+	routeFor        func(model string) route
 
 	modelsAnswerAnyKey bool
 }
@@ -107,6 +129,15 @@ type Provider struct {
 // that prints a request without building a client fills the model the way a client would.
 func (p Provider) ResolveModel(model string, lookupEnv func(string) (string, bool)) string {
 	return orDefault(orEnv(model, lookupEnv, p.EnvDefaultModel), p.defaultModel)
+}
+
+func (p Provider) route(model string) route {
+	if p.routeFor == nil {
+		// A Provider built outside the package never reaches New, so it is only asked what it takes.
+		return route{takes: takesEverything()}
+	}
+
+	return p.routeFor(model)
 }
 
 func decodeTypeSafeModels(body []byte) ([]ModelCard, error) {

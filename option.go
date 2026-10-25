@@ -53,7 +53,7 @@ func WithAPIKey(key string) Option {
 // WithProvider sets the host the client talks to. The default is TypeSafe.
 func WithProvider(p Provider) Option {
 	return func(c *Client) error {
-		if p.decodeModels == nil {
+		if p.routeFor == nil {
 			return &ValidationError{Message: "provider must come from TypeSafe, OpenRouter, Berget, Levanto or ProviderNamed"}
 		}
 
