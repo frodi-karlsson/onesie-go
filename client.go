@@ -278,7 +278,7 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (json.Ra
 		opts = append(slices.Clone(opts), WithLongContext())
 	}
 
-	if !bodyCarriesImages(trimmed) {
+	if scan := scanBody(trimmed); !scan.assets && !scan.box {
 		return trimmed, opts, nil
 	}
 
