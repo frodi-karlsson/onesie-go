@@ -21,6 +21,7 @@ func TestProviderNamed(t *testing.T) {
 		{name: "should return openrouter for openrouter", input: "openrouter", want: "openrouter"},
 		{name: "should return berget for berget", input: "berget", want: "berget"},
 		{name: "should return levanto for levanto", input: "levanto", want: "levanto"},
+		{name: "should return cloudflare for cloudflare", input: "cloudflare", want: "cloudflare"},
 		{name: "should trim the name", input: " openrouter ", want: "openrouter"},
 	}
 
@@ -47,7 +48,7 @@ func TestProviderNamed(t *testing.T) {
 			t.Fatalf("error got %v, want ErrValidation", err)
 		}
 
-		for _, want := range []string{"nope", "typesafe", "openrouter", "berget", "levanto"} {
+		for _, want := range []string{"nope", "typesafe", "openrouter", "berget", "levanto", "cloudflare"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error = %q, want it to name %q", err.Error(), want)
 			}
@@ -79,6 +80,17 @@ func TestProviderRefuse(t *testing.T) {
 		{name: "should take long context on levanto", provider: onesie.Levanto(), needs: onesie.Needs{LongContext: true}},
 		{name: "should read a blank model as the default", provider: onesie.Levanto(), model: "  ", needs: onesie.Needs{Box: true}, wantErr: neither},
 		{name: "should take everything on a provider a caller built", provider: onesie.Provider{Name: "mine"}, needs: everything},
+		{name: "should take images on cloudflare", provider: onesie.Cloudflare(), needs: onesie.Needs{Images: true}},
+		{
+			name: "should refuse a box question on cloudflare", provider: onesie.Cloudflare(), model: "clef-flash",
+			needs:   onesie.Needs{Images: true, Box: true},
+			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do",
+		},
+		{
+			name: "should refuse long context on cloudflare", provider: onesie.Cloudflare(),
+			needs:   onesie.Needs{LongContext: true},
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe provider does",
+		},
 	}
 
 	for _, tc := range tests {

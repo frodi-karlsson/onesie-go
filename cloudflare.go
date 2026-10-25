@@ -6,7 +6,47 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
+
+func cloudflareRoute(model string) route {
+	if wireID, isClef := clefWireID(model); isClef {
+		return route{
+			path:   "/run",
+			takes:  capabilities{images: true},
+			images: assetsToImages,
+			encode: chain(dropAssets, envelope(wireID)),
+			decode: unwrapResult,
+		}
+	}
+
+	return route{
+		path:   "/run",
+		takes:  capabilities{images: true},
+		images: keepAssets,
+		encode: envelope(model),
+		decode: unwrapResult,
+	}
+}
+
+func clefWireID(model string) (string, bool) {
+	switch {
+	case strings.HasPrefix(model, "@cf/"):
+		return model, true
+	case strings.HasPrefix(model, "clef"):
+		return "@cf/cloudflare/" + model, true
+	default:
+		return "", false
+	}
+}
+
+func keepAssets(body []byte) ([]byte, []RequestOption, error) {
+	return body, nil, nil
+}
+
+func cloudflareBaseURL(account string) string {
+	return "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai"
+}
 
 func envelope(wireID string) func([]byte) ([]byte, error) {
 	return func(body []byte) ([]byte, error) {
@@ -98,4 +138,40 @@ func resultObject(body []byte) ([]byte, error) {
 	}
 
 	return wire.Result, nil
+}
+
+func decodeCloudflareModels(body []byte) ([]ModelCard, error) {
+	var wire struct {
+		Result []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			CreatedAt   string `json:"created_at"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return nil, err
+	}
+
+	if wire.Result == nil {
+		return nil, errors.New("expected a models list")
+	}
+
+	// Jev is served through AI Gateway, so Workers AI's search never lists it.
+	cards := []ModelCard{{
+		Name:        CloudflareDefaultModel,
+		Description: "TypeSafe's Jev through AI Gateway, billed from AI Gateway credits",
+	}}
+
+	for _, model := range wire.Result {
+		short, found := strings.CutPrefix(model.Name, "@cf/cloudflare/")
+		if !found || !strings.HasPrefix(short, "clef") {
+			continue
+		}
+
+		date, _, _ := strings.Cut(model.CreatedAt, " ")
+		cards = append(cards, ModelCard{Name: short, Description: model.Description, ReleaseDate: date})
+	}
+
+	return cards, nil
 }

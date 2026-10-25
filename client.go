@@ -52,8 +52,8 @@ func New(opts ...Option) (*Client, error) {
 	c.httpClient = withoutRedirects(c.httpClient)
 
 	c.apiKey = orEnv(c.apiKey, c.lookupEnv, c.provider.EnvAPIKey)
-	c.baseURL = strings.TrimRight(
-		orDefault(orEnv(c.baseURL, c.lookupEnv, c.provider.EnvBaseURL), c.provider.BaseURL), "/")
+	baseURL, accountErr := c.provider.baseURL(c.baseURL, c.lookupEnv)
+	c.baseURL = strings.TrimRight(baseURL, "/")
 	c.defaultModel = c.provider.ResolveModel(c.defaultModel, c.lookupEnv)
 
 	// Computed once here rather than behind a package level singleton, which AGENTS.md bans.
@@ -61,6 +61,10 @@ func New(opts ...Option) (*Client, error) {
 
 	if c.apiKey == "" {
 		return nil, &ValidationError{Message: "no API key. Set " + c.provider.EnvAPIKey}
+	}
+
+	if accountErr != nil {
+		return nil, accountErr
 	}
 
 	if err := ValidateBaseURL(c.baseURL); err != nil {

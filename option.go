@@ -19,6 +19,9 @@ const (
 	// LevantoDefaultModel is the model a Levanto request carries when it names none. It is Levanto's
 	// alias for its newest Sage model.
 	LevantoDefaultModel = "sage-latest"
+	// CloudflareDefaultModel is the model a Cloudflare request carries when it names none: TypeSafe's
+	// Jev through AI Gateway.
+	CloudflareDefaultModel = "typesafe/jev"
 	// DefaultAttemptTimeout bounds one HTTP attempt, not the whole call.
 	DefaultAttemptTimeout = 10 * time.Second
 	// DefaultMaxResponseBytes caps how much of a response body is read.
@@ -54,7 +57,7 @@ func WithAPIKey(key string) Option {
 func WithProvider(p Provider) Option {
 	return func(c *Client) error {
 		if p.routeFor == nil {
-			return &ValidationError{Message: "provider must come from TypeSafe, OpenRouter, Berget, Levanto or ProviderNamed"}
+			return &ValidationError{Message: "provider must come from TypeSafe, OpenRouter, Berget, Levanto, Cloudflare or ProviderNamed"}
 		}
 
 		c.provider = p

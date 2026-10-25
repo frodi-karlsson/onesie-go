@@ -2,6 +2,9 @@ package onesie
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -157,4 +160,101 @@ func TestUnwrapResult(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCloudflareRoute(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		model string
+		wire  string
+		clef  bool
+	}{
+		{model: "typesafe/jev", wire: "typesafe/jev"},
+		{model: "jev-latest", wire: "jev-latest"},
+		{model: "clef", wire: "@cf/cloudflare/clef", clef: true},
+		{model: "clef-flash", wire: "@cf/cloudflare/clef-flash", clef: true},
+		{model: "clef-omni", wire: "@cf/cloudflare/clef-omni", clef: true},
+		{model: "@cf/cloudflare/clef", wire: "@cf/cloudflare/clef", clef: true},
+	}
+
+	for _, tc := range tests {
+		t.Run("should route "+tc.model, func(t *testing.T) {
+			t.Parallel()
+
+			got := cloudflareRoute(tc.model)
+			if got.path != "/run" || got.takes != (capabilities{images: true}) {
+				t.Fatalf("route = path %q takes %+v, want /run taking images only", got.path, got.takes)
+			}
+
+			body := `{"state":"s","model":"x","questions":{},"assets":{}}`
+			sent, err := got.encode([]byte(body))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			want := `{"model":"` + tc.wire + `","input":{"state":"s","questions":{},"assets":{}}}`
+			if tc.clef {
+				want = `{"model":"` + tc.wire + `","input":{"state":"s","questions":{}}}`
+			}
+
+			if string(sent) != want {
+				t.Errorf("encode = %s, want %s", sent, want)
+			}
+		})
+	}
+
+	t.Run("should send a body naming no model as the default model", func(t *testing.T) {
+		t.Parallel()
+
+		sent, err := Cloudflare().route(CloudflareDefaultModel).encode([]byte(`{"state":"s","questions":{}}`))
+		if err != nil || string(sent) != `{"model":"typesafe/jev","input":{"state":"s","questions":{}}}` {
+			t.Errorf("encode = %s, %v, want the default model's envelope", sent, err)
+		}
+	})
+}
+
+func TestDecodeCloudflareModels(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should list jev first, then the clef models by short name", func(t *testing.T) {
+		t.Parallel()
+
+		body, err := os.ReadFile(filepath.Join("testdata", "cloudflare-models.json"))
+		if err != nil {
+			t.Fatalf("reading the fixture: %v", err)
+		}
+
+		cards, err := decodeCloudflareModels(body)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		names := make([]string, 0, len(cards))
+		for _, card := range cards {
+			names = append(names, card.Name+" "+card.ReleaseDate)
+		}
+
+		want := []string{"typesafe/jev ", "clef 2026-09-29", "clef-omni 2026-10-09", "clef-flash 2026-09-29"}
+		if strings.Join(names, ",") != strings.Join(want, ",") {
+			t.Errorf("models = %v, want %v", names, want)
+		}
+	})
+
+	t.Run("should leave out a model that is not clef", func(t *testing.T) {
+		t.Parallel()
+
+		cards, err := decodeCloudflareModels([]byte(`{"result":[{"name":"@cf/meta/llama","created_at":"2026-01-01 00:00:00"}]}`))
+		if err != nil || len(cards) != 1 {
+			t.Errorf("models = %+v, %v, want jev alone", cards, err)
+		}
+	})
+
+	t.Run("should refuse a body with no list", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := decodeCloudflareModels([]byte(`{"success":false}`)); err == nil {
+			t.Error("expected an error, got none")
+		}
+	})
 }
