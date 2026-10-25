@@ -1,8 +1,10 @@
 package onesie
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -18,9 +20,11 @@ func ProviderNamed(name string) (Provider, error) {
 		return Berget(), nil
 	case "levanto":
 		return Levanto(), nil
+	case "cloudflare":
+		return Cloudflare(), nil
 	default:
 		return Provider{}, &ValidationError{
-			Message: "unknown provider " + name + ". Use typesafe, openrouter, berget or levanto",
+			Message: "unknown provider " + name + ". Use typesafe, openrouter, berget, levanto or cloudflare",
 		}
 	}
 }
@@ -106,8 +110,24 @@ func Levanto() Provider {
 	}
 }
 
-// Provider is a host that serves the System One API. Build one with TypeSafe, OpenRouter, Berget or
-// Levanto.
+// Cloudflare serves TypeSafe's Jev through AI Gateway and its own Clef models on Workers AI. The
+// account comes from CLOUDFLARE_ACCOUNT_ID, or from a base URL that holds it.
+func Cloudflare() Provider {
+	return Provider{
+		Name:            "cloudflare",
+		EnvAPIKey:       "CLOUDFLARE_API_TOKEN",
+		EnvAccountID:    "CLOUDFLARE_ACCOUNT_ID",
+		defaultModel:    CloudflareDefaultModel,
+		requestIDHeader: "Cf-Ray",
+		modelsPath:      "/models/search?search=clef",
+		decodeModels:    decodeCloudflareModels,
+		accountBaseURL:  cloudflareBaseURL,
+		routeFor:        cloudflareRoute,
+	}
+}
+
+// Provider is a host that serves the System One API. Build one with TypeSafe, OpenRouter, Berget,
+// Levanto or Cloudflare.
 // An empty env var name means the provider reads nothing from the environment for that setting.
 type Provider struct {
 	Name            string
@@ -115,6 +135,7 @@ type Provider struct {
 	EnvAPIKey       string
 	EnvBaseURL      string
 	EnvDefaultModel string
+	EnvAccountID    string
 
 	defaultModel    string
 	requestIDHeader string
@@ -123,6 +144,7 @@ type Provider struct {
 	routeFor        func(model string) route
 
 	modelsAnswerAnyKey bool
+	accountBaseURL     func(account string) string
 }
 
 // ResolveModel reports the model a request will carry under this provider. It exists so a caller
@@ -138,6 +160,28 @@ func (p Provider) route(model string) route {
 	}
 
 	return p.routeFor(model)
+}
+
+func (p Provider) baseURL(explicit string, lookupEnv func(string) (string, bool)) (string, error) {
+	if chosen := orEnv(explicit, lookupEnv, p.EnvBaseURL); chosen != "" {
+		return chosen, nil
+	}
+
+	if p.EnvAccountID == "" {
+		return p.BaseURL, nil
+	}
+
+	account := orEnv("", lookupEnv, p.EnvAccountID)
+	if account == "" {
+		return "", &ValidationError{Message: fmt.Sprintf("no %s account id. Set %s, or pass the base URL %s",
+			p.Name, p.EnvAccountID, p.accountBaseURL("<account_id>"))}
+	}
+
+	if decoded, err := hex.DecodeString(account); err != nil || len(decoded) != 16 {
+		return "", &ValidationError{Message: p.EnvAccountID + " must be 32 hexadecimal characters"}
+	}
+
+	return p.accountBaseURL(account), nil
 }
 
 func decodeTypeSafeModels(body []byte) ([]ModelCard, error) {

@@ -121,3 +121,81 @@ func TestInlineParts(t *testing.T) {
 		})
 	}
 }
+
+func TestAssetsToImages(t *testing.T) {
+	t.Parallel()
+
+	const (
+		r1 = `"r1":{"type":"image","format":"png","data_base64":"AQ=="}`
+		r2 = `"r2":{"type":"image","format":"JPG","data_base64":"Ag=="}`
+	)
+
+	tests := []struct {
+		name    string
+		body    string
+		want    string
+		wantErr string
+	}{
+		{
+			name: "should number the images by first reference and write them last",
+			body: `{"state":{"a":"r2","b":"r1"},"questions":{"q":{"type":"noul","instructions":"is r1 a dog"}},` +
+				`"assets":{` + r1 + `,` + r2 + `}}`,
+			want: `{"state":{"a":"image 1","b":"image 2"},"questions":{"q":{"type":"noul","instructions":"is image 2 a dog"}},` +
+				`"images":["data:image/jpeg;base64,Ag==","data:image/png;base64,AQ=="]}`,
+		},
+		{
+			name: "should number by the body as written when the questions come first",
+			body: `{"questions":{"q":{"type":"noul","instructions":"compare r1 and r2"}},"state":"see r2",` +
+				`"assets":{` + r1 + `,` + r2 + `}}`,
+			want: `{"questions":{"q":{"type":"noul","instructions":"compare image 1 and image 2"}},"state":"see image 2",` +
+				`"images":["data:image/png;base64,AQ==","data:image/jpeg;base64,Ag=="]}`,
+		},
+		{
+			name: "should keep one position for a name used twice and leave names and types alone",
+			body: `{"state":{"r1":"r1 then r1"},"questions":{"r1":{"type":"noul","instructions":"q"}},"assets":{` + r1 + `}}`,
+			want: `{"state":{"r1":"image 1 then image 1"},"questions":{"r1":{"type":"noul","instructions":"q"}},` +
+				`"images":["data:image/png;base64,AQ=="]}`,
+		},
+		{
+			name: "should leave a question's type alone when an asset shares its text",
+			body: `{"state":"noul","questions":{"q":{"type":"noul","instructions":"q"}},` +
+				`"assets":{"noul":{"format":"png","data_base64":"AQ=="}}}`,
+			want: `{"state":"image 1","questions":{"q":{"type":"noul","instructions":"q"}},` +
+				`"images":["data:image/png;base64,AQ=="]}`,
+		},
+		{
+			name: "should refuse a name found only inside a longer one",
+			body: `{"state":"img2","questions":{},"assets":{"img":{"format":"png","data_base64":"AQ=="},` +
+				`"img2":{"format":"png","data_base64":"Ag=="}}}`,
+			wantErr: "onesie: asset 'img' is not referenced in the state or the questions, and the API refuses that",
+		},
+		{
+			name:    "should refuse a body with both assets and images",
+			body:    `{"state":"r1","questions":{},"images":["data:image/png;base64,AQ=="],"assets":{` + r1 + `}}`,
+			wantErr: "onesie: a body for clef carries assets or images, not both",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, opts, err := assetsToImages([]byte(tc.body))
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+
+				return
+			}
+
+			if err != nil || opts != nil {
+				t.Fatalf("unexpected error or options: %v, %v", err, opts)
+			}
+
+			if string(got) != tc.want {
+				t.Errorf("assetsToImages =\n%s\nwant\n%s", got, tc.want)
+			}
+		})
+	}
+}

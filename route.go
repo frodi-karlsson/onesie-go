@@ -17,9 +17,11 @@ func (r route) refuse(provider string, needs capabilities) error {
 		return &ValidationError{Message: fmt.Sprintf(
 			"the %s provider takes no images or box questions. The typesafe and openrouter providers do", provider)}
 	case needs.box && !r.takes.box:
-		return &ValidationError{Message: fmt.Sprintf("the %s provider takes no box questions", provider)}
+		return &ValidationError{Message: fmt.Sprintf(
+			"the %s provider takes no box questions. The typesafe and openrouter providers do", provider)}
 	case needs.longContext && !r.takes.longContext:
-		return &ValidationError{Message: fmt.Sprintf("the %s provider takes no long context", provider)}
+		return &ValidationError{Message: fmt.Sprintf(
+			"the %s provider takes no long context. The typesafe provider does", provider)}
 	default:
 		return nil
 	}

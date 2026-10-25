@@ -8,10 +8,26 @@ import (
 	"strings"
 )
 
-// CheckImages returns the error a request with images or a Box question gets from this provider on
-// its built in default model, or nil when that model reads them.
-func (p Provider) CheckImages() error {
-	return p.route(p.defaultModel).refuse(p.Name, capabilities{images: true, box: true})
+// Refuse returns the error a request with these needs gets from this provider for model, or nil.
+// An empty model means the provider's built in default.
+func (p Provider) Refuse(model string, needs Needs) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = p.defaultModel
+	}
+
+	return p.route(model).refuse(p.Name, capabilities{
+		images:      needs.Images,
+		box:         needs.Box,
+		longContext: needs.LongContext,
+	})
+}
+
+// Needs is what a request asks of the model it is sent to.
+type Needs struct {
+	Images      bool
+	Box         bool
+	LongContext bool
 }
 
 func assetsMap(body []byte) ([]byte, []RequestOption, error) {

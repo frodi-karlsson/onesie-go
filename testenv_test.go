@@ -88,3 +88,22 @@ func fromDotEnv(t *testing.T, name string) string {
 
 	return ""
 }
+
+func cloudflareCredentials(t *testing.T) (string, string) {
+	t.Helper()
+
+	read := func(name string) string {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+
+		return fromDotEnv(t, name)
+	}
+
+	token, account := read("CLOUDFLARE_API_TOKEN"), read("CLOUDFLARE_ACCOUNT_ID")
+	if token == "" || account == "" {
+		t.Skip("no CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the environment or .env, skipping the Cloudflare live cases")
+	}
+
+	return token, account
+}

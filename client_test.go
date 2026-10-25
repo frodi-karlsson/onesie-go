@@ -90,6 +90,79 @@ func TestClientSystemOneURL(t *testing.T) {
 func TestNew(t *testing.T) {
 	t.Parallel()
 
+	t.Run("should find the cloudflare account", func(t *testing.T) {
+		t.Parallel()
+
+		const account = "0123456789abcdef0123456789abcdef"
+
+		tests := []struct {
+			name    string
+			env     map[string]string
+			opts    []onesie.Option
+			wantURL string
+			wantErr string
+		}{
+			{
+				name:    "should build the base url from CLOUDFLARE_ACCOUNT_ID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t", "CLOUDFLARE_ACCOUNT_ID": " " + account + " "},
+				wantURL: "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run",
+			},
+			{
+				name: "should refuse a missing account",
+				env:  map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
+				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, or pass the base URL " +
+					"https://api.cloudflare.com/client/v4/accounts/<account_id>/ai",
+			},
+			{
+				name:    "should refuse a malformed account",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t", "CLOUDFLARE_ACCOUNT_ID": "nope"},
+				wantErr: "onesie: CLOUDFLARE_ACCOUNT_ID must be 32 hexadecimal characters",
+			},
+			{
+				name:    "should let WithBaseURL win with no account",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
+				opts:    []onesie.Option{onesie.WithBaseURL("https://proxy.example/ai")},
+				wantURL: "https://proxy.example/ai/run",
+			},
+			{
+				name:    "should let WithBaseURL win over a malformed account",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t", "CLOUDFLARE_ACCOUNT_ID": "nope"},
+				opts:    []onesie.Option{onesie.WithBaseURL("https://proxy.example/ai")},
+				wantURL: "https://proxy.example/ai/run",
+			},
+			{
+				name:    "should report the key before the account",
+				env:     map[string]string{},
+				wantErr: "onesie: no API key. Set CLOUDFLARE_API_TOKEN",
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				opts := append([]onesie.Option{onesie.WithEnv(lookupFrom(tc.env)), onesie.WithProvider(onesie.Cloudflare())}, tc.opts...)
+
+				client, err := onesie.New(opts...)
+				if tc.wantErr != "" {
+					if !errors.Is(err, onesie.ErrValidation) || err.Error() != tc.wantErr {
+						t.Fatalf("error = %v, want %q", err, tc.wantErr)
+					}
+
+					return
+				}
+
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if got := client.SystemOneURL(); got != tc.wantURL {
+					t.Errorf("SystemOneURL = %q, want %q", got, tc.wantURL)
+				}
+			})
+		}
+	})
+
 	mockEnv := func(values map[string]string) func(string) (string, bool) {
 		return func(name string) (string, bool) {
 			value, ok := values[name]
@@ -402,6 +475,101 @@ func TestNew(t *testing.T) {
 
 func TestClientSystemOne(t *testing.T) {
 	t.Parallel()
+
+	t.Run("should send jev and clef through cloudflare's routes", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		const answers = `{"model":"x","answers":{"q":{"type":"noul","noul":0.9}},"usage":{"input_tokens":1,"output_tokens":0}}`
+
+		tests := []struct {
+			name     string
+			model    string
+			response string
+			wantBody []string
+			noBody   []string
+		}{
+			{
+				name:     "should send jev its assets under input and read two levels",
+				model:    "typesafe/jev",
+				response: `{"result":{"state":"Completed","result":` + answers + `},"success":true}`,
+				wantBody: []string{`{"model":"typesafe/jev","input":{"state":{"photo":"img"}`, `"assets":{"img":`},
+				noBody:   []string{`"images"`, `"model":"typesafe/jev","input":{"state":{"photo":"img"},"model"`},
+			},
+			{
+				name:     "should send clef numbered images and read one level",
+				model:    "clef-flash",
+				response: `{"result":` + answers + `,"success":true}`,
+				wantBody: []string{
+					`{"model":"@cf/cloudflare/clef-flash","input":{"state":{"photo":"image 1"}`,
+					`"images":["data:image/png;base64,`,
+				},
+				noBody: []string{`"assets"`},
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				var (
+					mu   sync.Mutex
+					path string
+					sent string
+				)
+
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, _ := io.ReadAll(r.Body)
+
+					mu.Lock()
+					path, sent = r.URL.Path, string(body)
+					mu.Unlock()
+
+					_, _ = io.WriteString(w, tc.response)
+				}))
+				defer server.Close()
+
+				client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.Cloudflare()))
+
+				result, err := client.SystemOne(t.Context(), onesie.Request{
+					State:     map[string]any{"photo": "img"},
+					Model:     tc.model,
+					Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "is there a red square in `photo`"}}},
+					Assets:    onesie.Assets{"img": square},
+				})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if got, _ := result.Noul("q"); got == nil || got.Noul != 0.9 {
+					t.Errorf("q = %+v, want 0.9", got)
+				}
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				if path != "/run" {
+					t.Errorf("path = %q, want /run", path)
+				}
+
+				for _, want := range tc.wantBody {
+					if !strings.Contains(sent, want) {
+						t.Errorf("body = %.300s, want it to contain %s", sent, want)
+					}
+				}
+
+				for _, unwanted := range tc.noBody {
+					if strings.Contains(sent, unwanted) {
+						t.Errorf("body = %.300s, want it without %s", sent, unwanted)
+					}
+				}
+			})
+		}
+	})
 
 	for _, body := range []string{"<!DOCTYPE html><html></html>", "upstream said ok"} {
 		t.Run("should name the base url when a 200 body is not JSON: "+body, func(t *testing.T) {
@@ -1981,6 +2149,103 @@ func noRetries() onesie.RetryPolicy {
 
 func TestClientSystemOneRaw(t *testing.T) {
 	t.Parallel()
+
+	t.Run("should send a raw clef body with empty assets without them", func(t *testing.T) {
+		t.Parallel()
+
+		var sent string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			sent = string(body)
+			_, _ = io.WriteString(w, `{"result":{"model":"clef","answers":{},"usage":{}},"success":true}`)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.Cloudflare()))
+
+		got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","model":"clef","questions":{},"assets":{}}`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if string(got) != `{"model":"clef","answers":{},"usage":{}}` {
+			t.Errorf("body = %s, want the unwrapped result", got)
+		}
+
+		if sent != `{"model":"@cf/cloudflare/clef","input":{"state":"s","questions":{}}}` {
+			t.Errorf("sent = %s", sent)
+		}
+	})
+
+	t.Run("should send a raw clef body in clef's own shape as written", func(t *testing.T) {
+		t.Parallel()
+
+		var sent string
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			sent = string(body)
+			_, _ = io.WriteString(w, `{"result":{"model":"clef","answers":{},"usage":{}},"success":true}`)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.Cloudflare()))
+
+		if _, err := client.SystemOneRaw(t.Context(),
+			json.RawMessage(`{"state":"s","model":"clef","questions":{},"images":["data:image/png;base64,AQ=="]}`)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := `{"model":"@cf/cloudflare/clef","input":{"state":"s","questions":{},"images":["data:image/png;base64,AQ=="]}}`
+		if sent != want {
+			t.Errorf("sent = %s, want %s", sent, want)
+		}
+	})
+
+	for _, tc := range []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{
+			name:  "should send a raw jev body's assets as written",
+			model: "typesafe/jev",
+			want: `{"model":"typesafe/jev","input":{"state":{"p":"r"},"questions":{"q":{"type":"noul","instructions":"q"}},` +
+				`"assets":{"r":{"type":"image","format":"png","data_base64":"AQ=="}}}}`,
+		},
+		{
+			name:  "should send a raw clef body's assets as numbered images",
+			model: "clef",
+			want: `{"model":"@cf/cloudflare/clef","input":{"state":{"p":"image 1"},"questions":{"q":{"type":"noul","instructions":"q"}},` +
+				`"images":["data:image/png;base64,AQ=="]}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var sent string
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				sent = string(body)
+				_, _ = io.WriteString(w, `{"result":{"model":"m","answers":{},"usage":{}},"success":true}`)
+			}))
+			defer server.Close()
+
+			client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.Cloudflare()))
+
+			body := `{"state":{"p":"r"},"model":"` + tc.model + `","questions":{"q":{"type":"noul","instructions":"q"}},` +
+				`"assets":{"r":{"type":"image","format":"png","data_base64":"AQ=="}}}`
+			if _, err := client.SystemOneRaw(t.Context(), json.RawMessage(body)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if sent != tc.want {
+				t.Errorf("sent = %s\nwant %s", sent, tc.want)
+			}
+		})
+	}
 
 	compact := json.RawMessage(`{"state":"hi","model":"jev-latest","questions":{}}`)
 

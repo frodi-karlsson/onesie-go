@@ -61,7 +61,31 @@ func newAPIError(status int, header http.Header, requestIDHeader string, body []
 		Body:       parsed,
 		RetryAfter: retryAfter,
 		message:    describe(status, header, parsed),
+		keyRefused: cloudflareAuthFailure(parsed),
 	}
+}
+
+func cloudflareAuthFailure(body any) bool {
+	fields, isObject := body.(map[string]any)
+	if !isObject {
+		return false
+	}
+
+	list, isList := fields["errors"].([]any)
+	if !isList || len(list) == 0 {
+		return false
+	}
+
+	entry, isEntry := list[0].(map[string]any)
+	if !isEntry {
+		return false
+	}
+
+	// Cloudflare refuses a token with 10000 on most endpoints, and with 9106 under a 400 on the
+	// models search.
+	code, isNumber := entry["code"].(float64)
+
+	return isNumber && (code == 10000 || code == 9106)
 }
 
 func describe(status int, header http.Header, body any) string {
@@ -143,7 +167,48 @@ func extractMessage(body any) string {
 		return describeValidation(list)
 	}
 
-	return ""
+	return firstError(fields)
+}
+
+func firstError(fields map[string]any) string {
+	list, isList := fields["errors"].([]any)
+	if !isList || len(list) == 0 {
+		return ""
+	}
+
+	entry, isObject := list[0].(map[string]any)
+	if !isObject {
+		return ""
+	}
+
+	text, isText := entry["message"].(string)
+	if !isText {
+		return ""
+	}
+
+	return trimWorkersAI(text)
+}
+
+func trimWorkersAI(text string) string {
+	for {
+		trimmed := strings.TrimPrefix(strings.TrimPrefix(text, "AiError: "), "Ai: ")
+		if trimmed == text {
+			break
+		}
+
+		text = trimmed
+	}
+
+	text = strings.TrimPrefix(text, "Model execution failed (User Input Error): ")
+
+	// AI Gateway forwards TypeSafe's own error body as the rest of the message.
+	if strings.HasPrefix(text, "{") && json.Valid([]byte(text)) {
+		if inner := extractMessage(decodeBody([]byte(text))); inner != "" {
+			return inner
+		}
+	}
+
+	return text
 }
 
 func unwrapMessage(text string) string {
@@ -255,7 +320,8 @@ type APIError struct {
 	Body       any
 	RetryAfter time.Duration
 
-	message string
+	message    string
+	keyRefused bool
 }
 
 // Error returns the status and the message extracted from the response body.
@@ -269,7 +335,7 @@ func (e *APIError) Is(target error) bool {
 	case ErrBadRequest:
 		return e.Status == http.StatusBadRequest
 	case ErrAuthentication:
-		return e.Status == http.StatusUnauthorized
+		return e.Status == http.StatusUnauthorized || e.keyRefused
 	case ErrPaymentRequired:
 		return e.Status == http.StatusPaymentRequired
 	case ErrPermissionDenied:

@@ -38,8 +38,8 @@ fmt.Println(urgent.Noul)
 ```
 
 The client uses the TypeSafe provider by default and reads `TYPESAFE_API_KEY`. Pass
-`onesie.WithAPIKey` for explicit credentials, `onesie.WithProvider` to select OpenRouter, Berget or
-Levanto, and `onesie.WithHTTPClient` to supply a transport. Requests accept a context so the calling
+`onesie.WithAPIKey` for explicit credentials, `onesie.WithProvider` to select OpenRouter, Berget,
+Levanto or Cloudflare, and `onesie.WithHTTPClient` to supply a transport. Requests accept a context so the calling
 service can set its own deadline and cancellation policy.
 
 Images and Box questions are experimental on TypeSafe's side. Put an `onesie.Image` from
@@ -52,7 +52,25 @@ limits. A body from `MarshalBody` carries it as `long_context`, which `SystemOne
 into the header, since TypeSafe refuses the key itself.
 
 Each provider gets images the way it reads them: TypeSafe as the assets map, OpenRouter as inline
-image parts, and Levanto and Berget refuse them, as `Provider.CheckImages` reports.
+image parts, Cloudflare's Jev as the assets map and Clef as an images array numbered in the order
+the images are named, and Levanto and Berget refuse them, as `Provider.Refuse` reports.
+
+`onesie.Cloudflare()` reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, or takes the account
+inside `WithBaseURL`. Its default model is `typesafe/jev`, billed from AI Gateway credits, and
+`clef`, `clef-flash` and `clef-omni` select Cloudflare's own models:
+
+```go
+client, err := onesie.New(onesie.WithProvider(onesie.Cloudflare()))
+if err != nil {
+	return err
+}
+
+result, err := client.SystemOne(ctx, onesie.Request{
+	State:     "The checkout page has been down for an hour.",
+	Model:     "clef-flash",
+	Questions: onesie.Questions{{ID: "urgent", Question: onesie.Noul{Instructions: "Is this urgent?"}}},
+})
+```
 
 Use the CLI for streams, question files, shell assertions, caching and calibration. Those workflows
 remain in the onesie command.
@@ -61,4 +79,5 @@ remain in the onesie command.
 
 Run `make check` for lint and race enabled tests. Run `make tidy` to verify the module files.
 The live suite is available with `make test-integration`. It reads `TYPESAFE_API_KEY`,
-`OPENROUTER_API_KEY` and `LEVANTO_API_KEY` from the environment or a local `.env` file.
+`OPENROUTER_API_KEY`, `LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the
+environment or a local `.env` file.
