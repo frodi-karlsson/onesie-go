@@ -1643,12 +1643,20 @@ func TestClientSystemOne(t *testing.T) {
 			client, _ := newTestClient(t, "https://api.example",
 				onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
 
-			// Too small for the API, so the refusal has to come before ValidateRequest's own.
-			small := onesie.Image{Format: "png", Data: []byte{1}}
+			square, err := onesie.NewImage(squarePNG(t))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			assets := onesie.Assets{"image-a": square}
 
 			for _, req := range []onesie.Request{
-				{State: map[string]any{"photo": "image-a"}, Questions: oneNoul(), Assets: onesie.Assets{"image-a": small}},
-				{State: "s", Questions: onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug"}}}},
+				{State: map[string]any{"photo": "image-a"}, Questions: oneNoul(), Assets: assets},
+				{
+					State:     map[string]any{"photo": "image-a"},
+					Questions: onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug"}}},
+					Assets:    assets,
+				},
 			} {
 				_, err := client.SystemOne(t.Context(), req)
 				if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), "takes no images or box questions") {

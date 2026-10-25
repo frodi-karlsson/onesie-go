@@ -44,8 +44,14 @@ service can set its own deadline and cancellation policy.
 
 Images and Box questions are experimental on TypeSafe's side. Put an `onesie.Image` from
 `onesie.NewImage` in `Request.Assets` under a reference, and write the reference where the image
-belongs, usually as a state value. `SystemOne` checks the request with `ValidateRequest` and sends
-the images header itself.
+belongs, usually as a state value. `SystemOne` sends the images header itself.
+
+A request is checked in two layers. `ValidateRequest` checks it for any provider.
+`Provider.Encode` refuses what one provider does not take and returns the body it would send.
+`SystemOne` runs both, in that order, before it sends. `Provider.Refuse` gives the same refusal
+from a model and its `Needs`, before a request exists. The body `Encode` returns carries no
+headers, so `SystemOne` also sends the images header for TypeSafe, and a blank model there is the
+provider's built in default.
 
 Set `Request.LongContext`, or pass `onesie.WithLongContext()` to one call, to raise the context
 limits. A body from `MarshalBody` carries it as `long_context`, which `SystemOneRaw` turns back
