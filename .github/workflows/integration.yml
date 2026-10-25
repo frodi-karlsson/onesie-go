@@ -25,9 +25,11 @@ jobs:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           LEVANTO_API_KEY: ${{ secrets.LEVANTO_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          for name in TYPESAFE_API_KEY OPENROUTER_API_KEY LEVANTO_API_KEY; do
+          for name in TYPESAFE_API_KEY OPENROUTER_API_KEY LEVANTO_API_KEY CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
             if [ -z "${!name}" ]; then
               echo "::error::Set $name as a repository secret"
               exit 1

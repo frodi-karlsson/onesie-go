@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -500,6 +501,104 @@ func TestLiveSystemOne(t *testing.T) {
 			t.Fatalf("SystemOneRaw: unexpected error: %v", err)
 		}
 	})
+
+	t.Run("should answer all three question types through cloudflare's jev", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := liveCloudflareClient(t).SystemOne(liveContext(t, time.Minute), onesie.Request{
+			State: "I was charged twice for my last invoice and I want the duplicate refunded today!",
+			Questions: onesie.Questions{
+				{ID: "urgent", Question: onesie.Noul{Instructions: "Is this urgent?"}},
+				{ID: "team", Question: onesie.Choice{
+					Instructions: "Which team?",
+					Criteria:     onesie.Criteria{{Name: "billing", Desc: "payments and refunds"}, {Name: "tech", Desc: "bugs and outages"}},
+				}},
+				{ID: "mood", Question: onesie.Score{Instructions: "How angry?", Criteria: onesie.Levels("calm", "annoyed", "furious")}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got, _ := result.Noul("urgent"); got == nil || got.Noul < 0.5 {
+			t.Errorf("urgent = %+v, want a yes", got)
+		}
+
+		if got, _ := result.Choice("team"); got == nil || got.Choice != "billing" {
+			t.Errorf("team = %+v, want billing", got)
+		}
+
+		if got, _ := result.Score("mood"); got == nil {
+			t.Errorf("mood missing")
+		}
+	})
+
+	for _, model := range []string{"typesafe/jev", "clef-flash"} {
+		t.Run("should see the red square through cloudflare's "+model, func(t *testing.T) {
+			t.Parallel()
+
+			square, err := onesie.NewImage(squarePNG(t))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			result, err := liveCloudflareClient(t).SystemOne(liveContext(t, time.Minute), onesie.Request{
+				State:     map[string]any{"photo": "image-square"},
+				Model:     model,
+				Questions: onesie.Questions{{ID: "red", Question: onesie.Noul{Instructions: "Is there a red square in `photo`?"}}},
+				Assets:    onesie.Assets{"image-square": square},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got, _ := result.Noul("red"); got == nil || got.Noul < 0.8 {
+				t.Errorf("red = %+v, want a clear yes", got)
+			}
+		})
+	}
+
+	for _, redFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("should tell two images apart by name on clef-flash, red named first %v", redFirst), func(t *testing.T) {
+			t.Parallel()
+
+			square, err := onesie.NewImage(squarePNG(t))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			empty, err := onesie.NewImage(emptyPNG(t))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			a, b := "image-3f2a9c", "image-9c1d4e"
+			assets := onesie.Assets{a: square, b: empty}
+			if !redFirst {
+				assets = onesie.Assets{a: empty, b: square}
+			}
+
+			result, err := liveCloudflareClient(t).SystemOne(liveContext(t, time.Minute), onesie.Request{
+				State: map[string]any{"a": a, "b": b},
+				Model: "clef-flash",
+				Questions: onesie.Questions{
+					{ID: "a_red", Question: onesie.Noul{Instructions: "Does `a` show a red square?"}},
+					{ID: "b_red", Question: onesie.Noul{Instructions: "Does `b` show a red square?"}},
+				},
+				Assets: assets,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			aRed, _ := result.Noul("a_red")
+			bRed, _ := result.Noul("b_red")
+
+			if aRed == nil || bRed == nil || (aRed.Noul > bRed.Noul) != redFirst {
+				t.Errorf("a_red = %+v, b_red = %+v, want the red one to be %v", aRed, bRed, map[bool]string{true: "a", false: "b"}[redFirst])
+			}
+		})
+	}
 }
 
 func TestLiveListModels(t *testing.T) {
@@ -563,6 +662,24 @@ func TestLiveListModels(t *testing.T) {
 
 		if !found {
 			t.Errorf("no model is named %s: %+v", onesie.LevantoDefaultModel, models)
+		}
+	})
+
+	t.Run("should list jev and clef-flash under cloudflare", func(t *testing.T) {
+		t.Parallel()
+
+		models, err := liveCloudflareClient(t).ListModels(liveContext(t, 30*time.Second))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		names := map[string]bool{}
+		for _, model := range models {
+			names[model.Name] = true
+		}
+
+		if !names["typesafe/jev"] || !names["clef-flash"] {
+			t.Errorf("models = %+v, want typesafe/jev and clef-flash", models)
 		}
 	})
 }
@@ -702,6 +819,41 @@ func TestLiveErrors(t *testing.T) {
 			t.Fatalf("error got %v, want ErrUnprocessableEntity saying unknown model", err)
 		}
 	})
+
+	t.Run("should return ErrAuthentication for a bad token under cloudflare", func(t *testing.T) {
+		t.Parallel()
+
+		_, account := cloudflareCredentials(t)
+
+		client, err := onesie.New(
+			onesie.WithProvider(onesie.Cloudflare()),
+			onesie.WithAPIKey("definitely-not-a-real-token"),
+			onesie.WithBaseURL("https://api.cloudflare.com/client/v4/accounts/"+account+"/ai"),
+			onesie.WithUserAgent("onesie-integration"),
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err = client.ListModels(liveContext(t, 30*time.Second)); !errors.Is(err, onesie.ErrAuthentication) {
+			t.Fatalf("error got %v, want ErrAuthentication", err)
+		}
+	})
+
+	t.Run("should name an unknown model under cloudflare", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := liveCloudflareClient(t).SystemOne(liveContext(t, 30*time.Second), onesie.Request{
+			State:     "x",
+			Model:     "typesafe/jev-nope",
+			Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "Is this a test?"}}},
+		})
+
+		var api *onesie.APIError
+		if !errors.As(err, &api) || !strings.Contains(err.Error(), "typesafe/jev-nope") {
+			t.Fatalf("error = %v, want an APIError naming the model", err)
+		}
+	})
 }
 
 func liveClient(t *testing.T, opts ...onesie.Option) *onesie.Client {
@@ -738,6 +890,30 @@ func liveLevantoClient(t *testing.T) *onesie.Client {
 	client, err := onesie.New(
 		onesie.WithProvider(onesie.Levanto()),
 		onesie.WithAPIKey(levantoKey(t)),
+		onesie.WithUserAgent("onesie-integration"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	return client
+}
+
+func liveCloudflareClient(t *testing.T) *onesie.Client {
+	t.Helper()
+
+	token, account := cloudflareCredentials(t)
+
+	client, err := onesie.New(
+		onesie.WithProvider(onesie.Cloudflare()),
+		onesie.WithAPIKey(token),
+		onesie.WithEnv(func(name string) (string, bool) {
+			if name == "CLOUDFLARE_ACCOUNT_ID" {
+				return account, true
+			}
+
+			return "", false
+		}),
 		onesie.WithUserAgent("onesie-integration"),
 	)
 	if err != nil {
