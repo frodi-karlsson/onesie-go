@@ -155,8 +155,8 @@ func (p Provider) ResolveModel(model string, lookupEnv func(string) (string, boo
 
 func (p Provider) route(model string) route {
 	if p.routeFor == nil {
-		// A Provider built outside the package never reaches New, so it is only asked what it takes.
-		return route{takes: takesEverything()}
+		// A Provider built outside the package never reaches New, so it is only refused or encoded.
+		return route{takes: takesEverything(), images: keepAssets, encode: identity, decode: identity}
 	}
 
 	return p.routeFor(model)
