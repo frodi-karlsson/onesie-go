@@ -55,34 +55,37 @@ func TestProviderNamed(t *testing.T) {
 	})
 }
 
-func TestProviderCheckImages(t *testing.T) {
+func TestProviderRefuse(t *testing.T) {
 	t.Parallel()
+
+	const neither = "onesie: the levanto provider takes no images or box questions. The typesafe and openrouter providers do"
+
+	everything := onesie.Needs{Images: true, Box: true, LongContext: true}
 
 	tests := []struct {
 		name     string
 		provider onesie.Provider
+		model    string
+		needs    onesie.Needs
 		wantErr  string
 	}{
-		{name: "should take images on typesafe", provider: onesie.TypeSafe()},
-		{name: "should take images on openrouter", provider: onesie.OpenRouter()},
-		{name: "should take images on a provider a caller built", provider: onesie.Provider{Name: "mine", BaseURL: "https://x"}},
+		{name: "should take everything on typesafe", provider: onesie.TypeSafe(), needs: everything},
+		{name: "should take everything on openrouter", provider: onesie.OpenRouter(), needs: everything},
+		{name: "should refuse images on levanto", provider: onesie.Levanto(), needs: onesie.Needs{Images: true}, wantErr: neither},
 		{
-			name:     "should refuse images on levanto",
-			provider: onesie.Levanto(),
-			wantErr:  "onesie: the levanto provider takes no images or box questions. The typesafe and openrouter providers do",
+			name: "should refuse images on berget", provider: onesie.Berget(), needs: onesie.Needs{Images: true, Box: true},
+			wantErr: "onesie: the berget provider takes no images or box questions. The typesafe and openrouter providers do",
 		},
-		{
-			name:     "should refuse images on berget",
-			provider: onesie.Berget(),
-			wantErr:  "onesie: the berget provider takes no images or box questions. The typesafe and openrouter providers do",
-		},
+		{name: "should take long context on levanto", provider: onesie.Levanto(), needs: onesie.Needs{LongContext: true}},
+		{name: "should read a blank model as the default", provider: onesie.Levanto(), model: "  ", needs: onesie.Needs{Box: true}, wantErr: neither},
+		{name: "should take everything on a provider a caller built", provider: onesie.Provider{Name: "mine"}, needs: everything},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tc.provider.CheckImages()
+			err := tc.provider.Refuse(tc.model, tc.needs)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
