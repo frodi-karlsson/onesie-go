@@ -31,7 +31,7 @@ type Needs struct {
 }
 
 // Encode refuses a request this provider's route does not take, then returns the body SystemOne
-// would send for it. It does not validate the request, which ValidateRequest does.
+// sends, without the headers it adds. A blank model is the built in default. It does not validate.
 func (p Provider) Encode(req Request) ([]byte, error) {
 	_, body, _, err := encodeRequest(p, req, false)
 

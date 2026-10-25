@@ -269,11 +269,6 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, 
 		return route{}, nil, nil, err
 	}
 
-	if longContext {
-		// Cloned, so the caller's slice is never written through.
-		opts = append(slices.Clone(opts), WithLongContext())
-	}
-
 	scan := scanBody(trimmed)
 
 	model := scan.model
@@ -290,7 +285,8 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, 
 		}
 	}
 
-	if refusal := c.refuse(via, needs, opts); refusal != nil {
+	needs.longContext = needs.longContext || c.sendsLongContext(opts)
+	if refusal := via.refuse(c.provider.Name, needs); refusal != nil {
 		return route{}, nil, nil, refusal
 	}
 
@@ -300,15 +296,12 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, 
 	}
 
 	// Cloned, so the caller's slice is never written through.
-	return via, sent, append(slices.Clone(opts), extra...), nil
-}
-
-func (c *Client) refuse(via route, needs capabilities, opts []RequestOption) error {
-	if !via.takes.longContext && !needs.longContext {
-		needs.longContext = c.sendsLongContext(opts)
+	sendOpts := slices.Clone(opts)
+	if longContext {
+		sendOpts = append(sendOpts, WithLongContext())
 	}
 
-	return via.refuse(c.provider.Name, needs)
+	return via, sent, append(sendOpts, extra...), nil
 }
 
 func (c *Client) sendsLongContext(opts []RequestOption) bool {

@@ -217,7 +217,10 @@ func TestProviderEncode(t *testing.T) {
 				onesie.WithProvider(tc.provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
 
 			// The answer is not every provider's shape, so only the body sent matters here.
-			_, _ = client.SystemOne(t.Context(), tc.req)
+			_, sendErr := client.SystemOne(t.Context(), tc.req)
+			if transport.lastBody() == "" {
+				t.Fatalf("SystemOne sent nothing: %v", sendErr)
+			}
 
 			body, err := tc.provider.Encode(tc.req)
 			if err != nil {
