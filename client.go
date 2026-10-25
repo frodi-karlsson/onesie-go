@@ -114,9 +114,10 @@ func (c *Client) BaseURL() string {
 	return c.baseURL
 }
 
-// SystemOneURL is the address every question is posted to, the base URL with the API path added.
+// SystemOneURL is the address a question for the default model is posted to, the base URL with
+// that model's API path added.
 func (c *Client) SystemOneURL() string {
-	return c.baseURL + systemOnePath
+	return c.baseURL + c.provider.route(c.defaultModel).path
 }
 
 // RetryPolicy returns a copy, so a caller can modify one field and pass it to WithRequestRetry.
@@ -153,22 +154,21 @@ func (c *Client) VerifyKey(ctx context.Context, opts ...RequestOption) ([]ModelC
 // SystemOne answers named questions about a state. Every question is evaluated in parallel and in
 // isolation, so batching is cheaper than one call per question.
 func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOption) (*Result, error) {
-	images := requestCarriesImages(req)
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = c.defaultModel
+	}
+
+	via := c.provider.route(model)
+	needs := requestNeeds(req)
 
 	// Before ValidateRequest, so a provider that reads no images is not asked to shrink one.
-	if images {
-		if err := c.provider.CheckImages(); err != nil {
-			return nil, err
-		}
+	if err := c.refuse(via, needs, opts); err != nil {
+		return nil, err
 	}
 
 	if err := ValidateRequest(req); err != nil {
 		return nil, err
-	}
-
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = c.defaultModel
 	}
 
 	body, err := MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
@@ -181,16 +181,14 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		opts = append(slices.Clone(opts), WithLongContext())
 	}
 
-	if images {
-		body, opts, err = c.withImages(body, opts)
-		if err != nil {
-			return nil, err
-		}
+	body, opts, err = c.encode(via, needs, body, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	result := &Result{}
 
-	res, err := c.do(ctx, http.MethodPost, systemOnePath, json.RawMessage(body), result, opts...)
+	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(body), result, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -254,12 +252,12 @@ func (c *Client) SystemOneRaw(
 	body json.RawMessage,
 	opts ...RequestOption,
 ) (json.RawMessage, error) {
-	prepared, sendOpts, err := c.prepareRaw(body, opts)
+	via, prepared, sendOpts, err := c.prepareRaw(body, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := c.do(ctx, http.MethodPost, systemOnePath, prepared, nil, sendOpts...)
+	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(prepared), nil, sendOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -267,10 +265,10 @@ func (c *Client) SystemOneRaw(
 	return res.body, nil
 }
 
-func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (json.RawMessage, []RequestOption, error) {
+func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, []byte, []RequestOption, error) {
 	trimmed, longContext, err := takeLongContext(body)
 	if err != nil {
-		return nil, nil, err
+		return route{}, nil, nil, err
 	}
 
 	if longContext {
@@ -278,29 +276,73 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (json.Ra
 		opts = append(slices.Clone(opts), WithLongContext())
 	}
 
-	if scan := scanBody(trimmed); !scan.assets && !scan.box {
-		return trimmed, opts, nil
+	scan := scanBody(trimmed)
+
+	model := scan.model
+	if model == "" {
+		model = c.defaultModel
 	}
 
-	if refusal := c.provider.CheckImages(); refusal != nil {
-		return nil, nil, refusal
+	via := c.provider.route(model)
+	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext}
+
+	if refusal := c.refuse(via, needs, opts); refusal != nil {
+		return route{}, nil, nil, refusal
 	}
 
-	if fault := checkBodyImages(trimmed); fault != nil {
-		return nil, nil, fault
+	if needs.images || needs.box {
+		if fault := checkBodyImages(trimmed); fault != nil {
+			return route{}, nil, nil, fault
+		}
 	}
 
-	return c.withImages(trimmed, opts)
+	sent, sendOpts, err := c.encode(via, needs, trimmed, opts)
+	if err != nil {
+		return route{}, nil, nil, err
+	}
+
+	return via, sent, sendOpts, nil
 }
 
-func (c *Client) withImages(body []byte, opts []RequestOption) ([]byte, []RequestOption, error) {
-	sent, extra, err := c.provider.imageSender()(body)
+func (c *Client) refuse(via route, needs capabilities, opts []RequestOption) error {
+	if !via.takes.longContext && !needs.longContext {
+		needs.longContext = c.sendsLongContext(opts)
+	}
+
+	return via.refuse(c.provider.Name, needs)
+}
+
+func (c *Client) sendsLongContext(opts []RequestOption) bool {
+	cfg := requestConfig{header: c.header.Clone()}
+
+	for _, opt := range opts {
+		if err := opt(&cfg); err != nil {
+			// Not a refusal. do applies the options again and reports the error, as it always has.
+			return false
+		}
+	}
+
+	return cfg.header.Get(HeaderLongContext) == "true"
+}
+
+func (c *Client) encode(via route, needs capabilities, body []byte, opts []RequestOption) ([]byte, []RequestOption, error) {
+	if needs.images || needs.box {
+		sent, extra, err := via.images(body)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		body = sent
+		// Cloned, so the caller's slice is never written through.
+		opts = append(slices.Clone(opts), extra...)
+	}
+
+	encoded, err := via.encode(body)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Cloned, so the caller's slice is never written through.
-	return sent, append(slices.Clone(opts), extra...), nil
+	return encoded, opts, nil
 }
 
 // ListModels reports the model names this account may send.

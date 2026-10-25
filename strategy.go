@@ -4,44 +4,30 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
-	"fmt"
 	"slices"
 	"strings"
 )
 
-// CheckImages returns the error a request with images or a Box question gets from this provider,
-// or nil when the provider reads them.
+// CheckImages returns the error a request with images or a Box question gets from this provider on
+// its built in default model, or nil when that model reads them.
 func (p Provider) CheckImages() error {
-	if !p.noImages {
-		return nil
-	}
-
-	return &ValidationError{Message: fmt.Sprintf(
-		"the %s provider takes no images or box questions. The typesafe and openrouter providers do", p.Name)}
-}
-
-func (p Provider) imageSender() func(body []byte) ([]byte, []RequestOption, error) {
-	if p.sendImages == nil {
-		return assetsMap
-	}
-
-	return p.sendImages
+	return p.route(p.defaultModel).refuse(p.Name, capabilities{images: true, box: true})
 }
 
 func assetsMap(body []byte) ([]byte, []RequestOption, error) {
 	return body, []RequestOption{WithRequestHeader(HeaderImages, "true")}, nil
 }
 
-func requestCarriesImages(req Request) bool {
-	if len(req.Assets) > 0 {
-		return true
+func requestNeeds(req Request) capabilities {
+	return capabilities{
+		images: len(req.Assets) > 0,
+		box: slices.ContainsFunc(req.Questions, func(named NamedQuestion) bool {
+			_, isBox := named.Question.(Box)
+
+			return isBox
+		}),
+		longContext: req.LongContext,
 	}
-
-	return slices.ContainsFunc(req.Questions, func(named NamedQuestion) bool {
-		_, isBox := named.Question.(Box)
-
-		return isBox
-	})
 }
 
 func scanBody(body []byte) bodyScan {
