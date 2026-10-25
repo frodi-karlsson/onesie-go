@@ -1,8 +1,11 @@
 package onesie
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -110,6 +113,8 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
+	img := validImage(t)
+
 	refusals := []struct {
 		name    string
 		req     Request
@@ -118,15 +123,18 @@ func TestClientSystemOne(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "should refuse a box question with no assets on a route that takes images only",
-			req:     Request{Model: "wrapped", State: "s", Questions: Questions{{ID: "b", Question: Box{Instructions: "the mug"}}}},
+			name: "should refuse a box question on a route that takes images only",
+			req: Request{
+				Model: "wrapped", State: "img", Questions: Questions{{ID: "b", Question: Box{Instructions: "the mug"}}},
+				Assets: Assets{"img": img},
+			},
 			wantErr: "onesie: the fake provider takes no box questions. The typesafe and openrouter providers do",
 		},
 		{
 			name: "should refuse images on a route that takes neither",
 			req: Request{
 				Model: "bare", State: "img", Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}},
-				Assets: Assets{"img": Image{Format: "png", Data: []byte{1}}},
+				Assets: Assets{"img": img},
 			},
 			wantErr: "onesie: the fake provider takes no images or box questions. The typesafe and openrouter providers do",
 		},
@@ -172,6 +180,23 @@ func TestClientSystemOne(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should validate before it refuses", func(t *testing.T) {
+		t.Parallel()
+
+		client, rec := newFakeClient(t, http.StatusOK, plainAnswer)
+
+		_, err := client.SystemOne(t.Context(), Request{
+			Model: "bare", State: "s", Questions: Questions{{ID: "b", Question: Box{Instructions: "the mug"}}},
+		})
+		if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "box question 'b' needs an image in the request") {
+			t.Fatalf("error = %v, want the box question's own error", err)
+		}
+
+		if n := rec.count(); n != 0 {
+			t.Errorf("sent %d requests, want none", n)
+		}
+	})
 
 	t.Run("should send a long context header that is not true", func(t *testing.T) {
 		t.Parallel()
@@ -341,6 +366,22 @@ func TestClientSystemOneRaw(t *testing.T) {
 		})
 	}
 
+	t.Run("should check the images before it refuses", func(t *testing.T) {
+		t.Parallel()
+
+		client, rec := newFakeClient(t, http.StatusOK, plainAnswer)
+
+		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(
+			`{"model":"bare","state":"img","questions":{},"assets":{"img":{"format":"gif","data_base64":"AQ=="}}}`))
+		if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "image 'img' has format 'gif', and an image must be png or jpg") {
+			t.Fatalf("error = %v, want the asset's own error", err)
+		}
+
+		if n := rec.count(); n != 0 {
+			t.Errorf("sent %d requests, want none", n)
+		}
+	})
+
 	t.Run("should hold the raw body when decode fails", func(t *testing.T) {
 		t.Parallel()
 
@@ -469,4 +510,20 @@ type sentRequest struct {
 	path        string
 	body        string
 	longContext string
+}
+
+func validImage(t *testing.T) Image {
+	t.Helper()
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 320, 320))); err != nil {
+		t.Fatalf("encoding the png: %v", err)
+	}
+
+	img, err := NewImage(buf.Bytes())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	return img
 }

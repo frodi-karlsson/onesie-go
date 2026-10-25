@@ -30,6 +30,62 @@ type Needs struct {
 	LongContext bool
 }
 
+// Encode refuses a request this provider's route does not take, then returns the body SystemOne
+// would send for it. It does not validate the request, which ValidateRequest does.
+func (p Provider) Encode(req Request) ([]byte, error) {
+	_, body, _, err := encodeRequest(p, req, false)
+
+	return body, err
+}
+
+func encodeRequest(p Provider, req Request, headerLongContext bool) (route, []byte, []RequestOption, error) {
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = p.defaultModel
+	}
+
+	via := p.route(model)
+	needs := requestNeeds(req)
+	needs.longContext = needs.longContext || headerLongContext
+
+	if err := via.refuse(p.Name, needs); err != nil {
+		return route{}, nil, nil, err
+	}
+
+	// Long context travels as a header, so the body never carries it.
+	body, err := MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
+	if err != nil {
+		return route{}, nil, nil, err
+	}
+
+	sent, extra, err := encodeBody(via, needs, body)
+	if err != nil {
+		return route{}, nil, nil, err
+	}
+
+	return via, sent, extra, nil
+}
+
+func encodeBody(via route, needs capabilities, body []byte) ([]byte, []RequestOption, error) {
+	var extra []RequestOption
+
+	if needs.images || needs.box {
+		sent, added, err := via.images(body)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		body, extra = sent, added
+	}
+
+	encoded, err := via.encode(body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return encoded, extra, nil
+}
+
 func assetsMap(body []byte) ([]byte, []RequestOption, error) {
 	return body, []RequestOption{WithRequestHeader(HeaderImages, "true")}, nil
 }

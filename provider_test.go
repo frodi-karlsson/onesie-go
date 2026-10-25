@@ -1,7 +1,9 @@
 package onesie_test
 
 import (
+	"bytes"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -111,4 +113,197 @@ func TestProviderRefuse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProviderEncode(t *testing.T) {
+	t.Parallel()
+
+	square, err := onesie.NewImage(squarePNG(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	box := onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug in `photo`"}}}
+	photo := func(model string, questions onesie.Questions) onesie.Request {
+		return onesie.Request{
+			Model: model, State: map[string]any{"photo": "image-a"}, Questions: questions,
+			Assets: onesie.Assets{"image-a": square},
+		}
+	}
+	text := onesie.Request{State: "s", Questions: oneNoul()}
+	repeated := onesie.Request{
+		State:     strings.Repeat("img-a ", 1000),
+		Questions: oneNoul(),
+		Assets: onesie.Assets{
+			"img-a": onesie.Image{Format: "png", Data: bytes.Repeat([]byte{1}, onesie.MaxBodyBytes/1200)},
+		},
+	}
+	tiny := onesie.Request{
+		State: map[string]any{"photo": "img"}, Questions: oneNoul(),
+		Assets: onesie.Assets{"img": onesie.Image{Format: "png", Data: []byte{1}}},
+	}
+
+	refusals := []struct {
+		name     string
+		provider onesie.Provider
+		req      onesie.Request
+		wantErr  string
+	}{
+		{
+			name: "should refuse a box question on cloudflare with the error Refuse gives", provider: onesie.Cloudflare(),
+			req:     photo("clef-flash", box),
+			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do",
+		},
+		{
+			name: "should refuse a valid image on levanto", provider: onesie.Levanto(), req: photo("", oneNoul()),
+			wantErr: "onesie: the levanto provider takes no images or box questions. The typesafe and openrouter providers do",
+		},
+		{
+			name: "should refuse long context on cloudflare", provider: onesie.Cloudflare(),
+			req:     onesie.Request{State: "s", Questions: oneNoul(), LongContext: true},
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe provider does",
+		},
+		{
+			name: "should refuse a body openrouter would inline past the limit", provider: onesie.OpenRouter(),
+			req: repeated, wantErr: "name each image once",
+		},
+		{
+			name:     "should refuse a box question with no assets on cloudflare as the provider, not as invalid",
+			provider: onesie.Cloudflare(), req: onesie.Request{State: "s", Questions: box},
+			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do",
+		},
+	}
+
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			body, err := tc.provider.Encode(tc.req)
+			if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+
+			if body != nil {
+				t.Errorf("body = %.100s, want none", body)
+			}
+		})
+	}
+
+	sent := []struct {
+		name     string
+		provider onesie.Provider
+		req      onesie.Request
+	}{
+		{name: "should encode text as typesafe sends it", provider: onesie.TypeSafe(), req: text},
+		{name: "should encode text as openrouter sends it", provider: onesie.OpenRouter(), req: text},
+		{name: "should encode text as berget sends it", provider: onesie.Berget(), req: text},
+		{name: "should encode text as levanto sends it", provider: onesie.Levanto(), req: text},
+		{name: "should encode text as cloudflare sends it to jev", provider: onesie.Cloudflare(), req: text},
+		{name: "should encode an image as typesafe sends it", provider: onesie.TypeSafe(), req: photo("", oneNoul())},
+		{name: "should encode an image as openrouter sends it", provider: onesie.OpenRouter(), req: photo("", oneNoul())},
+		{name: "should encode an image as cloudflare sends it to jev", provider: onesie.Cloudflare(), req: photo("", oneNoul())},
+		{
+			name: "should encode an image as cloudflare sends it to clef", provider: onesie.Cloudflare(),
+			req: photo("clef-flash", oneNoul()),
+		},
+	}
+
+	for _, tc := range sent {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example",
+				onesie.WithProvider(tc.provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			// The answer is not every provider's shape, so only the body sent matters here.
+			_, _ = client.SystemOne(t.Context(), tc.req)
+
+			body, err := tc.provider.Encode(tc.req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := transport.lastBody(); string(body) != got {
+				t.Errorf("Encode = %.300s\nSystemOne sent %.300s", body, got)
+			}
+		})
+	}
+
+	t.Run("should write the built in default for a blank model", func(t *testing.T) {
+		t.Parallel()
+
+		typesafe, err := onesie.TypeSafe().Encode(text)
+		if err != nil || !strings.Contains(string(typesafe), `"model":"`+onesie.DefaultModel+`"`) {
+			t.Errorf("typesafe = %s, %v, want the default model", typesafe, err)
+		}
+
+		cloudflare, err := onesie.Cloudflare().Encode(text)
+		if err != nil || !strings.Contains(string(cloudflare), `"model":"`+onesie.CloudflareDefaultModel+`"`) ||
+			!strings.Contains(string(cloudflare), `"input":`) {
+			t.Errorf("cloudflare = %s, %v, want jev's envelope", cloudflare, err)
+		}
+	})
+
+	t.Run("should trim the model", func(t *testing.T) {
+		t.Parallel()
+
+		body, err := onesie.TypeSafe().Encode(onesie.Request{Model: "  jev-1 ", State: "s", Questions: oneNoul()})
+		if err != nil || !strings.Contains(string(body), `"model":"jev-1"`) {
+			t.Errorf("body = %s, %v, want the trimmed model", body, err)
+		}
+	})
+
+	t.Run("should never write long context in the body", func(t *testing.T) {
+		t.Parallel()
+
+		body, err := onesie.TypeSafe().Encode(onesie.Request{State: "s", Questions: oneNoul(), LongContext: true})
+		if err != nil || strings.Contains(string(body), "long_context") {
+			t.Errorf("body = %s, %v, want no long_context", body, err)
+		}
+	})
+
+	t.Run("should return the marshalled body on a provider built outside the package", func(t *testing.T) {
+		t.Parallel()
+
+		body, err := onesie.Provider{Name: "mine"}.Encode(text)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want, err := onesie.MarshalBody(text)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if string(body) != string(want) {
+			t.Errorf("body = %s, want %s", body, want)
+		}
+	})
+
+	t.Run("should encode a box question with no assets on typesafe, which ValidateRequest rejects", func(t *testing.T) {
+		t.Parallel()
+
+		req := onesie.Request{State: "s", Questions: box}
+		if onesie.ValidateRequest(req) == nil {
+			t.Fatal("ValidateRequest took the request, so this case proves nothing")
+		}
+
+		if _, err := onesie.TypeSafe().Encode(req); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("should inline a one byte image on openrouter, which ValidateRequest rejects", func(t *testing.T) {
+		t.Parallel()
+
+		if onesie.ValidateRequest(tiny) == nil {
+			t.Fatal("ValidateRequest took the request, so this case proves nothing")
+		}
+
+		body, err := onesie.OpenRouter().Encode(tiny)
+		if err != nil || !strings.Contains(string(body), "data:image/png;base64,AQ==") {
+			t.Errorf("body = %s, %v, want the image inlined", body, err)
+		}
+	})
 }
