@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -18,44 +19,22 @@ func inlineParts(body []byte) ([]byte, []RequestOption, error) {
 		return nil, nil, err
 	}
 
-	parts, err := partsOf(members)
+	urls, err := dataURLsOf(members)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	rewriter := &inliner{parts: parts, refs: slices.Sorted(maps.Keys(parts)), used: map[string]bool{}}
-
-	var out bytes.Buffer
-
-	enc := jsontext.NewEncoder(&out, rawOptions...)
-	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+	parts, err := partsFrom(urls)
+	if err != nil {
 		return nil, nil, err
 	}
 
-	for _, m := range members {
-		if m.name == "assets" {
-			continue
-		}
+	rewriter := &inliner{refs: slices.Sorted(maps.Keys(urls)), used: map[string]bool{}, render: partsRenderer(parts)}
 
-		if err := enc.WriteToken(jsontext.String(m.name)); err != nil {
-			return nil, nil, err
-		}
-
-		if err := rewriter.member(enc, m); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+	rewritten, err := rewriter.rewrite(members, nil)
+	if err != nil {
 		return nil, nil, err
 	}
-
-	if err := rewriter.checkUsed(); err != nil {
-		return nil, nil, err
-	}
-
-	// The encoder ends a top level value with a newline, which a request body does not need.
-	rewritten := bytes.TrimSuffix(out.Bytes(), []byte("\n"))
 
 	if len(rewritten) > MaxBodyBytes {
 		return nil, nil, &ValidationError{Message: fmt.Sprintf(
@@ -65,6 +44,88 @@ func inlineParts(body []byte) ([]byte, []RequestOption, error) {
 	}
 
 	return rewritten, nil, nil
+}
+
+func assetsToImages(body []byte) ([]byte, []RequestOption, error) {
+	members, err := readMembers(body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if slices.ContainsFunc(members, func(m member) bool { return m.name == "images" }) {
+		return nil, nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
+	}
+
+	urls, err := dataURLsOf(members)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rewriter := &inliner{refs: slices.Sorted(maps.Keys(urls)), used: map[string]bool{}}
+	rewriter.render = rewriter.labels
+
+	rewritten, err := rewriter.rewrite(members, func(enc *jsontext.Encoder) error {
+		if writeErr := enc.WriteToken(jsontext.String("images")); writeErr != nil {
+			return writeErr
+		}
+
+		ordered := make([]string, 0, len(rewriter.order))
+		for _, ref := range rewriter.order {
+			ordered = append(ordered, urls[ref])
+		}
+
+		images, marshalErr := json.Marshal(ordered)
+		if marshalErr != nil {
+			return marshalErr
+		}
+
+		return enc.WriteValue(images)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return rewritten, nil, nil
+}
+
+func (r *inliner) rewrite(members []member, last func(*jsontext.Encoder) error) ([]byte, error) {
+	var out bytes.Buffer
+
+	enc := jsontext.NewEncoder(&out, rawOptions...)
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return nil, err
+	}
+
+	for _, m := range members {
+		if m.name == "assets" {
+			continue
+		}
+
+		if err := enc.WriteToken(jsontext.String(m.name)); err != nil {
+			return nil, err
+		}
+
+		if err := r.member(enc, m); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := r.checkUsed(); err != nil {
+		return nil, err
+	}
+
+	if last != nil {
+		if err := last(enc); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return nil, err
+	}
+
+	// The encoder ends a top level value with a newline, which a request body does not need.
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
 }
 
 func readMembers(body []byte) ([]member, error) {
@@ -100,8 +161,8 @@ type member struct {
 	value jsontext.Value
 }
 
-func partsOf(members []member) (map[string]jsontext.Value, error) {
-	parts := map[string]jsontext.Value{}
+func dataURLsOf(members []member) (map[string]string, error) {
+	urls := map[string]string{}
 
 	for _, m := range members {
 		if m.name != "assets" {
@@ -117,32 +178,47 @@ func partsOf(members []member) (map[string]jsontext.Value, error) {
 		}
 
 		for ref, asset := range assets {
-			part, err := partOf(ref, asset.Format, asset.Data)
+			url, err := dataURLOf(ref, asset.Format, asset.Data)
 			if err != nil {
 				return nil, err
 			}
 
-			parts[ref] = part
+			urls[ref] = url
 		}
 	}
 
-	return parts, nil
+	return urls, nil
 }
 
-func partOf(ref string, format, data any) (jsontext.Value, error) {
+func dataURLOf(ref string, format, data any) (string, error) {
 	formatText, isText := format.(string)
 
 	mime := map[string]string{"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}[strings.ToLower(formatText)]
 	if !isText || mime == "" {
-		return nil, &ValidationError{Message: fmt.Sprintf("asset '%s' needs a format, png or jpg", ref)}
+		return "", &ValidationError{Message: fmt.Sprintf("asset '%s' needs a format, png or jpg", ref)}
 	}
 
 	encoded, isText := data.(string)
 	if !isText {
-		return nil, &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}
+		return "", &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}
 	}
 
-	return json.Marshal(imagePart{Type: "image_url", ImageURL: imageURL{URL: "data:" + mime + ";base64," + encoded}})
+	return "data:" + mime + ";base64," + encoded, nil
+}
+
+func partsFrom(urls map[string]string) (map[string]jsontext.Value, error) {
+	parts := make(map[string]jsontext.Value, len(urls))
+
+	for ref, url := range urls {
+		part, err := json.Marshal(imagePart{Type: "image_url", ImageURL: imageURL{URL: url}})
+		if err != nil {
+			return nil, err
+		}
+
+		parts[ref] = part
+	}
+
+	return parts, nil
 }
 
 type imagePart struct {
@@ -285,21 +361,7 @@ func (r *inliner) text(enc *jsontext.Encoder, raw jsontext.Value) error {
 		return enc.WriteValue(raw)
 	}
 
-	if len(pieces) == 1 {
-		return r.piece(enc, pieces[0])
-	}
-
-	if err := enc.WriteToken(jsontext.BeginArray); err != nil {
-		return err
-	}
-
-	for _, p := range pieces {
-		if err := r.piece(enc, p); err != nil {
-			return err
-		}
-	}
-
-	return enc.WriteToken(jsontext.EndArray)
+	return r.render(enc, pieces)
 }
 
 func (r *inliner) split(text string) []piece {
@@ -320,6 +382,11 @@ func (r *inliner) split(text string) []piece {
 		}
 
 		pieces = append(pieces, piece{ref: ref})
+
+		if !r.used[ref] {
+			r.order = append(r.order, ref)
+		}
+
 		r.used[ref] = true
 		i += len(ref)
 		start = i
@@ -344,12 +411,48 @@ func (r *inliner) longestAt(text string) string {
 	return longest
 }
 
-func (r *inliner) piece(enc *jsontext.Encoder, p piece) error {
-	if p.ref != "" {
-		return enc.WriteValue(r.parts[p.ref])
+func partsRenderer(parts map[string]jsontext.Value) func(*jsontext.Encoder, []piece) error {
+	write := func(enc *jsontext.Encoder, p piece) error {
+		if p.ref != "" {
+			return enc.WriteValue(parts[p.ref])
+		}
+
+		return enc.WriteToken(jsontext.String(p.text))
 	}
 
-	return enc.WriteToken(jsontext.String(p.text))
+	return func(enc *jsontext.Encoder, pieces []piece) error {
+		if len(pieces) == 1 {
+			return write(enc, pieces[0])
+		}
+
+		if err := enc.WriteToken(jsontext.BeginArray); err != nil {
+			return err
+		}
+
+		for _, p := range pieces {
+			if err := write(enc, p); err != nil {
+				return err
+			}
+		}
+
+		return enc.WriteToken(jsontext.EndArray)
+	}
+}
+
+func (r *inliner) labels(enc *jsontext.Encoder, pieces []piece) error {
+	var text strings.Builder
+
+	for _, p := range pieces {
+		if p.ref == "" {
+			text.WriteString(p.text)
+
+			continue
+		}
+
+		text.WriteString("image " + strconv.Itoa(slices.Index(r.order, p.ref)+1))
+	}
+
+	return enc.WriteToken(jsontext.String(text.String()))
 }
 
 func (r *inliner) checkUsed() error {
@@ -364,9 +467,10 @@ func (r *inliner) checkUsed() error {
 }
 
 type inliner struct {
-	parts map[string]jsontext.Value
-	refs  []string
-	used  map[string]bool
+	refs   []string
+	used   map[string]bool
+	order  []string
+	render func(*jsontext.Encoder, []piece) error
 }
 
 type piece struct {
