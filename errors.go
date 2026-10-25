@@ -143,7 +143,48 @@ func extractMessage(body any) string {
 		return describeValidation(list)
 	}
 
-	return ""
+	return firstError(fields)
+}
+
+func firstError(fields map[string]any) string {
+	list, isList := fields["errors"].([]any)
+	if !isList || len(list) == 0 {
+		return ""
+	}
+
+	entry, isObject := list[0].(map[string]any)
+	if !isObject {
+		return ""
+	}
+
+	text, isText := entry["message"].(string)
+	if !isText {
+		return ""
+	}
+
+	return trimWorkersAI(text)
+}
+
+func trimWorkersAI(text string) string {
+	for {
+		trimmed := strings.TrimPrefix(strings.TrimPrefix(text, "AiError: "), "Ai: ")
+		if trimmed == text {
+			break
+		}
+
+		text = trimmed
+	}
+
+	text = strings.TrimPrefix(text, "Model execution failed (User Input Error): ")
+
+	// AI Gateway forwards TypeSafe's own error body as the rest of the message.
+	if strings.HasPrefix(text, "{") && json.Valid([]byte(text)) {
+		if inner := extractMessage(decodeBody([]byte(text))); inner != "" {
+			return inner
+		}
+	}
+
+	return text
 }
 
 func unwrapMessage(text string) string {

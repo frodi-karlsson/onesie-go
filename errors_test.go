@@ -125,6 +125,69 @@ func TestNewAPIError(t *testing.T) {
 			sentinel: ErrServer,
 			message:  "onesie: 529 overloaded",
 		},
+		{
+			name:     "should read a cloudflare 401",
+			status:   401,
+			body:     `{"result":null,"success":false,"errors":[{"code":10000,"message":"Authentication error"}],"messages":[]}`,
+			sentinel: ErrAuthentication,
+			message:  "onesie: 401 Authentication error",
+		},
+		{
+			name:     "should read a cloudflare 402",
+			status:   402,
+			body:     `{"errors":[{"message":"Insufficient balance; add money to your gateway or use BYOK","code":2021}],"success":false,"result":{},"messages":[]}`,
+			sentinel: ErrPaymentRequired,
+			message:  "onesie: 402 Insufficient balance; add money to your gateway or use BYOK",
+		},
+		{
+			name:     "should read a cloudflare 404 for an unknown model",
+			status:   404,
+			body:     `{"errors":[{"message":"Model not found: typesafe/jev-nope","code":7003}],"success":false,"result":{},"messages":[]}`,
+			sentinel: ErrNotFound,
+			message:  "onesie: 404 Model not found: typesafe/jev-nope",
+		},
+		{
+			name:   "should trim the gateway's prefix from a forwarded typesafe error",
+			status: 400,
+			body: `{"errors":[{"message":"Model execution failed (User Input Error): Noul question must have ` +
+				`criteria or instructions: c","code":7003}],"success":false,"result":{},"messages":[]}`,
+			sentinel: ErrBadRequest,
+			message:  "onesie: 400 Noul question must have criteria or instructions: c",
+		},
+		{
+			name:   "should read a forwarded typesafe body inside the message",
+			status: 400,
+			body: `{"errors":[{"message":"Model execution failed (User Input Error): {\"detail\":{\"error_type\":` +
+				`\"max_tokens_exceeded\"}}","code":7003}],"success":false,"result":{},"messages":[]}`,
+			sentinel: ErrBadRequest,
+			message:  "onesie: 400 max_tokens_exceeded",
+		},
+		{
+			name:   "should trim every AiError prefix",
+			status: 422,
+			body: `{"errors":[{"message":"AiError: AiError: Request body failed validation: images: request ` +
+				`exceeds the image count limit (cd32f070-7a36-4ef3-b9d3-a4c01b75bee9)","code":3030}],` +
+				`"success":false,"result":{},"messages":[]}`,
+			sentinel: ErrUnprocessableEntity,
+			message: "onesie: 422 Request body failed validation: images: request exceeds the image count limit " +
+				"(cd32f070-7a36-4ef3-b9d3-a4c01b75bee9)",
+		},
+		{
+			name:   "should read a workers ai 400 for an unknown model",
+			status: 400,
+			body: `{"errors":[{"message":"AiError: No such model: No such model @cf/cloudflare/clef-nope or task ` +
+				`(72980980-d159-4205-859d-0aca1986d075)","code":5007}],"success":false,"result":{},"messages":[]}`,
+			sentinel: ErrBadRequest,
+			message: "onesie: 400 No such model: No such model @cf/cloudflare/clef-nope or task " +
+				"(72980980-d159-4205-859d-0aca1986d075)",
+		},
+		{
+			name:     "should leave an AiError text in another shape untrimmed",
+			status:   400,
+			body:     `{"error":"AiError: something"}`,
+			sentinel: ErrBadRequest,
+			message:  "onesie: 400 AiError: something",
+		},
 	}
 
 	for _, tc := range tests {
@@ -188,6 +251,21 @@ func TestNewAPIError(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should trim an Ai prefix after an AiError one", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"errors":[{"message":"AiError: Ai: The estimated number of input and maximum output tokens ` +
+			`(50025) exceeded this model context window limit (24576). (6c70e61c-5f06-4c89-8345-d375ce1cda94)",` +
+			`"code":5021}],"success":false,"result":{},"messages":[]}`
+
+		want := "onesie: 413 The estimated number of input and maximum output tokens (50025) exceeded this " +
+			"model context window limit (24576). (6c70e61c-5f06-4c89-8345-d375ce1cda94)"
+
+		if got := newAPIError(413, http.Header{}, "Cf-Ray", []byte(body), time.Now()).Error(); got != want {
+			t.Errorf("message\n got: %s\nwant: %s", got, want)
+		}
+	})
 
 	for _, tc := range []struct {
 		name     string
