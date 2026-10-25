@@ -133,6 +133,13 @@ func TestNewAPIError(t *testing.T) {
 			message:  "onesie: 401 Authentication error",
 		},
 		{
+			name:     "should match ErrAuthentication for a token the models search refuses with a 400",
+			status:   400,
+			body:     `{"success":false,"errors":[{"code":9106,"message":"Authentication failed (status: 400)"}],"messages":[],"result":null}`,
+			sentinel: ErrAuthentication,
+			message:  "onesie: 400 Authentication failed (status: 400)",
+		},
+		{
 			name:     "should read a cloudflare 402",
 			status:   402,
 			body:     `{"errors":[{"message":"Insufficient balance; add money to your gateway or use BYOK","code":2021}],"success":false,"result":{},"messages":[]}`,
