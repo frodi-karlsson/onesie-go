@@ -433,22 +433,6 @@ func fakeProvider() Provider {
 	}
 }
 
-func unwrapResult(body []byte) ([]byte, error) {
-	var wire struct {
-		Result json.RawMessage `json:"result"`
-	}
-
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return nil, err
-	}
-
-	if wire.Result == nil {
-		return nil, errors.New("no result")
-	}
-
-	return wire.Result, nil
-}
-
 type recorder struct {
 	mu       sync.Mutex
 	requests []sentRequest
