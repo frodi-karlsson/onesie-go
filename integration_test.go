@@ -700,7 +700,7 @@ func TestLiveVerifyKey(t *testing.T) {
 		}
 	})
 
-	t.Run("should return ErrAuthentication for a bad key under openrouter", func(t *testing.T) {
+	t.Run("should refuse a bad key under openrouter", func(t *testing.T) {
 		t.Parallel()
 
 		_ = openRouterKey(t)
@@ -715,8 +715,8 @@ func TestLiveVerifyKey(t *testing.T) {
 		}
 
 		_, err = client.VerifyKey(liveContext(t, 30*time.Second))
-		if !errors.Is(err, onesie.ErrAuthentication) {
-			t.Fatalf("error got %v, want ErrAuthentication", err)
+		if !errors.Is(err, onesie.ErrAuthentication) && !errors.Is(err, onesie.ErrPermissionDenied) {
+			t.Fatalf("error got %v, want ErrAuthentication or ErrPermissionDenied", err)
 		}
 	})
 }

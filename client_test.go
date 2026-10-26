@@ -1983,6 +1983,23 @@ func TestClientVerifyKey(t *testing.T) {
 			wantModels: 1,
 		},
 		{
+			name:       "should get the openrouter key endpoint under a custom base URL with a trailing slash",
+			provider:   onesie.OpenRouter(),
+			basePath:   "/proxy/api/",
+			listing:    openRouterListing,
+			keyBody:    openRouterKey,
+			wantPaths:  []string{"GET /proxy/api/v1/models", "GET /proxy/api/v1/key"},
+			wantModels: 1,
+		},
+		{
+			name:      "should refuse a key endpoint that answers 200 with a page that is not JSON",
+			provider:  onesie.OpenRouter(),
+			listing:   openRouterListing,
+			keyBody:   `<!doctype html><html><body>Not the API</body></html>`,
+			wantPaths: []string{"GET /v1/models", "GET /v1/key"},
+			wantErr:   onesie.ErrResponse,
+		},
+		{
 			name:      "should report a key the openrouter key endpoint refuses with 401 as a listing 401",
 			provider:  onesie.OpenRouter(),
 			listing:   openRouterListing,

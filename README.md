@@ -46,7 +46,9 @@ service can set its own deadline and cancellation policy.
 needs the key. Berget's list does not, so it also asks one small question with the default model,
 which spends a few tokens. OpenRouter's list does not either, so it also requests the key endpoint,
 which spends none. A key that endpoint refuses fails with `ErrAuthentication` or
-`ErrPermissionDenied`, the same errors a refused listing returns.
+`ErrPermissionDenied`, the same errors a refused listing returns. Under a custom base URL the key
+endpoint must be reachable too, so a proxy that serves the models but not the key endpoint makes
+`VerifyKey` fail.
 
 Images and Box questions are experimental on TypeSafe's side. Put an `onesie.Image` from
 `onesie.NewImage` in `Request.Assets` under a reference, and write the reference where the image

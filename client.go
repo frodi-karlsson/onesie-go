@@ -161,7 +161,9 @@ func (c *Client) checkKey(ctx context.Context, opts []RequestOption) error {
 
 		return err
 	case keyCheckByEndpoint:
-		_, err := c.do(ctx, http.MethodGet, check.path, nil, nil, identity, opts...)
+		var discarded json.RawMessage
+
+		_, err := c.do(ctx, http.MethodGet, check.path, nil, &discarded, identity, opts...)
 
 		return err
 	default:
