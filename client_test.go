@@ -504,7 +504,6 @@ func TestClientSystemOne(t *testing.T) {
 		{name: "a noul answer that sends value instead of noul", answer: `{"type":"noul","value":0.1}`},
 		{name: "a noul answer whose noul is null", answer: `{"type":"noul","noul":null}`},
 		{name: "a noul answer whose noul is a string", answer: `{"type":"noul","noul":"0.1"}`},
-		{name: "a noul answer above 1", answer: `{"type":"noul","noul":7}`},
 		{name: "a choice answer that carries only its type", answer: `{"type":"choice"}`},
 		{name: "a choice answer with no probabilities", answer: `{"type":"choice","choice":"a"}`},
 		{name: "a score answer that carries only its type", answer: `{"type":"score"}`},
@@ -519,7 +518,8 @@ func TestClientSystemOne(t *testing.T) {
 
 				ask := onesie.Request{Model: route.model, State: "x", Questions: oneNoul()}
 				respond := func(answer string) (string, error) {
-					response := route.wrap(`{"model":"m","answers":{"q":` + answer + `},"usage":{}}`)
+					response := route.wrap(`{"model":"m","answers":{"q":` + answer +
+						`},"usage":{"input_tokens":7,"output_tokens":3}}`)
 
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 						_, _ = io.WriteString(w, response)
@@ -549,8 +549,14 @@ func TestClientSystemOne(t *testing.T) {
 					t.Errorf("errors = %q and %q, want both to start %q", want.Error(), got.Error(), prefix)
 				}
 
-				if got.Status != want.Status || string(got.Body) != response || got.Usage != nil || got.Message != "" {
+				if got.Status != want.Status || string(got.Body) != response || got.Message != "" {
 					t.Errorf("error = %+v, want it shaped like %+v holding %s", got, want, response)
+				}
+
+				for _, spent := range []*onesie.ResponseError{want, got} {
+					if spent.Usage == nil || spent.Usage.InputTokens != 7 || spent.Usage.OutputTokens != 3 {
+						t.Errorf("usage = %+v, want the 7 in and 3 out the response billed", spent.Usage)
+					}
 				}
 			})
 		}

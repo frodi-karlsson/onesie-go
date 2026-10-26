@@ -121,8 +121,8 @@ func TestResultUnmarshalJSON(t *testing.T) {
 		{name: "should refuse a noul answer whose noul is a bool", answer: `{"type":"noul","noul":true}`, refuse: true},
 		{name: "should refuse a noul answer that sends value instead of noul", answer: `{"type":"noul","value":0.9}`, refuse: true},
 		{name: "should refuse a noul answer that sends p instead of noul", answer: `{"type":"noul","p":0.9}`, refuse: true},
-		{name: "should refuse a noul answer above 1", answer: `{"type":"noul","noul":1.5}`, refuse: true},
-		{name: "should refuse a noul answer below 0", answer: `{"type":"noul","noul":-0.1}`, refuse: true},
+		{name: "should leave a noul answer above 1 to the caller", answer: `{"type":"noul","noul":1.5}`},
+		{name: "should leave a noul answer below 0 to the caller", answer: `{"type":"noul","noul":-0.1}`},
 		{
 			name:   "should accept a choice answer",
 			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":0.2},"confidence":0.7}`,
@@ -149,8 +149,8 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			answer: `{"type":"choice","choice":"","probabilities":{"a":0.8,"b":0.2}}`, refuse: true,
 		},
 		{
-			name:   "should refuse a choice answer whose choice is not among its probabilities",
-			answer: `{"type":"choice","choice":"c","probabilities":{"a":0.8,"b":0.2}}`, refuse: true,
+			name:   "should leave a choice that is not among its probabilities to the caller",
+			answer: `{"type":"choice","choice":"c","probabilities":{"a":0.8,"b":0.2}}`,
 		},
 		{name: "should refuse a choice answer with no probabilities", answer: `{"type":"choice","choice":"a"}`, refuse: true},
 		{
@@ -174,16 +174,16 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			answer: `{"type":"choice","choice":"a","probabilities":{"a":"0.8","b":0.2}}`, refuse: true,
 		},
 		{
-			name:   "should refuse a choice answer with a probability above 1",
-			answer: `{"type":"choice","choice":"a","probabilities":{"a":1.2,"b":0.2}}`, refuse: true,
+			name:   "should leave a choice probability above 1 to the caller",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":1.2,"b":0.2}}`,
 		},
 		{
-			name:   "should refuse a choice answer with a probability below 0",
-			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":-0.2}}`, refuse: true,
+			name:   "should leave a choice probability below 0 to the caller",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":-0.2}}`,
 		},
 		{
-			name:   "should refuse a choice answer whose confidence is above 1",
-			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":0.2},"confidence":1.5}`, refuse: true,
+			name:   "should leave a choice confidence above 1 to the caller",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":0.2},"confidence":1.5}`,
 		},
 		{
 			name:   "should refuse a choice answer whose confidence is a string",
@@ -209,12 +209,16 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			answer: `{"type":"score","score":"1","probabilities":{"0":0,"1":1}}`, refuse: true,
 		},
 		{
-			name:   "should refuse a score answer below the lowest level",
-			answer: `{"type":"score","score":-1,"probabilities":{"0":0.5,"1":0.5}}`, refuse: true,
+			name:   "should leave a score below the lowest level to the caller",
+			answer: `{"type":"score","score":-1,"probabilities":{"0":0.5,"1":0.5}}`,
 		},
 		{
-			name:   "should refuse a score answer above the highest level",
-			answer: `{"type":"score","score":2.5,"probabilities":{"0":0.5,"1":0.5}}`, refuse: true,
+			name:   "should leave a score above the highest level to the caller",
+			answer: `{"type":"score","score":2.5,"probabilities":{"0":0.5,"1":0.5}}`,
+		},
+		{
+			name:   "should accept a score answer whose probability keys are labels",
+			answer: `{"type":"score","score":1.2,"probabilities":{"calm":0.1,"annoyed":0.6,"furious":0.3}}`,
 		},
 		{name: "should refuse a score answer with no probabilities", answer: `{"type":"score","score":1}`, refuse: true},
 		{
@@ -230,12 +234,12 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			answer: `{"type":"score","score":1,"probabilities":{"0":null,"1":1}}`, refuse: true,
 		},
 		{
-			name:   "should refuse a score answer with a probability above 1",
-			answer: `{"type":"score","score":1,"probabilities":{"0":0,"1":2}}`, refuse: true,
+			name:   "should leave a score probability above 1 to the caller",
+			answer: `{"type":"score","score":1,"probabilities":{"0":0,"1":2}}`,
 		},
 		{
-			name:   "should refuse a score answer whose confidence is below 0",
-			answer: `{"type":"score","score":1,"probabilities":{"0":0,"1":1},"confidence":-0.5}`, refuse: true,
+			name:   "should leave a score confidence below 0 to the caller",
+			answer: `{"type":"score","score":1,"probabilities":{"0":0,"1":1},"confidence":-0.5}`,
 		},
 		{
 			name:   "should accept a box answer",
@@ -265,8 +269,8 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			answer: `{"type":"box","box":{"top":"0.25","bottom":0.82,"left":0.44,"right":0.84}}`, refuse: true,
 		},
 		{
-			name:   "should refuse a box answer whose confidence is above 1",
-			answer: `{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":3}`, refuse: true,
+			name:   "should leave a box confidence above 1 to the caller",
+			answer: `{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":3}`,
 		},
 	}
 
@@ -290,6 +294,53 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should refuse the whole result when one of several answers has a missing field", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"m","answers":{` +
+			`"fine":{"type":"noul","noul":0.9},` +
+			`"broken":{"type":"choice","probabilities":{"a":1}},` +
+			`"also_fine":{"type":"box","box":{"top":0,"bottom":1,"left":0,"right":1}}},"usage":{}}`
+
+		var result onesie.Result
+
+		err := json.Unmarshal([]byte(body), &result)
+		if err == nil || err.Error() != `answer "broken": the choice answer has no choice, or it is null` {
+			t.Fatalf("error = %v, want the broken answer named", err)
+		}
+	})
+
+	t.Run("should name the first null probability in sorted order", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"m","answers":{"x":{"type":"choice","choice":"a",` +
+			`"probabilities":{"z":null,"b":null,"a":1}}},"usage":{}}`
+
+		for range 20 {
+			var result onesie.Result
+
+			err := json.Unmarshal([]byte(body), &result)
+			if err == nil || err.Error() != `answer "x": the probability of "b" is null` {
+				t.Fatalf("error = %v, want the null probability of b named", err)
+			}
+		}
+	})
+
+	t.Run("should name the first missing box edge in a fixed order", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"m","answers":{"x":{"type":"box","box":{"top":0.1}}},"usage":{}}`
+
+		for range 20 {
+			var result onesie.Result
+
+			err := json.Unmarshal([]byte(body), &result)
+			if err == nil || err.Error() != `answer "x": the box answer has no box bottom, or it is null` {
+				t.Fatalf("error = %v, want the bottom edge named", err)
+			}
+		}
+	})
 
 	t.Run("should round trip back to the wire shape", func(t *testing.T) {
 		t.Parallel()

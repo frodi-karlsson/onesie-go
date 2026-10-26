@@ -3,8 +3,9 @@ package onesie
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
-	"strconv"
+	"slices"
 )
 
 // Result is one response from the evaluation endpoint.
@@ -95,16 +96,29 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	r.Usage = wire.Usage
 	r.Answers = make(map[string]Answer, len(wire.Answers))
 
-	for name, raw := range wire.Answers {
-		decoded, err := decodeAnswer(raw)
+	for _, name := range slices.Sorted(maps.Keys(wire.Answers)) {
+		decoded, err := decodeAnswer(wire.Answers[name])
 		if err != nil {
-			return fmt.Errorf("answer %q: %w", name, err)
+			return &answerDecodeError{usage: wire.Usage, err: fmt.Errorf("answer %q: %w", name, err)}
 		}
 
 		r.Answers[name] = decoded
 	}
 
 	return nil
+}
+
+type answerDecodeError struct {
+	usage Usage
+	err   error
+}
+
+func (e *answerDecodeError) Error() string {
+	return e.err.Error()
+}
+
+func (e *answerDecodeError) Unwrap() error {
+	return e.err
 }
 
 func (r *Result) answer(name string) (Answer, error) {
@@ -159,17 +173,13 @@ func decodeNoul(raw json.RawMessage) (*NoulAnswer, error) {
 		return nil, missingField("noul", "noul")
 	}
 
-	if err := checkProbability("noul", *wire.Noul); err != nil {
-		return nil, err
-	}
-
 	return &NoulAnswer{Noul: *wire.Noul}, nil
 }
 
 func decodeChoice(raw json.RawMessage) (*ChoiceAnswer, error) {
 	var wire struct {
 		Choice        *string             `json:"choice"`
-		Confidence    *float64            `json:"confidence"`
+		Confidence    float64             `json:"confidence"`
 		Probabilities map[string]*float64 `json:"probabilities"`
 	}
 
@@ -186,22 +196,13 @@ func decodeChoice(raw json.RawMessage) (*ChoiceAnswer, error) {
 		return nil, err
 	}
 
-	if _, ok := probabilities[*wire.Choice]; !ok {
-		return nil, fmt.Errorf("the choice %q is not among its probabilities", *wire.Choice)
-	}
-
-	confidence, err := optionalConfidence(wire.Confidence)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ChoiceAnswer{Choice: *wire.Choice, Confidence: confidence, Probabilities: probabilities}, nil
+	return &ChoiceAnswer{Choice: *wire.Choice, Confidence: wire.Confidence, Probabilities: probabilities}, nil
 }
 
 func decodeScore(raw json.RawMessage) (*ScoreAnswer, error) {
 	var wire struct {
 		Score         *float64            `json:"score"`
-		Confidence    *float64            `json:"confidence"`
+		Confidence    float64             `json:"confidence"`
 		Legend        map[string]string   `json:"legend"`
 		Probabilities map[string]*float64 `json:"probabilities"`
 	}
@@ -219,17 +220,8 @@ func decodeScore(raw json.RawMessage) (*ScoreAnswer, error) {
 		return nil, err
 	}
 
-	if top, found := highestLevel(probabilities); !(*wire.Score >= 0) || (found && *wire.Score > float64(top)) {
-		return nil, fmt.Errorf("the score %v is outside its levels", *wire.Score)
-	}
-
-	confidence, err := optionalConfidence(wire.Confidence)
-	if err != nil {
-		return nil, err
-	}
-
 	return &ScoreAnswer{
-		Score: *wire.Score, Confidence: confidence, Legend: wire.Legend, Probabilities: probabilities,
+		Score: *wire.Score, Confidence: wire.Confidence, Legend: wire.Legend, Probabilities: probabilities,
 	}, nil
 }
 
@@ -241,7 +233,7 @@ func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
 			Left   *float64 `json:"left"`
 			Right  *float64 `json:"right"`
 		} `json:"box"`
-		Confidence *float64 `json:"confidence"`
+		Confidence float64 `json:"confidence"`
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
@@ -252,35 +244,27 @@ func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
 		return nil, missingField("box", "box")
 	}
 
-	for edge, value := range map[string]*float64{
-		"top": wire.Box.Top, "bottom": wire.Box.Bottom, "left": wire.Box.Left, "right": wire.Box.Right,
-	} {
-		if value == nil {
-			return nil, missingField("box", "box "+edge)
-		}
+	edges := []struct {
+		name  string
+		value *float64
+	}{
+		{"top", wire.Box.Top}, {"bottom", wire.Box.Bottom}, {"left", wire.Box.Left}, {"right", wire.Box.Right},
 	}
 
-	confidence, err := optionalConfidence(wire.Confidence)
-	if err != nil {
-		return nil, err
+	for _, edge := range edges {
+		if edge.value == nil {
+			return nil, missingField("box", "box "+edge.name)
+		}
 	}
 
 	return &BoxAnswer{
 		Edges:      Edges{Top: *wire.Box.Top, Bottom: *wire.Box.Bottom, Left: *wire.Box.Left, Right: *wire.Box.Right},
-		Confidence: confidence,
+		Confidence: wire.Confidence,
 	}, nil
 }
 
 func missingField(kind, field string) error {
 	return fmt.Errorf("the %s answer has no %s, or it is null", kind, field)
-}
-
-func checkProbability(name string, value float64) error {
-	if !(value >= 0 && value <= 1) {
-		return fmt.Errorf("the %s %v is outside 0 to 1", name, value)
-	}
-
-	return nil
 }
 
 func requireProbabilities(kind string, wire map[string]*float64) (map[string]float64, error) {
@@ -290,39 +274,15 @@ func requireProbabilities(kind string, wire map[string]*float64) (map[string]flo
 
 	probabilities := make(map[string]float64, len(wire))
 
-	for option, value := range wire {
-		if value == nil {
+	for _, option := range slices.Sorted(maps.Keys(wire)) {
+		if wire[option] == nil {
 			return nil, fmt.Errorf("the probability of %q is null", option)
 		}
 
-		if err := checkProbability(fmt.Sprintf("probability of %q", option), *value); err != nil {
-			return nil, err
-		}
-
-		probabilities[option] = *value
+		probabilities[option] = *wire[option]
 	}
 
 	return probabilities, nil
-}
-
-func highestLevel(probabilities map[string]float64) (int, bool) {
-	top, found := 0, false
-
-	for key := range probabilities {
-		if level, err := strconv.Atoi(key); err == nil && (!found || level > top) {
-			top, found = level, true
-		}
-	}
-
-	return top, found
-}
-
-func optionalConfidence(wire *float64) (float64, error) {
-	if wire == nil {
-		return 0, nil
-	}
-
-	return *wire, checkProbability("confidence", *wire)
 }
 
 // Answer is one of NoulAnswer, ChoiceAnswer, ScoreAnswer or BoxAnswer.
