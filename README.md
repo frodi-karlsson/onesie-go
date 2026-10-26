@@ -42,6 +42,12 @@ The client uses the TypeSafe provider by default and reads `TYPESAFE_API_KEY`. P
 Levanto or Cloudflare, and `onesie.WithHTTPClient` to supply a transport. Requests accept a context so the calling
 service can set its own deadline and cancellation policy.
 
+`VerifyKey` lists the models and returns them. On TypeSafe, Levanto and Cloudflare the list itself
+needs the key. Berget's list does not, so it also asks one small question with the default model,
+which spends a few tokens. OpenRouter's list does not either, so it also requests the key endpoint,
+which spends none. A key that endpoint refuses fails with `ErrAuthentication` or
+`ErrPermissionDenied`, the same errors a refused listing returns.
+
 Images and Box questions are experimental on TypeSafe's side. Put an `onesie.Image` from
 `onesie.NewImage` in `Request.Assets` under a reference, and write the reference where the image
 belongs, usually as a state value. `SystemOne` sends the images header itself.

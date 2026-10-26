@@ -1899,20 +1899,30 @@ func TestClientVerifyKey(t *testing.T) {
 		levantoListing  = `{"models":[{"name":"levanto-sage-v1.4","description":"Levanto Sage decision model",` +
 			`"release_date":"2026-10-04"},{"name":"sage-latest","description":"Alias of levanto-sage-v1.4.",` +
 			`"release_date":"2026-10-04"}]}`
-		bergetListing = `{"object":"list","data":[{"id":"Qwen/Qwen3.5-2B","model_type":"system-one",` +
+		cloudflareListing = `{"result":[{"name":"@cf/cloudflare/clef-flash","description":"Clef Flash",` +
+			`"created_at":"2026-09-01 10:00:00"}],"success":true}`
+		openRouterListing = `{"data":[{"id":"typesafe/jev-latest","description":"Jev","created":1785542400}]}`
+		bergetListing     = `{"object":"list","data":[{"id":"Qwen/Qwen3.5-2B","model_type":"system-one",` +
 			`"aliases":["systemone"],"release_date":"2026-09-23"}]}`
 		bergetAnswer = `{"model":"Qwen/Qwen3.5-2B","answers":{"key":{"type":"noul","noul":0.9}},` +
 			`"usage":{"input_tokens":22,"output_tokens":15}}`
 		bergetBadKey = `{"error":{"code":"WALLET_NOT_SETUP","message":"No subscription found for this API key.",` +
 			`"param":null,"type":"insufficient_quota"}}`
+		openRouterKey    = `{"data":{"label":"sk-or-v1-abc...","usage":0,"limit":null}}`
+		openRouterNoKey  = `{"error":{"message":"No auth credentials found","code":401}}`
+		openRouterDenied = `{"error":{"message":"Forbidden","code":403}}`
+		openRouterBroken = `{"error":{"message":"Internal Server Error","code":500}}`
 	)
 
 	tests := []struct {
 		name       string
 		provider   onesie.Provider
+		basePath   string
 		listing    string
 		answer     string
 		status     int
+		keyBody    string
+		keyStatus  int
 		wantPaths  []string
 		wantModels int
 		wantErr    error
@@ -1932,6 +1942,13 @@ func TestClientVerifyKey(t *testing.T) {
 			wantModels: 2,
 		},
 		{
+			name:       "should only list the models on cloudflare, whose list needs the key",
+			provider:   onesie.Cloudflare(),
+			listing:    cloudflareListing,
+			wantPaths:  []string{"GET /models/search"},
+			wantModels: 2,
+		},
+		{
 			name:       "should list the models and ask one question on berget, whose list needs no key",
 			provider:   onesie.Berget(),
 			listing:    bergetListing,
@@ -1948,6 +1965,50 @@ func TestClientVerifyKey(t *testing.T) {
 			wantPaths: []string{"GET /v1/models/", "POST /v1/systemone"},
 			wantErr:   onesie.ErrPaymentRequired,
 		},
+		{
+			name:       "should list the models and get the key endpoint on openrouter, whose list needs no key",
+			provider:   onesie.OpenRouter(),
+			listing:    openRouterListing,
+			keyBody:    openRouterKey,
+			wantPaths:  []string{"GET /v1/models", "GET /v1/key"},
+			wantModels: 1,
+		},
+		{
+			name:       "should get the openrouter key endpoint under a custom base URL",
+			provider:   onesie.OpenRouter(),
+			basePath:   "/proxy/api",
+			listing:    openRouterListing,
+			keyBody:    openRouterKey,
+			wantPaths:  []string{"GET /proxy/api/v1/models", "GET /proxy/api/v1/key"},
+			wantModels: 1,
+		},
+		{
+			name:      "should report a key the openrouter key endpoint refuses with 401 as a listing 401",
+			provider:  onesie.OpenRouter(),
+			listing:   openRouterListing,
+			keyBody:   openRouterNoKey,
+			keyStatus: http.StatusUnauthorized,
+			wantPaths: []string{"GET /v1/models", "GET /v1/key"},
+			wantErr:   onesie.ErrAuthentication,
+		},
+		{
+			name:      "should report a key the openrouter key endpoint refuses with 403 as a listing 403",
+			provider:  onesie.OpenRouter(),
+			listing:   openRouterListing,
+			keyBody:   openRouterDenied,
+			keyStatus: http.StatusForbidden,
+			wantPaths: []string{"GET /v1/models", "GET /v1/key"},
+			wantErr:   onesie.ErrPermissionDenied,
+		},
+		{
+			name:      "should retry and report a 500 from the openrouter key endpoint as a listing 500",
+			provider:  onesie.OpenRouter(),
+			listing:   openRouterListing,
+			keyBody:   openRouterBroken,
+			keyStatus: http.StatusInternalServerError,
+			wantPaths: []string{"GET /v1/models", "GET /v1/key", "GET /v1/key", "GET /v1/key"},
+			wantErr:   onesie.ErrServer,
+		},
 	}
 
 	for _, tc := range tests {
@@ -1955,9 +2016,10 @@ func TestClientVerifyKey(t *testing.T) {
 			t.Parallel()
 
 			var (
-				mu    sync.Mutex
-				paths []string
-				body  string
+				mu         sync.Mutex
+				paths      []string
+				body       string
+				keyBearers []string
 			)
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1968,25 +2030,25 @@ func TestClientVerifyKey(t *testing.T) {
 				if r.Method == http.MethodPost {
 					body = string(raw)
 				}
+				if strings.HasSuffix(r.URL.Path, "/key") {
+					keyBearers = append(keyBearers, r.Header.Get("Authorization"))
+				}
 				mu.Unlock()
 
 				w.Header().Set("Content-Type", "application/json")
 
-				if r.Method == http.MethodGet {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/key"):
+					writeStatusBody(w, tc.keyStatus, tc.keyBody)
+				case r.Method == http.MethodGet:
 					_, _ = io.WriteString(w, tc.listing)
-
-					return
+				default:
+					writeStatusBody(w, tc.status, tc.answer)
 				}
-
-				if tc.status != 0 {
-					w.WriteHeader(tc.status)
-				}
-
-				_, _ = io.WriteString(w, tc.answer)
 			}))
 			defer server.Close()
 
-			client, _ := newTestClient(t, server.URL, onesie.WithProvider(tc.provider))
+			client, _ := newTestClient(t, server.URL+tc.basePath, onesie.WithProvider(tc.provider))
 
 			models, err := client.VerifyKey(t.Context())
 			if tc.wantErr != nil {
@@ -2008,10 +2070,70 @@ func TestClientVerifyKey(t *testing.T) {
 				t.Errorf("requests got %v, want %v", paths, tc.wantPaths)
 			}
 
+			for _, bearer := range keyBearers {
+				if bearer != "Bearer sk-test" {
+					t.Errorf("key endpoint Authorization = %q, want the client's key", bearer)
+				}
+			}
+
 			if body != "" && !strings.Contains(body, `"model":"`+onesie.BergetDefaultModel+`"`) {
 				t.Errorf("question body = %s, want the default model", body)
 			}
+
+			if body != "" && !strings.Contains(body, `"state":"onesie key check"`) {
+				t.Errorf("question body = %s, want the state onesie key check", body)
+			}
+
+			if tc.keyStatus >= http.StatusBadRequest {
+				assertListingFailsAlike(t, tc.provider, tc.keyStatus, tc.keyBody, err, len(keyBearers))
+			}
 		})
+	}
+}
+
+func writeStatusBody(w http.ResponseWriter, status int, body string) {
+	if status != 0 {
+		w.WriteHeader(status)
+	}
+
+	_, _ = io.WriteString(w, body)
+}
+
+func assertListingFailsAlike(
+	t *testing.T,
+	provider onesie.Provider,
+	status int,
+	body string,
+	keyErr error,
+	keyRequests int,
+) {
+	t.Helper()
+
+	var listings atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		listings.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		writeStatusBody(w, status, body)
+	}))
+	defer server.Close()
+
+	client, _ := newTestClient(t, server.URL, onesie.WithProvider(provider))
+
+	_, listErr := client.ListModels(t.Context())
+
+	var fromKey, fromList *onesie.APIError
+	if !errors.As(keyErr, &fromKey) || !errors.As(listErr, &fromList) {
+		t.Fatalf("errors got %T and %T, want an *APIError from both", keyErr, listErr)
+	}
+
+	if fromKey.Status != fromList.Status || fromKey.Error() != fromList.Error() {
+		t.Errorf("key endpoint error = %d %q, listing error = %d %q, want the same",
+			fromKey.Status, fromKey.Error(), fromList.Status, fromList.Error())
+	}
+
+	if int(listings.Load()) != keyRequests {
+		t.Errorf("listing requests = %d, key endpoint requests = %d, want the same", listings.Load(), keyRequests)
 	}
 }
 

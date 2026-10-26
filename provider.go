@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+const (
+	keyCheckByListing keyCheckMethod = iota
+	keyCheckByQuestion
+	keyCheckByEndpoint
+)
+
 // ProviderNamed returns the provider a --provider value or ONESIE_PROVIDER names.
 func ProviderNamed(name string) (Provider, error) {
 	switch strings.TrimSpace(name) {
@@ -61,6 +67,7 @@ func OpenRouter() Provider {
 		requestIDHeader: "X-Generation-Id",
 		modelsPath:      "/v1/models?output_modalities=decisions",
 		decodeModels:    decodeOpenRouterModels,
+		keyCheck:        keyCheck{by: keyCheckByEndpoint, path: "/v1/key"},
 		routeFor: oneRoute(route{
 			path:   systemOnePath,
 			takes:  takesEverything(),
@@ -74,14 +81,14 @@ func OpenRouter() Provider {
 // Berget serves the same wire protocol with its own models, which do not include jev-latest.
 func Berget() Provider {
 	return Provider{
-		Name:               "berget",
-		BaseURL:            "https://api.berget.ai",
-		EnvAPIKey:          "BERGET_API_KEY",
-		defaultModel:       BergetDefaultModel,
-		requestIDHeader:    "X-Request-Id",
-		modelsPath:         "/v1/models/",
-		decodeModels:       decodeBergetModels,
-		modelsAnswerAnyKey: true,
+		Name:            "berget",
+		BaseURL:         "https://api.berget.ai",
+		EnvAPIKey:       "BERGET_API_KEY",
+		defaultModel:    BergetDefaultModel,
+		requestIDHeader: "X-Request-Id",
+		modelsPath:      "/v1/models/",
+		decodeModels:    decodeBergetModels,
+		keyCheck:        keyCheck{by: keyCheckByQuestion},
 		routeFor: oneRoute(route{
 			path:   systemOnePath,
 			takes:  capabilities{longContext: true},
@@ -143,9 +150,16 @@ type Provider struct {
 	decodeModels    func([]byte) ([]ModelCard, error)
 	routeFor        func(model string) route
 
-	modelsAnswerAnyKey bool
-	accountBaseURL     func(account string) string
+	keyCheck       keyCheck
+	accountBaseURL func(account string) string
 }
+
+type keyCheck struct {
+	by   keyCheckMethod
+	path string
+}
+
+type keyCheckMethod int
 
 // ResolveModel reports the model a request will carry under this provider. It exists so a caller
 // that prints a request without building a client fills the model the way a client would.
