@@ -134,25 +134,41 @@ func (c *Client) AttemptTimeout() time.Duration {
 	return c.attemptTimeout
 }
 
-// VerifyKey lists the models and checks that the server accepts the key. Where the models list
-// needs no key, it also asks one small question with the default model, which spends a few tokens.
+// VerifyKey lists the models, which proves the key on TypeSafe, Levanto and Cloudflare. Berget also
+// answers one small question that spends a few tokens, and OpenRouter also answers its key endpoint.
 func (c *Client) VerifyKey(ctx context.Context, opts ...RequestOption) ([]ModelCard, error) {
 	models, err := c.ListModels(ctx, opts...)
-	if err != nil || !c.provider.modelsAnswerAnyKey {
-		return models, err
-	}
-
-	// Berget validates the body before it looks the key up, so only a request it would answer
-	// reaches the key check.
-	_, err = c.SystemOne(ctx, Request{
-		State:     "onesie auth test",
-		Questions: Questions{{ID: "key", Question: Noul{Instructions: "The state names a test"}}},
-	}, opts...)
 	if err != nil {
 		return nil, err
 	}
 
+	if err := c.checkKey(ctx, opts); err != nil {
+		return nil, err
+	}
+
 	return models, nil
+}
+
+func (c *Client) checkKey(ctx context.Context, opts []RequestOption) error {
+	switch check := c.provider.keyCheck; check.by {
+	case keyCheckByQuestion:
+		// Berget validates the body before it looks the key up, so only a request it would answer
+		// reaches the key check.
+		_, err := c.SystemOne(ctx, Request{
+			State:     "onesie key check",
+			Questions: Questions{{ID: "key", Question: Noul{Instructions: "The state names a key check"}}},
+		}, opts...)
+
+		return err
+	case keyCheckByEndpoint:
+		var discarded json.RawMessage
+
+		_, err := c.do(ctx, http.MethodGet, check.path, nil, &discarded, identity, opts...)
+
+		return err
+	default:
+		return nil
+	}
 }
 
 // SystemOne answers named questions about a state. Every question is evaluated in parallel and in

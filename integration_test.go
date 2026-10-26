@@ -684,6 +684,43 @@ func TestLiveListModels(t *testing.T) {
 	})
 }
 
+func TestLiveVerifyKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should accept the configured key under openrouter", func(t *testing.T) {
+		t.Parallel()
+
+		models, err := liveOpenRouterClient(t).VerifyKey(liveContext(t, 30*time.Second))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(models) == 0 {
+			t.Errorf("no models came back")
+		}
+	})
+
+	t.Run("should refuse a bad key under openrouter", func(t *testing.T) {
+		t.Parallel()
+
+		_ = openRouterKey(t)
+
+		client, err := onesie.New(
+			onesie.WithProvider(onesie.OpenRouter()),
+			onesie.WithAPIKey("sk-or-v1-definitely-not-a-real-key"),
+			onesie.WithUserAgent("onesie-integration"),
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		_, err = client.VerifyKey(liveContext(t, 30*time.Second))
+		if !errors.Is(err, onesie.ErrAuthentication) && !errors.Is(err, onesie.ErrPermissionDenied) {
+			t.Fatalf("error got %v, want ErrAuthentication or ErrPermissionDenied", err)
+		}
+	})
+}
+
 func TestLiveErrors(t *testing.T) {
 	t.Parallel()
 
