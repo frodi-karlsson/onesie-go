@@ -3,6 +3,7 @@ package onesie_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/frodi-karlsson/onesie-go"
@@ -90,6 +91,254 @@ func TestResultUnmarshalJSON(t *testing.T) {
 		var result onesie.Result
 		if err := json.Unmarshal([]byte(body), &result); err == nil {
 			t.Fatalf("expected an error, got none")
+		}
+	})
+
+	t.Run("should refuse an answer the way it refuses an unknown type", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"m","answers":{"x":{"type":"tarot"}},"usage":{}}`
+
+		var result onesie.Result
+
+		err := json.Unmarshal([]byte(body), &result)
+		if err == nil || !strings.HasPrefix(err.Error(), `answer "x": `) {
+			t.Fatalf("error = %v, want one naming the answer", err)
+		}
+	})
+
+	strict := []struct {
+		name   string
+		answer string
+		refuse bool
+	}{
+		{name: "should accept a noul answer", answer: `{"type":"noul","noul":0.95}`},
+		{name: "should accept a noul answer of exactly 0", answer: `{"type":"noul","noul":0}`},
+		{name: "should accept a noul answer of exactly 1", answer: `{"type":"noul","noul":1}`},
+		{name: "should refuse a noul answer that carries only its type", answer: `{"type":"noul"}`, refuse: true},
+		{name: "should refuse a noul answer whose noul is null", answer: `{"type":"noul","noul":null}`, refuse: true},
+		{name: "should refuse a noul answer whose noul is a string", answer: `{"type":"noul","noul":"0.9"}`, refuse: true},
+		{name: "should refuse a noul answer whose noul is a bool", answer: `{"type":"noul","noul":true}`, refuse: true},
+		{name: "should refuse a noul answer that sends value instead of noul", answer: `{"type":"noul","value":0.9}`, refuse: true},
+		{name: "should refuse a noul answer that sends p instead of noul", answer: `{"type":"noul","p":0.9}`, refuse: true},
+		{name: "should leave a noul answer above 1 to the caller", answer: `{"type":"noul","noul":1.5}`},
+		{name: "should leave a noul answer below 0 to the caller", answer: `{"type":"noul","noul":-0.1}`},
+		{
+			name:   "should accept a choice answer",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":0.2},"confidence":0.7}`,
+		},
+		{
+			name:   "should accept a choice answer with no confidence",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":0.2}}`,
+		},
+		{name: "should refuse a choice answer that carries only its type", answer: `{"type":"choice"}`, refuse: true},
+		{
+			name:   "should refuse a choice answer with no choice",
+			answer: `{"type":"choice","probabilities":{"a":0.8,"b":0.2}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a choice answer whose choice is null",
+			answer: `{"type":"choice","choice":null,"probabilities":{"a":0.8,"b":0.2}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a choice answer whose choice is a number",
+			answer: `{"type":"choice","choice":1,"probabilities":{"a":0.8,"b":0.2}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a choice answer whose choice is empty",
+			answer: `{"type":"choice","choice":"","probabilities":{"a":0.8,"b":0.2}}`, refuse: true,
+		},
+		{
+			name:   "should leave a choice that is not among its probabilities to the caller",
+			answer: `{"type":"choice","choice":"c","probabilities":{"a":0.8,"b":0.2}}`,
+		},
+		{name: "should refuse a choice answer with no probabilities", answer: `{"type":"choice","choice":"a"}`, refuse: true},
+		{
+			name:   "should refuse a choice answer whose probabilities are null",
+			answer: `{"type":"choice","choice":"a","probabilities":null}`, refuse: true,
+		},
+		{
+			name:   "should refuse a choice answer whose probabilities are empty",
+			answer: `{"type":"choice","choice":"a","probabilities":{}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a choice answer whose probabilities are a list",
+			answer: `{"type":"choice","choice":"a","probabilities":[0.8,0.2]}`, refuse: true,
+		},
+		{
+			name:   "should refuse a choice answer with a null probability",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":null}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a choice answer with a string probability",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":"0.8","b":0.2}}`, refuse: true,
+		},
+		{
+			name:   "should leave a choice probability above 1 to the caller",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":1.2,"b":0.2}}`,
+		},
+		{
+			name:   "should leave a choice probability below 0 to the caller",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":-0.2}}`,
+		},
+		{
+			name:   "should leave a choice confidence above 1 to the caller",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":0.2},"confidence":1.5}`,
+		},
+		{
+			name:   "should refuse a choice answer whose confidence is a string",
+			answer: `{"type":"choice","choice":"a","probabilities":{"a":0.8,"b":0.2},"confidence":"high"}`, refuse: true,
+		},
+		{
+			name: "should accept a score answer",
+			answer: `{"type":"score","score":1.05,"legend":{"0":"Calm","1":"Frustrated","2":"Very angry"},` +
+				`"probabilities":{"0":0.0,"1":0.95,"2":0.05},"confidence":0.92}`,
+		},
+		{
+			name:   "should accept a score answer with no legend and no confidence",
+			answer: `{"type":"score","score":2,"probabilities":{"0":0,"1":0,"2":1}}`,
+		},
+		{name: "should refuse a score answer that carries only its type", answer: `{"type":"score"}`, refuse: true},
+		{name: "should refuse a score answer with no score", answer: `{"type":"score","probabilities":{"0":1}}`, refuse: true},
+		{
+			name:   "should refuse a score answer whose score is null",
+			answer: `{"type":"score","score":null,"probabilities":{"0":1}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a score answer whose score is a string",
+			answer: `{"type":"score","score":"1","probabilities":{"0":0,"1":1}}`, refuse: true,
+		},
+		{
+			name:   "should leave a score below the lowest level to the caller",
+			answer: `{"type":"score","score":-1,"probabilities":{"0":0.5,"1":0.5}}`,
+		},
+		{
+			name:   "should leave a score above the highest level to the caller",
+			answer: `{"type":"score","score":2.5,"probabilities":{"0":0.5,"1":0.5}}`,
+		},
+		{
+			name:   "should accept a score answer whose probability keys are labels",
+			answer: `{"type":"score","score":1.2,"probabilities":{"calm":0.1,"annoyed":0.6,"furious":0.3}}`,
+		},
+		{name: "should refuse a score answer with no probabilities", answer: `{"type":"score","score":1}`, refuse: true},
+		{
+			name:   "should refuse a score answer whose probabilities are null",
+			answer: `{"type":"score","score":1,"probabilities":null}`, refuse: true,
+		},
+		{
+			name:   "should refuse a score answer whose probabilities are empty",
+			answer: `{"type":"score","score":0,"probabilities":{}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a score answer with a null probability",
+			answer: `{"type":"score","score":1,"probabilities":{"0":null,"1":1}}`, refuse: true,
+		},
+		{
+			name:   "should leave a score probability above 1 to the caller",
+			answer: `{"type":"score","score":1,"probabilities":{"0":0,"1":2}}`,
+		},
+		{
+			name:   "should leave a score confidence below 0 to the caller",
+			answer: `{"type":"score","score":1,"probabilities":{"0":0,"1":1},"confidence":-0.5}`,
+		},
+		{
+			name:   "should accept a box answer",
+			answer: `{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":0.92}`,
+		},
+		{
+			name:   "should accept a box answer with no confidence",
+			answer: `{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84}}`,
+		},
+		{
+			name:   "should accept a box answer whose edges are out of range",
+			answer: `{"type":"box","box":{"top":-0.1,"bottom":1.2,"left":0.44,"right":0.84}}`,
+		},
+		{name: "should refuse a box answer that carries only its type", answer: `{"type":"box"}`, refuse: true},
+		{name: "should refuse a box answer whose box is null", answer: `{"type":"box","box":null}`, refuse: true},
+		{name: "should refuse a box answer whose box is a list", answer: `{"type":"box","box":[0.1,0.2,0.3,0.4]}`, refuse: true},
+		{
+			name:   "should refuse a box answer missing an edge",
+			answer: `{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a box answer with a null edge",
+			answer: `{"type":"box","box":{"top":0.25,"bottom":null,"left":0.44,"right":0.84}}`, refuse: true,
+		},
+		{
+			name:   "should refuse a box answer with a string edge",
+			answer: `{"type":"box","box":{"top":"0.25","bottom":0.82,"left":0.44,"right":0.84}}`, refuse: true,
+		},
+		{
+			name:   "should leave a box confidence above 1 to the caller",
+			answer: `{"type":"box","box":{"top":0.25,"bottom":0.82,"left":0.44,"right":0.84},"confidence":3}`,
+		},
+	}
+
+	for _, tc := range strict {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := `{"model":"m","answers":{"x":` + tc.answer + `},"usage":{}}`
+
+			var result onesie.Result
+
+			err := json.Unmarshal([]byte(body), &result)
+
+			switch {
+			case !tc.refuse && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tc.refuse && err == nil:
+				t.Fatalf("decoded %s as %+v, want it refused", tc.answer, result.Answers["x"])
+			case tc.refuse && !strings.HasPrefix(err.Error(), `answer "x": `):
+				t.Fatalf("error = %v, want one naming the answer like an unknown type", err)
+			}
+		})
+	}
+
+	t.Run("should refuse the whole result when one of several answers has a missing field", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"m","answers":{` +
+			`"fine":{"type":"noul","noul":0.9},` +
+			`"broken":{"type":"choice","probabilities":{"a":1}},` +
+			`"also_fine":{"type":"box","box":{"top":0,"bottom":1,"left":0,"right":1}}},"usage":{}}`
+
+		var result onesie.Result
+
+		err := json.Unmarshal([]byte(body), &result)
+		if err == nil || err.Error() != `answer "broken": the choice answer has no choice, or it is null` {
+			t.Fatalf("error = %v, want the broken answer named", err)
+		}
+	})
+
+	t.Run("should name the first null probability in sorted order", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"m","answers":{"x":{"type":"choice","choice":"a",` +
+			`"probabilities":{"z":null,"b":null,"a":1}}},"usage":{}}`
+
+		for range 20 {
+			var result onesie.Result
+
+			err := json.Unmarshal([]byte(body), &result)
+			if err == nil || err.Error() != `answer "x": the probability of "b" is null` {
+				t.Fatalf("error = %v, want the null probability of b named", err)
+			}
+		}
+	})
+
+	t.Run("should name the first missing box edge in a fixed order", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"model":"m","answers":{"x":{"type":"box","box":{"top":0.1}}},"usage":{}}`
+
+		for range 20 {
+			var result onesie.Result
+
+			err := json.Unmarshal([]byte(body), &result)
+			if err == nil || err.Error() != `answer "x": the box answer has no box bottom, or it is null` {
+				t.Fatalf("error = %v, want the bottom edge named", err)
+			}
 		}
 	})
 

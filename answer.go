@@ -3,7 +3,9 @@ package onesie
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 )
 
 // Result is one response from the evaluation endpoint.
@@ -94,16 +96,29 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	r.Usage = wire.Usage
 	r.Answers = make(map[string]Answer, len(wire.Answers))
 
-	for name, raw := range wire.Answers {
-		decoded, err := decodeAnswer(raw)
+	for _, name := range slices.Sorted(maps.Keys(wire.Answers)) {
+		decoded, err := decodeAnswer(wire.Answers[name])
 		if err != nil {
-			return fmt.Errorf("answer %q: %w", name, err)
+			return &answerDecodeError{usage: wire.Usage, err: fmt.Errorf("answer %q: %w", name, err)}
 		}
 
 		r.Answers[name] = decoded
 	}
 
 	return nil
+}
+
+type answerDecodeError struct {
+	usage Usage
+	err   error
+}
+
+func (e *answerDecodeError) Error() string {
+	return e.err.Error()
+}
+
+func (e *answerDecodeError) Unwrap() error {
+	return e.err
 }
 
 func (r *Result) answer(name string) (Answer, error) {
@@ -131,26 +146,143 @@ func decodeAnswer(raw json.RawMessage) (Answer, error) {
 		return nil, err
 	}
 
-	var decoded Answer
-
 	switch probe.Type {
 	case "noul":
-		decoded = &NoulAnswer{}
+		return decodeNoul(raw)
 	case "choice":
-		decoded = &ChoiceAnswer{}
+		return decodeChoice(raw)
 	case "score":
-		decoded = &ScoreAnswer{}
+		return decodeScore(raw)
 	case "box":
-		decoded = &BoxAnswer{}
+		return decodeBox(raw)
 	default:
 		return nil, fmt.Errorf("unknown answer type %q", probe.Type)
 	}
+}
 
-	if err := json.Unmarshal(raw, decoded); err != nil {
+func decodeNoul(raw json.RawMessage) (*NoulAnswer, error) {
+	var wire struct {
+		Noul *float64 `json:"noul"`
+	}
+
+	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, err
 	}
 
-	return decoded, nil
+	if wire.Noul == nil {
+		return nil, missingField("noul", "noul")
+	}
+
+	return &NoulAnswer{Noul: *wire.Noul}, nil
+}
+
+func decodeChoice(raw json.RawMessage) (*ChoiceAnswer, error) {
+	var wire struct {
+		Choice        *string             `json:"choice"`
+		Confidence    float64             `json:"confidence"`
+		Probabilities map[string]*float64 `json:"probabilities"`
+	}
+
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, err
+	}
+
+	if wire.Choice == nil || *wire.Choice == "" {
+		return nil, missingField("choice", "choice")
+	}
+
+	probabilities, err := requireProbabilities("choice", wire.Probabilities)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ChoiceAnswer{Choice: *wire.Choice, Confidence: wire.Confidence, Probabilities: probabilities}, nil
+}
+
+func decodeScore(raw json.RawMessage) (*ScoreAnswer, error) {
+	var wire struct {
+		Score         *float64            `json:"score"`
+		Confidence    float64             `json:"confidence"`
+		Legend        map[string]string   `json:"legend"`
+		Probabilities map[string]*float64 `json:"probabilities"`
+	}
+
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, err
+	}
+
+	if wire.Score == nil {
+		return nil, missingField("score", "score")
+	}
+
+	probabilities, err := requireProbabilities("score", wire.Probabilities)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ScoreAnswer{
+		Score: *wire.Score, Confidence: wire.Confidence, Legend: wire.Legend, Probabilities: probabilities,
+	}, nil
+}
+
+func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
+	var wire struct {
+		Box *struct {
+			Top    *float64 `json:"top"`
+			Bottom *float64 `json:"bottom"`
+			Left   *float64 `json:"left"`
+			Right  *float64 `json:"right"`
+		} `json:"box"`
+		Confidence float64 `json:"confidence"`
+	}
+
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, err
+	}
+
+	if wire.Box == nil {
+		return nil, missingField("box", "box")
+	}
+
+	edges := []struct {
+		name  string
+		value *float64
+	}{
+		{"top", wire.Box.Top}, {"bottom", wire.Box.Bottom}, {"left", wire.Box.Left}, {"right", wire.Box.Right},
+	}
+
+	for _, edge := range edges {
+		if edge.value == nil {
+			return nil, missingField("box", "box "+edge.name)
+		}
+	}
+
+	return &BoxAnswer{
+		Edges:      Edges{Top: *wire.Box.Top, Bottom: *wire.Box.Bottom, Left: *wire.Box.Left, Right: *wire.Box.Right},
+		Confidence: wire.Confidence,
+	}, nil
+}
+
+func missingField(kind, field string) error {
+	return fmt.Errorf("the %s answer has no %s, or it is null", kind, field)
+}
+
+func requireProbabilities(kind string, wire map[string]*float64) (map[string]float64, error) {
+	if len(wire) == 0 {
+		return nil, missingField(kind, "probabilities")
+	}
+
+	probabilities := make(map[string]float64, len(wire))
+
+	for _, option := range slices.Sorted(maps.Keys(wire)) {
+		if wire[option] == nil {
+			return nil, fmt.Errorf("the probability of %q is null", option)
+		}
+
+		probabilities[option] = *wire[option]
+	}
+
+	return probabilities, nil
 }
 
 // Answer is one of NoulAnswer, ChoiceAnswer, ScoreAnswer or BoxAnswer.

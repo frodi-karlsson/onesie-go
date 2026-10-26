@@ -476,6 +476,92 @@ func TestNew(t *testing.T) {
 func TestClientSystemOne(t *testing.T) {
 	t.Parallel()
 
+	routes := []struct {
+		name     string
+		provider onesie.Provider
+		model    string
+		wrap     func(answers string) string
+	}{
+		{name: "typesafe", provider: onesie.TypeSafe(), wrap: func(a string) string { return a }},
+		{name: "openrouter", provider: onesie.OpenRouter(), wrap: func(a string) string { return a }},
+		{name: "berget", provider: onesie.Berget(), wrap: func(a string) string { return a }},
+		{name: "levanto", provider: onesie.Levanto(), wrap: func(a string) string { return a }},
+		{
+			name: "cloudflare's jev", provider: onesie.Cloudflare(), model: "typesafe/jev",
+			wrap: func(a string) string { return `{"result":{"state":"Completed","result":` + a + `},"success":true}` },
+		},
+		{
+			name: "cloudflare's clef", provider: onesie.Cloudflare(), model: "clef",
+			wrap: func(a string) string { return `{"result":` + a + `,"success":true}` },
+		},
+	}
+
+	broken := []struct {
+		name   string
+		answer string
+	}{
+		{name: "a noul answer that carries only its type", answer: `{"type":"noul"}`},
+		{name: "a noul answer that sends value instead of noul", answer: `{"type":"noul","value":0.1}`},
+		{name: "a noul answer whose noul is null", answer: `{"type":"noul","noul":null}`},
+		{name: "a noul answer whose noul is a string", answer: `{"type":"noul","noul":"0.1"}`},
+		{name: "a choice answer that carries only its type", answer: `{"type":"choice"}`},
+		{name: "a choice answer with no probabilities", answer: `{"type":"choice","choice":"a"}`},
+		{name: "a score answer that carries only its type", answer: `{"type":"score"}`},
+		{name: "a score answer with no probabilities", answer: `{"type":"score","score":1}`},
+		{name: "a box answer that carries only its type", answer: `{"type":"box"}`},
+	}
+
+	for _, route := range routes {
+		for _, tc := range broken {
+			t.Run("should refuse "+tc.name+" through "+route.name+" as it refuses a wrong type", func(t *testing.T) {
+				t.Parallel()
+
+				ask := onesie.Request{Model: route.model, State: "x", Questions: oneNoul()}
+				respond := func(answer string) (string, error) {
+					response := route.wrap(`{"model":"m","answers":{"q":` + answer +
+						`},"usage":{"input_tokens":7,"output_tokens":3}}`)
+
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						_, _ = io.WriteString(w, response)
+					}))
+					defer server.Close()
+
+					client, _ := newTestClient(t, server.URL, onesie.WithProvider(route.provider))
+					_, err := client.SystemOne(t.Context(), ask)
+
+					return response, err
+				}
+
+				_, wrongTypeErr := respond(`{"type":"tarot"}`)
+				response, err := respond(tc.answer)
+
+				var want, got *onesie.ResponseError
+				if !errors.As(wrongTypeErr, &want) {
+					t.Fatalf("wrong type error = %v, want a ResponseError", wrongTypeErr)
+				}
+
+				if !errors.As(err, &got) || !errors.Is(err, onesie.ErrResponse) {
+					t.Fatalf("error = %v, want a ResponseError matching ErrResponse", err)
+				}
+
+				const prefix = `onesie: 200 response could not be used: answer "q": `
+				if !strings.HasPrefix(want.Error(), prefix) || !strings.HasPrefix(got.Error(), prefix) {
+					t.Errorf("errors = %q and %q, want both to start %q", want.Error(), got.Error(), prefix)
+				}
+
+				if got.Status != want.Status || string(got.Body) != response || got.Message != "" {
+					t.Errorf("error = %+v, want it shaped like %+v holding %s", got, want, response)
+				}
+
+				for _, spent := range []*onesie.ResponseError{want, got} {
+					if spent.Usage == nil || spent.Usage.InputTokens != 7 || spent.Usage.OutputTokens != 3 {
+						t.Errorf("usage = %+v, want the 7 in and 3 out the response billed", spent.Usage)
+					}
+				}
+			})
+		}
+	}
+
 	t.Run("should send jev and clef through cloudflare's routes", func(t *testing.T) {
 		t.Parallel()
 

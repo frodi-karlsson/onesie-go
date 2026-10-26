@@ -630,7 +630,16 @@ func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]by
 	}
 
 	if err = json.Unmarshal(body, out); err != nil {
-		return &ResponseError{Status: res.status, Body: res.body, Err: err}
+		return &ResponseError{Status: res.status, Body: res.body, Err: err, Usage: spentOn(err)}
+	}
+
+	return nil
+}
+
+func spentOn(err error) *Usage {
+	var refused *answerDecodeError
+	if errors.As(err, &refused) {
+		return &refused.usage
 	}
 
 	return nil
