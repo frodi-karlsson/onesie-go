@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	// DefaultAttemptTimeout bounds one HTTP attempt, not the whole call.
+	// DefaultAttemptTimeout bounds one HTTP attempt of a request without images, not the whole call.
 	DefaultAttemptTimeout = 10 * time.Second
+	// AssetAttemptTimeout bounds one HTTP attempt of a request that carries images.
+	AssetAttemptTimeout = 60 * time.Second
 	// DefaultMaxResponseBytes caps how much of a response body is read.
 	DefaultMaxResponseBytes = 8 << 20
 	// DefaultMaxRetryAfter is the longest server requested retry delay the client waits out.
@@ -148,8 +150,8 @@ func WithRetry(p RetryPolicy) Option {
 	}
 }
 
-// WithAttemptTimeout bounds one HTTP attempt. Retries each get a fresh budget, so a call can
-// outlast this by the retry count. Use WithTotalTimeout or the context to bound the whole call.
+// WithAttemptTimeout bounds every HTTP attempt, with images or without. Retries each get a fresh
+// budget, so bound the whole call with WithTotalTimeout or the context.
 func WithAttemptTimeout(d time.Duration) Option {
 	return func(c *Client) error {
 		if d <= 0 {

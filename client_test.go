@@ -2459,6 +2459,103 @@ func TestWithAttemptObserver(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("should report the timeout each attempt ran with", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		plain := onesie.Request{State: "s", Questions: oneNoul()}
+		withImage := onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}}
+
+		rawWithImage, err := onesie.MarshalBody(withImage)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		tests := []struct {
+			name    string
+			opts    []onesie.Option
+			reqOpts []onesie.RequestOption
+			req     *onesie.Request
+			raw     json.RawMessage
+			want    time.Duration
+		}{
+			{name: "should use the default for a request without images", req: &plain, want: onesie.DefaultAttemptTimeout},
+			{name: "should use the asset timeout for a request with images", req: &withImage, want: onesie.AssetAttemptTimeout},
+			{name: "should use the asset timeout for a raw body with images", raw: rawWithImage, want: onesie.AssetAttemptTimeout},
+			{
+				name: "should use the default for a raw body with empty assets",
+				raw:  json.RawMessage(`{"state":"s","questions":{},"assets":{}}`), want: onesie.DefaultAttemptTimeout,
+			},
+			{
+				name: "should let WithAttemptTimeout set both", opts: []onesie.Option{onesie.WithAttemptTimeout(5 * time.Second)},
+				req: &withImage, want: 5 * time.Second,
+			},
+			{
+				name: "should let WithRequestAttemptTimeout set both", reqOpts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(3 * time.Second)},
+				req: &withImage, want: 3 * time.Second,
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				var seen atomic.Int64
+
+				transport := &recordingTransport{body: shortAnswer}
+				opts := append([]onesie.Option{
+					onesie.WithHTTPClient(&http.Client{Transport: transport}),
+					onesie.WithAttemptObserver(func(a onesie.Attempt) { seen.Store(int64(a.Timeout)) }),
+				}, tc.opts...)
+				client, _ := newTestClient(t, "https://api.example", opts...)
+
+				var err error
+				if tc.req != nil {
+					_, err = client.SystemOne(t.Context(), *tc.req, tc.reqOpts...)
+				} else {
+					_, err = client.SystemOneRaw(t.Context(), tc.raw, tc.reqOpts...)
+				}
+
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if got := time.Duration(seen.Load()); got != tc.want {
+					t.Errorf("Attempt.Timeout = %v, want %v", got, tc.want)
+				}
+			})
+		}
+	})
+}
+
+func TestClientAttemptTimeout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []onesie.Option
+		want time.Duration
+	}{
+		{name: "should report the default when no option set one", want: onesie.DefaultAttemptTimeout},
+		{name: "should report the option's timeout", opts: []onesie.Option{onesie.WithAttemptTimeout(time.Second)}, want: time.Second},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, _ := newTestClient(t, "https://api.example", tc.opts...)
+
+			if got := client.AttemptTimeout(); got != tc.want {
+				t.Errorf("AttemptTimeout() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func noRetries() onesie.RetryPolicy {

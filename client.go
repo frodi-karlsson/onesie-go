@@ -33,7 +33,6 @@ func New(opts ...Option) (*Client, error) {
 		httpClient:       &http.Client{},
 		logger:           slog.New(slog.DiscardHandler),
 		retry:            DefaultRetryPolicy(),
-		attemptTimeout:   DefaultAttemptTimeout,
 		maxResponseBytes: DefaultMaxResponseBytes,
 		header:           http.Header{},
 		userAgent:        "onesie-lib",
@@ -166,8 +165,13 @@ func (c *Client) RetryPolicy() RetryPolicy {
 	return c.retry
 }
 
-// AttemptTimeout returns the per attempt deadline, not a budget for the whole call.
+// AttemptTimeout returns the per attempt deadline WithAttemptTimeout set, or DefaultAttemptTimeout
+// when none was. A request with images uses AssetAttemptTimeout unless an option sets one.
 func (c *Client) AttemptTimeout() time.Duration {
+	if c.attemptTimeout == 0 {
+		return DefaultAttemptTimeout
+	}
+
 	return c.attemptTimeout
 }
 
@@ -400,6 +404,8 @@ type ModelCard struct {
 }
 
 func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawResponse, error) {
+	cfg.attemptTimeout = attemptTimeoutFor(cfg.attemptTimeout, req.needs.Images)
+
 	if cfg.totalTimeout > 0 {
 		var cancel context.CancelFunc
 
@@ -472,6 +478,17 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 	}
 }
 
+func attemptTimeoutFor(set time.Duration, images bool) time.Duration {
+	switch {
+	case set > 0:
+		return set
+	case images:
+		return AssetAttemptTimeout
+	default:
+		return DefaultAttemptTimeout
+	}
+}
+
 func (c *Client) attempt(
 	ctx context.Context,
 	tag string,
@@ -512,7 +529,7 @@ func (c *Client) attempt(
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		failure := classify(ctx, actx, err, cfg.attemptTimeout)
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started)})
+		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
 
 		return nil, failure
 	}
@@ -530,7 +547,7 @@ func (c *Client) attempt(
 		// Observed like any other failed round trip. The request was sent and the server answered,
 		// so an observer that skipped it would under count attempts and would see a failure it
 		// never saw an attempt for.
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started)})
+		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
 
 		return nil, failure
 	}
@@ -540,7 +557,7 @@ func (c *Client) attempt(
 			Err: fmt.Errorf("response body exceeded %d bytes", c.maxResponseBytes),
 		}
 
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started)})
+		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
 
 		return nil, failure
 	}
@@ -556,17 +573,20 @@ func (c *Client) attempt(
 		Index:    attempt,
 		Status:   resp.StatusCode,
 		Duration: c.clock.Now().Sub(started),
+		Timeout:  cfg.attemptTimeout,
 	})
 
 	return &rawResponse{status: resp.StatusCode, header: resp.Header, body: data}, nil
 }
 
-// Attempt describes one HTTP round trip. An observer sees every attempt, retries included.
+// Attempt describes one HTTP round trip and the timeout it ran with. An observer sees every attempt,
+// retries included.
 type Attempt struct {
 	Index    int
 	Status   int
 	Err      error
 	Duration time.Duration
+	Timeout  time.Duration
 }
 
 func (c *Client) setHeaders(req *http.Request, cfg requestConfig, attempt int, hasBody bool) {
