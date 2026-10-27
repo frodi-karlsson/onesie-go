@@ -57,13 +57,23 @@ belongs, usually as a state value. `SystemOne` sends the images header itself.
 A request is checked in two layers. `ValidateRequest` checks it for any provider.
 `Provider.Encode` refuses what one provider does not take and returns the body it would send.
 `SystemOne` runs both, in that order, before it sends. `Provider.Refuse` gives the same refusal
-from a model and its `Needs`, before a request exists. The body `Encode` returns carries no
-headers, so `SystemOne` also sends the images header for TypeSafe, and a blank model there is the
-provider's built in default.
+from a model and its `Needs`, before a request exists. A refusal is a `CapabilityError`, which
+carries the provider, the model, the `Needs` it lacks and the providers from `Providers` whose
+default model takes them. The body `Encode` returns carries no headers, so `SystemOne` also sends
+the images header for TypeSafe, and a blank model there is the provider's built in default.
 
 Set `Request.LongContext`, or pass `onesie.WithLongContext()` to one call, to raise the context
 limits. A body from `MarshalBody` carries it as `long_context`, which `SystemOneRaw` turns back
 into the header, since TypeSafe refuses the key itself.
+
+`PrepareRawBody` fills the model of a raw body the way `SystemOneRaw` does, with no client or key.
+A body that names no model, or a blank one, gets the default model. `SystemOneRaw` runs it with the
+client's default model, so a printed body and a sent body carry the same model. Its long context
+flag sets `long_context` to true, for a caller that prints a body to feed back in later.
+`SystemOneRaw` moves `long_context` into the header before it sends. When a body has several `model` keys, the last one decides, as
+`encoding/json` reads it. A named model keeps every key as written, and a blank one gives way to one
+key with the default model. Several `long_context` keys likewise become one. A body that needs no
+change, or is not a JSON object, comes back byte for byte.
 
 Each provider gets images the way it reads them: TypeSafe as the assets map, OpenRouter as inline
 image parts, Cloudflare's Jev as the assets map and Clef as an images array numbered in the order
@@ -85,6 +95,16 @@ result, err := client.SystemOne(ctx, onesie.Request{
 	Questions: onesie.Questions{{ID: "urgent", Question: onesie.Noul{Instructions: "Is this urgent?"}}},
 })
 ```
+
+A response outside 2xx fails with an `APIError`. Its message carries the server's own message when
+the body is JSON. A body that is not JSON is summarised: the status, a note that the body is not
+JSON, and the first line of a text body unless it only repeats the status. An HTML page is left
+out. `RawBody` keeps the body as it arrived, and `BodyJSON` reports whether it parsed.
+
+A 200 response that is not a System One result fails with a `ResponseError` that wraps a
+`ResultShapeError`. Reach it with `errors.As` to read the answer, the field, the JSON kind it wanted
+and the kind it got. Its message reads in the response's own terms, such as
+`answer 'x' has a noul that is not a number`, so it can be shown as it is.
 
 Use the CLI for streams, question files, shell assertions, caching and calibration. Those workflows
 remain in the onesie command.

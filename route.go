@@ -1,7 +1,5 @@
 package onesie
 
-import "fmt"
-
 type route struct {
 	path   string
 	takes  capabilities
@@ -10,21 +8,38 @@ type route struct {
 	decode func(body []byte) ([]byte, error)
 }
 
-func (r route) refuse(provider string, needs capabilities) error {
-	switch {
-	// A Box question is an image question, so a route that takes no images takes no Box either.
-	case (needs.images || needs.box) && !r.takes.images:
-		return &ValidationError{Message: fmt.Sprintf(
-			"the %s provider takes no images or box questions. The typesafe and openrouter providers do", provider)}
-	case needs.box && !r.takes.box:
-		return &ValidationError{Message: fmt.Sprintf(
-			"the %s provider takes no box questions. The typesafe and openrouter providers do", provider)}
-	case needs.longContext && !r.takes.longContext:
-		return &ValidationError{Message: fmt.Sprintf(
-			"the %s provider takes no long context. The typesafe provider does", provider)}
-	default:
+func (r route) refuse(provider, model string, needs capabilities) error {
+	missing := r.lacks(needs)
+	if missing == (capabilities{}) {
 		return nil
 	}
+
+	var takers []string
+
+	for _, candidate := range Providers() {
+		if candidate.Name != provider && candidate.route(candidate.defaultModel).lacks(missing) == (capabilities{}) {
+			takers = append(takers, candidate.Name)
+		}
+	}
+
+	return newCapabilityError(provider, model, Needs{
+		Images: missing.images, Box: missing.box, LongContext: missing.longContext,
+	}, takers)
+}
+
+func (r route) lacks(needs capabilities) capabilities {
+	var missing capabilities
+
+	// A Box question is an image question, so a route that takes no images takes no Box either.
+	if !r.takes.images {
+		missing.images = needs.images
+		missing.box = needs.box
+	}
+
+	missing.box = missing.box || (needs.box && !r.takes.box)
+	missing.longContext = needs.longContext && !r.takes.longContext
+
+	return missing
 }
 
 type capabilities struct {

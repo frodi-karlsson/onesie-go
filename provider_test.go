@@ -61,7 +61,10 @@ func TestProviderNamed(t *testing.T) {
 func TestProviderRefuse(t *testing.T) {
 	t.Parallel()
 
-	const neither = "onesie: the levanto provider takes no images or box questions. The typesafe and openrouter providers do"
+	const (
+		noImages = "onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do"
+		noBox    = "onesie: the levanto provider takes no box questions. The typesafe and openrouter providers do"
+	)
 
 	everything := onesie.Needs{Images: true, Box: true, LongContext: true}
 
@@ -74,13 +77,13 @@ func TestProviderRefuse(t *testing.T) {
 	}{
 		{name: "should take everything on typesafe", provider: onesie.TypeSafe(), needs: everything},
 		{name: "should take everything on openrouter", provider: onesie.OpenRouter(), needs: everything},
-		{name: "should refuse images on levanto", provider: onesie.Levanto(), needs: onesie.Needs{Images: true}, wantErr: neither},
+		{name: "should refuse images on levanto", provider: onesie.Levanto(), needs: onesie.Needs{Images: true}, wantErr: noImages},
 		{
 			name: "should refuse images on berget", provider: onesie.Berget(), needs: onesie.Needs{Images: true, Box: true},
 			wantErr: "onesie: the berget provider takes no images or box questions. The typesafe and openrouter providers do",
 		},
 		{name: "should take long context on levanto", provider: onesie.Levanto(), needs: onesie.Needs{LongContext: true}},
-		{name: "should read a blank model as the default", provider: onesie.Levanto(), model: "  ", needs: onesie.Needs{Box: true}, wantErr: neither},
+		{name: "should read a blank model as the default", provider: onesie.Levanto(), model: "  ", needs: onesie.Needs{Box: true}, wantErr: noBox},
 		{name: "should take everything on a provider a caller built", provider: onesie.Provider{Name: "mine"}, needs: everything},
 		{name: "should take images on cloudflare", provider: onesie.Cloudflare(), needs: onesie.Needs{Images: true}},
 		{
@@ -91,7 +94,7 @@ func TestProviderRefuse(t *testing.T) {
 		{
 			name: "should refuse long context on cloudflare", provider: onesie.Cloudflare(),
 			needs:   onesie.Needs{LongContext: true},
-			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 	}
 
@@ -113,6 +116,99 @@ func TestProviderRefuse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProviders(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should list every provider in a fixed order", func(t *testing.T) {
+		t.Parallel()
+
+		var names []string
+		for _, provider := range onesie.Providers() {
+			names = append(names, provider.Name)
+		}
+
+		if got := strings.Join(names, " "); got != "typesafe openrouter berget levanto cloudflare" {
+			t.Errorf("providers = %s", got)
+		}
+	})
+
+	t.Run("should list providers ProviderNamed resolves", func(t *testing.T) {
+		t.Parallel()
+
+		for _, provider := range onesie.Providers() {
+			named, err := onesie.ProviderNamed(provider.Name)
+			if err != nil || named.Name != provider.Name {
+				t.Errorf("ProviderNamed(%s) = %v, %v", provider.Name, named.Name, err)
+			}
+		}
+	})
+}
+
+func TestCapabilityError(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should carry the provider, the model, what is missing and who takes it", func(t *testing.T) {
+		t.Parallel()
+
+		err := onesie.Cloudflare().Refuse("clef-flash", onesie.Needs{Images: true, Box: true, LongContext: true})
+
+		var refused *onesie.CapabilityError
+		if !errors.As(err, &refused) {
+			t.Fatalf("error = %v, want a CapabilityError", err)
+		}
+
+		if refused.Provider != "cloudflare" || refused.Model != "clef-flash" ||
+			refused.Missing != (onesie.Needs{Box: true, LongContext: true}) ||
+			strings.Join(refused.Takers, " ") != "typesafe openrouter" {
+			t.Errorf("error = %+v", refused)
+		}
+
+		const want = "onesie: the cloudflare provider takes no box questions or long context. " +
+			"The typesafe and openrouter providers do"
+		if err.Error() != want {
+			t.Errorf("message = %q, want %q", err.Error(), want)
+		}
+	})
+
+	t.Run("should name the default model for a blank one", func(t *testing.T) {
+		t.Parallel()
+
+		var refused *onesie.CapabilityError
+		if err := onesie.Cloudflare().Refuse(" ", onesie.Needs{LongContext: true}); !errors.As(err, &refused) ||
+			refused.Model != onesie.CloudflareDefaultModel {
+			t.Errorf("error = %+v, want the default model named", err)
+		}
+	})
+
+	t.Run("should still be a ValidationError", func(t *testing.T) {
+		t.Parallel()
+
+		err := onesie.Levanto().Refuse("", onesie.Needs{Images: true})
+
+		var invalid *onesie.ValidationError
+		if !errors.As(err, &invalid) || !errors.Is(err, onesie.ErrValidation) || "onesie: "+invalid.Message != err.Error() {
+			t.Errorf("error = %v, want a ValidationError with the same message", err)
+		}
+	})
+
+	t.Run("should reach the caller of SystemOneRaw", func(t *testing.T) {
+		t.Parallel()
+
+		client, err := onesie.New(onesie.WithAPIKey("k"), onesie.WithProvider(onesie.Levanto()),
+			onesie.WithEnv(func(string) (string, bool) { return "", false }))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		_, err = client.SystemOneRaw(t.Context(), []byte(`{"state":"s","questions":{"b":{"type":"box","instructions":"x"}}}`))
+
+		var refused *onesie.CapabilityError
+		if !errors.As(err, &refused) || refused.Model != onesie.LevantoDefaultModel || !refused.Missing.Box {
+			t.Errorf("error = %v, want a CapabilityError for the box", err)
+		}
+	})
 }
 
 func TestProviderEncode(t *testing.T) {
@@ -156,12 +252,12 @@ func TestProviderEncode(t *testing.T) {
 		},
 		{
 			name: "should refuse a valid image on levanto", provider: onesie.Levanto(), req: photo("", oneNoul()),
-			wantErr: "onesie: the levanto provider takes no images or box questions. The typesafe and openrouter providers do",
+			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do",
 		},
 		{
 			name: "should refuse long context on cloudflare", provider: onesie.Cloudflare(),
 			req:     onesie.Request{State: "s", Questions: oneNoul(), LongContext: true},
-			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
 			name: "should refuse a body openrouter would inline past the limit", provider: onesie.OpenRouter(),

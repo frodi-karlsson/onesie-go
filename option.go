@@ -1,6 +1,8 @@
 package onesie
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -307,15 +309,54 @@ type requestConfig struct {
 	header         http.Header
 }
 
-// ValidateBaseURL rejects anything that is not an absolute http or https URL. It is exported so
-// The CLI credential command uses the same validation before storing the value.
+// ValidateBaseURL rejects anything that is not an absolute http or https URL, saying why. The
+// message echoes the URL as given, without any userinfo, or names no URL when it cannot tell.
 func ValidateBaseURL(raw string) error {
+	subject, hadAt := baseURLSubject(raw)
+
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return &ValidationError{Message: "base URL must be an absolute http or https URL, got " + raw}
+
+	var malformed *url.Error
+
+	switch {
+	case err != nil && hadAt:
+		return &ValidationError{Message: subject + " does not parse"}
+	case errors.As(err, &malformed):
+		return &ValidationError{Message: subject + " does not parse: " + malformed.Err.Error()}
+	case parsed.Scheme != "http" && parsed.Scheme != "https":
+		return &ValidationError{Message: subject + " is not an http or https URL"}
+	case parsed.Host == "":
+		return &ValidationError{Message: fmt.Sprintf(
+			"%s names no host. Write it as %s://HOST", subject, parsed.Scheme)}
+	default:
+		return nil
+	}
+}
+
+func baseURLSubject(raw string) (string, bool) {
+	at := strings.LastIndex(raw, "@")
+	if at < 0 {
+		return "base URL " + raw, false
 	}
 
-	return nil
+	scheme, authority, found := strings.Cut(raw, "://")
+	if !found || strings.Contains(scheme, "@") {
+		return "the base URL", true
+	}
+
+	// The echo is kept only when the last @ sits in the authority, so no part of the userinfo can
+	// be left in the host, the path, the query or the fragment.
+	end := strings.IndexAny(authority, "/?#")
+	if end < 0 {
+		end = len(authority)
+	}
+
+	inAuthority := strings.LastIndex(authority[:end], "@")
+	if inAuthority < 0 || len(scheme)+len("://")+inAuthority != at {
+		return "the base URL", true
+	}
+
+	return "base URL " + scheme + "://" + authority[inAuthority+1:], true
 }
 
 func orEnv(value string, lookup func(string) (string, bool), name string) string {

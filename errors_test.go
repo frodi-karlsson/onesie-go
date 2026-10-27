@@ -123,7 +123,50 @@ func TestNewAPIError(t *testing.T) {
 			status:   529,
 			body:     `overloaded`,
 			sentinel: ErrServer,
-			message:  "onesie: 529 overloaded",
+			message:  "onesie: 529 status code, with a response body that is not JSON: overloaded",
+		},
+		{
+			name:     "should leave an HTML body out of the message",
+			status:   502,
+			body:     "<!DOCTYPE html>\n<html><body><h1>502 Bad Gateway</h1></body></html>",
+			sentinel: ErrServer,
+			message:  "onesie: 502 Bad Gateway, with a response body that is not JSON",
+		},
+		{
+			name:     "should leave out a text body that only repeats the status",
+			status:   401,
+			body:     "401 Unauthorized.\n",
+			sentinel: ErrAuthentication,
+			message:  "onesie: 401 Unauthorized, with a response body that is not JSON",
+		},
+		{
+			name:     "should show only the first line of a text body",
+			status:   503,
+			body:     "\n  upstream connect error\x07 \nreset reason: overflow",
+			sentinel: ErrServer,
+			message:  "onesie: 503 Service Unavailable, with a response body that is not JSON: upstream connect error",
+		},
+		{
+			name:     "should cut a long first line of a text body",
+			status:   500,
+			body:     strings.Repeat("é", 130),
+			sentinel: ErrServer,
+			message: "onesie: 500 Internal Server Error, with a response body that is not JSON: " +
+				strings.Repeat("é", 100) + "...",
+		},
+		{
+			name:     "should leave out an HTML body that starts with a byte order mark",
+			status:   502,
+			body:     "\ufeff<!DOCTYPE html><html></html>",
+			sentinel: ErrServer,
+			message:  "onesie: 502 Bad Gateway, with a response body that is not JSON",
+		},
+		{
+			name:     "should keep a JSON string body as the message",
+			status:   429,
+			body:     `"slow down"`,
+			sentinel: ErrRateLimit,
+			message:  "onesie: 429 slow down",
 		},
 		{
 			name:     "should read a cloudflare 401",
@@ -308,6 +351,27 @@ func TestNewAPIError(t *testing.T) {
 
 			if errors.Is(err, tc.not) {
 				t.Errorf("status %d matched %v", tc.status, tc.not)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		json bool
+	}{
+		{name: "should keep a JSON body and say it parsed", body: `{"error":"bad"}`, json: true},
+		{name: "should keep a JSON string body and say it parsed", body: `"bad"`, json: true},
+		{name: "should keep a text body and say it did not parse", body: "bad gateway"},
+		{name: "should keep no body and say it did not parse"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := newAPIError(502, http.Header{}, "X-TypeSafe-Request-Id", []byte(tc.body), time.Now())
+
+			if string(err.RawBody) != tc.body || err.BodyJSON != tc.json {
+				t.Errorf("RawBody = %q, BodyJSON = %v, want %q and %v", err.RawBody, err.BodyJSON, tc.body, tc.json)
 			}
 		})
 	}
@@ -508,4 +572,40 @@ func TestTruncate(t *testing.T) {
 			t.Errorf("truncate = %q, want short", got)
 		}
 	})
+}
+
+func TestResultShapeError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  *ResultShapeError
+		want string
+	}{
+		{
+			name: "should report a body that is not an object",
+			err:  &ResultShapeError{Want: "an object", Got: "a string"},
+			want: "the response is not a System One result, since it is a string",
+		},
+		{
+			name: "should report a missing top level field",
+			err:  &ResultShapeError{Field: "model", Want: "a string"},
+			want: "the response is not a System One result, since it has no model, or it is null",
+		},
+		{
+			name: "should report a missing answer field",
+			err:  &ResultShapeError{Answer: "x", Field: "score", Want: "a number"},
+			want: "answer 'x' has no score, or it is null",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.err.Error(); got != tc.want {
+				t.Errorf("\n got: %s\nwant: %s", got, tc.want)
+			}
+		})
+	}
 }

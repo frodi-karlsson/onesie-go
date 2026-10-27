@@ -19,7 +19,10 @@ const plainAnswer = `{"model":"plain","answers":{"q":{"type":"noul","noul":0.25}
 func TestRouteRefuse(t *testing.T) {
 	t.Parallel()
 
-	const neither = "onesie: the bare provider takes no images or box questions. The typesafe and openrouter providers do"
+	const (
+		noImages = "onesie: the bare provider takes no images. The typesafe, openrouter and cloudflare providers do"
+		noBox    = "onesie: the bare provider takes no box questions. The typesafe and openrouter providers do"
+	)
 
 	tests := []struct {
 		name    string
@@ -29,8 +32,8 @@ func TestRouteRefuse(t *testing.T) {
 	}{
 		{name: "should take what the route takes", takes: takesEverything(), needs: takesEverything()},
 		{name: "should take a request that needs nothing", needs: capabilities{}},
-		{name: "should refuse images on a route that takes neither", needs: capabilities{images: true}, wantErr: neither},
-		{name: "should refuse a box question on a route that takes neither", needs: capabilities{box: true}, wantErr: neither},
+		{name: "should refuse images on a route that takes neither", needs: capabilities{images: true}, wantErr: noImages},
+		{name: "should refuse a box question on a route that takes neither", needs: capabilities{box: true}, wantErr: noBox},
 		{
 			name:    "should refuse a box question on a route that takes images only",
 			takes:   capabilities{images: true},
@@ -42,12 +45,12 @@ func TestRouteRefuse(t *testing.T) {
 			name:    "should refuse long context on a route that does not take it",
 			takes:   capabilities{images: true, box: true},
 			needs:   capabilities{longContext: true},
-			wantErr: "onesie: the bare provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the bare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
-			name:    "should refuse images before long context",
+			name:    "should name every capability the route lacks",
 			needs:   capabilities{images: true, longContext: true},
-			wantErr: neither,
+			wantErr: "onesie: the bare provider takes no images or long context. The typesafe and openrouter providers do",
 		},
 	}
 
@@ -55,7 +58,7 @@ func TestRouteRefuse(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := route{takes: tc.takes}.refuse("bare", tc.needs)
+			err := route{takes: tc.takes}.refuse("bare", "m", tc.needs)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -69,6 +72,17 @@ func TestRouteRefuse(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should leave the refusing provider out of the takers", func(t *testing.T) {
+		t.Parallel()
+
+		err := route{takes: capabilities{images: true, box: true}}.refuse("typesafe", "jev-old", capabilities{longContext: true})
+
+		const want = "onesie: the typesafe provider takes no long context. The openrouter, berget and levanto providers do"
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
 }
 
 func TestClientSystemOne(t *testing.T) {
@@ -136,24 +150,24 @@ func TestClientSystemOne(t *testing.T) {
 				Model: "bare", State: "img", Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}},
 				Assets: Assets{"img": img},
 			},
-			wantErr: "onesie: the fake provider takes no images or box questions. The typesafe and openrouter providers do",
+			wantErr: "onesie: the fake provider takes no images. The typesafe, openrouter and cloudflare providers do",
 		},
 		{
 			name:    "should refuse long context asked for on the request",
 			req:     Request{Model: "wrapped", State: "s", Questions: ask("").Questions, LongContext: true},
-			wantErr: "onesie: the fake provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
 			name:    "should refuse long context asked for by WithLongContext",
 			req:     ask("wrapped"),
 			reqOpts: []RequestOption{WithLongContext()},
-			wantErr: "onesie: the fake provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
 			name:    "should refuse long context asked for by a client header",
 			req:     ask("wrapped"),
 			opts:    []Option{WithHeader(HeaderLongContext, "true")},
-			wantErr: "onesie: the fake provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
 			name:    "should report a failing request option rather than refuse",
@@ -321,24 +335,24 @@ func TestClientSystemOneRaw(t *testing.T) {
 		{
 			name:    "should refuse images on a route that takes neither",
 			body:    `{"model":"bare","state":"img","questions":{},"assets":{"img":{"format":"png","data_base64":"AQ=="}}}`,
-			wantErr: "onesie: the fake provider takes no images or box questions. The typesafe and openrouter providers do",
+			wantErr: "onesie: the fake provider takes no images. The typesafe, openrouter and cloudflare providers do",
 		},
 		{
 			name:    "should refuse long context the body asks for",
 			body:    `{"model":"wrapped",` + questions + `,"long_context":true}`,
-			wantErr: "onesie: the fake provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
 			name:    "should refuse long context asked for by WithLongContext",
 			body:    `{"model":"wrapped",` + questions + `}`,
 			reqOpts: []RequestOption{WithLongContext()},
-			wantErr: "onesie: the fake provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
 			name:    "should refuse long context asked for by a client header",
 			body:    `{"model":"wrapped",` + questions + `}`,
 			opts:    []Option{WithHeader(HeaderLongContext, "true")},
-			wantErr: "onesie: the fake provider takes no long context. The typesafe provider does",
+			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
 			name:    "should report a failing request option rather than refuse",

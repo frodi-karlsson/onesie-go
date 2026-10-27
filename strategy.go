@@ -16,7 +16,7 @@ func (p Provider) Refuse(model string, needs Needs) error {
 		model = p.defaultModel
 	}
 
-	return p.route(model).refuse(p.Name, capabilities{
+	return p.route(model).refuse(p.Name, model, capabilities{
 		images:      needs.Images,
 		box:         needs.Box,
 		longContext: needs.LongContext,
@@ -48,7 +48,7 @@ func encodeRequest(p Provider, req Request, headerLongContext bool) (route, []by
 	needs := requestNeeds(req)
 	needs.longContext = needs.longContext || headerLongContext
 
-	if err := via.refuse(p.Name, needs); err != nil {
+	if err := via.refuse(p.Name, model, needs); err != nil {
 		return route{}, nil, nil, err
 	}
 

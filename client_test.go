@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -267,6 +268,20 @@ func TestNew(t *testing.T) {
 
 		if !errors.Is(err, onesie.ErrValidation) {
 			t.Errorf("error got %v, want ErrValidation", err)
+		}
+	})
+
+	t.Run("should echo a refused base url as it was given", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := onesie.New(
+			onesie.WithEnv(mockEnv(nil)),
+			onesie.WithAPIKey("sk"),
+			onesie.WithBaseURL("https:///"),
+		)
+
+		if err == nil || err.Error() != "onesie: base URL https:/// names no host. Write it as https://HOST" {
+			t.Errorf("error = %v, want the base url echoed with its trailing slash", err)
 		}
 	})
 
@@ -544,9 +559,14 @@ func TestClientSystemOne(t *testing.T) {
 					t.Fatalf("error = %v, want a ResponseError matching ErrResponse", err)
 				}
 
-				const prefix = `onesie: 200 response could not be used: answer "q": `
+				const prefix = `onesie: 200 response could not be used: answer 'q' `
 				if !strings.HasPrefix(want.Error(), prefix) || !strings.HasPrefix(got.Error(), prefix) {
 					t.Errorf("errors = %q and %q, want both to start %q", want.Error(), got.Error(), prefix)
+				}
+
+				var shape *onesie.ResultShapeError
+				if !errors.As(err, &shape) || shape.Answer != "q" {
+					t.Errorf("error = %v, want a ResultShapeError naming q", err)
 				}
 
 				if got.Status != want.Status || string(got.Body) != response || got.Message != "" {
@@ -1107,48 +1127,28 @@ func TestClientSystemOne(t *testing.T) {
 	t.Run("should retry a failed request when the policy allows it", func(t *testing.T) {
 		t.Parallel()
 
+		ask := onesie.Request{State: "x", Questions: oneNoul()}
+		answer := scriptedReply{status: http.StatusOK, body: shortAnswer}
+		dropped := scriptedReply{err: errors.New("connection reset by peer")}
+
 		t.Run("should retry a 429 then succeed", func(t *testing.T) {
 			t.Parallel()
 
-			var (
-				calls  atomic.Int32
-				mu     sync.Mutex
-				counts []string
-			)
+			client, clock, transport := newScriptedClient(t, []scriptedReply{{status: http.StatusTooManyRequests}, answer})
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				mu.Lock()
-				counts = append(counts, r.Header.Get("X-TypeSafe-Retry-Count"))
-				mu.Unlock()
-
-				if calls.Add(1) == 1 {
-					w.WriteHeader(http.StatusTooManyRequests)
-
-					return
-				}
-
-				_, _ = io.WriteString(w, shortAnswer)
-			}))
-			defer server.Close()
-
-			client, clock := newTestClient(t, server.URL)
-
-			if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if _, err := client.SystemOne(t.Context(), ask); err != nil {
+				t.Fatalf("unexpected error: %v, %s", err, transport.attempts())
 			}
 
-			if calls.Load() != 2 {
-				t.Errorf("call count got %d, want 2", calls.Load())
+			if transport.calls() != 2 {
+				t.Errorf("call count got %d, want 2, %s", transport.calls(), transport.attempts())
 			}
 
 			if slept := clock.Slept(); len(slept) != 1 || slept[0] != 500*time.Millisecond {
-				t.Errorf("waits got %v, want one 500ms wait", slept)
+				t.Errorf("waits got %v, want one 500ms wait, %s", slept, transport.attempts())
 			}
 
-			mu.Lock()
-			defer mu.Unlock()
-
-			if len(counts) != 2 || counts[0] != "" || counts[1] != "1" {
+			if counts := transport.retryCounts(); len(counts) != 2 || counts[0] != "" || counts[1] != "1" {
 				t.Errorf("retry count header got %v", counts)
 			}
 		})
@@ -1156,113 +1156,83 @@ func TestClientSystemOne(t *testing.T) {
 		t.Run("should honour retry after on a 429", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
+			client, clock, transport := newScriptedClient(t, []scriptedReply{
+				{status: http.StatusTooManyRequests, header: http.Header{"Retry-After": {"2"}}}, answer,
+			})
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if calls.Add(1) == 1 {
-					w.Header().Set("Retry-After", "2")
-					w.WriteHeader(http.StatusTooManyRequests)
+			if _, err := client.SystemOne(t.Context(), ask); err != nil {
+				t.Fatalf("unexpected error: %v, %s", err, transport.attempts())
+			}
 
-					return
-				}
-
-				_, _ = io.WriteString(w, shortAnswer)
-			}))
-			defer server.Close()
-
-			client, clock := newTestClient(t, server.URL)
-
-			if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if transport.calls() != 2 {
+				t.Errorf("call count got %d, want 2, %s", transport.calls(), transport.attempts())
 			}
 
 			if slept := clock.Slept(); len(slept) != 1 || slept[0] != 2*time.Second {
-				t.Errorf("waits got %v, want one 2s wait", slept)
+				t.Errorf("waits got %v, want one 2s wait, %s", slept, transport.attempts())
 			}
 		})
 
 		t.Run("should floor a zero retry after rather than retrying immediately", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
+			client, clock, transport := newScriptedClient(t, []scriptedReply{
+				{status: http.StatusServiceUnavailable, header: http.Header{"Retry-After": {"0"}}}, answer,
+			})
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if calls.Add(1) == 1 {
-					w.Header().Set("Retry-After", "0")
-					w.WriteHeader(http.StatusServiceUnavailable)
+			if _, err := client.SystemOne(t.Context(), ask); err != nil {
+				t.Fatalf("unexpected error: %v, %s", err, transport.attempts())
+			}
 
-					return
-				}
-
-				_, _ = io.WriteString(w, shortAnswer)
-			}))
-			defer server.Close()
-
-			client, clock := newTestClient(t, server.URL)
-
-			if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if transport.calls() != 2 {
+				t.Errorf("call count got %d, want 2, %s", transport.calls(), transport.attempts())
 			}
 
 			if slept := clock.Slept(); len(slept) != 1 || slept[0] != 500*time.Millisecond {
-				t.Errorf("waits got %v, want the 500ms floor", slept)
+				t.Errorf("waits got %v, want the 500ms floor, %s", slept, transport.attempts())
 			}
 		})
 
 		t.Run("should not retry a 422", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
+			client, _, transport := newScriptedClient(t, []scriptedReply{{
+				status: http.StatusUnprocessableEntity,
+				header: http.Header{"Content-Type": {"application/json"}},
+				body:   `{"detail":[{"loc":["body","state"],"msg":"field required"}]}`,
+			}})
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				calls.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnprocessableEntity)
-				_, _ = io.WriteString(w, `{"detail":[{"loc":["body","state"],"msg":"field required"}]}`)
-			}))
-			defer server.Close()
-
-			client, _ := newTestClient(t, server.URL)
-
-			_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+			_, err := client.SystemOne(t.Context(), ask)
 
 			if !errors.Is(err, onesie.ErrUnprocessableEntity) {
-				t.Fatalf("error got %v, want ErrUnprocessableEntity", err)
+				t.Fatalf("error got %v, want ErrUnprocessableEntity, %s", err, transport.attempts())
 			}
 
-			if calls.Load() != 1 {
-				t.Errorf("call count got %d, want 1", calls.Load())
+			if transport.calls() != 1 {
+				t.Errorf("call count got %d, want 1, %s", transport.calls(), transport.attempts())
 			}
 		})
 
 		t.Run("should give up after MaxRetries and return the last error", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
+			client, clock, transport := newScriptedClient(t, []scriptedReply{{status: 529}})
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				calls.Add(1)
-				w.WriteHeader(529)
-			}))
-			defer server.Close()
-
-			client, clock := newTestClient(t, server.URL)
-
-			_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+			_, err := client.SystemOne(t.Context(), ask)
 
 			if !errors.Is(err, onesie.ErrServer) {
-				t.Fatalf("error got %v, want ErrServer", err)
+				t.Fatalf("error got %v, want ErrServer, %s", err, transport.attempts())
 			}
 
-			if calls.Load() != 3 {
-				t.Errorf("call count got %d, want 3, one attempt plus two retries", calls.Load())
+			if transport.calls() != 3 {
+				t.Errorf("call count got %d, want 3, one attempt plus two retries, %s", transport.calls(), transport.attempts())
 			}
 
 			want := []time.Duration{500 * time.Millisecond, time.Second}
 			slept := clock.Slept()
 
 			if len(slept) != len(want) {
-				t.Fatalf("waits got %v, want %v", slept, want)
+				t.Fatalf("waits got %v, want %v, %s", slept, want, transport.attempts())
 			}
 
 			for i, d := range want {
@@ -1275,110 +1245,54 @@ func TestClientSystemOne(t *testing.T) {
 		t.Run("should retry a connection failure when the policy allows it", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
+			client, clock, transport := newScriptedClient(t, []scriptedReply{dropped, answer})
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if calls.Add(1) == 1 {
-					// Hijack and close without a response, which the client sees as a connection error.
-					hijacker, ok := w.(http.Hijacker)
-					if !ok {
-						return
-					}
-
-					conn, _, hijackErr := hijacker.Hijack()
-					if hijackErr != nil {
-						return
-					}
-
-					_ = conn.Close()
-
-					return
-				}
-
-				_, _ = io.WriteString(w, shortAnswer)
-			}))
-			defer server.Close()
-
-			client, clock := newTestClient(t, server.URL)
-
-			if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if _, err := client.SystemOne(t.Context(), ask); err != nil {
+				t.Fatalf("unexpected error: %v, %s", err, transport.attempts())
 			}
 
-			if calls.Load() != 2 {
-				t.Errorf("call count got %d, want 2", calls.Load())
+			if transport.calls() != 2 {
+				t.Errorf("call count got %d, want 2, %s", transport.calls(), transport.attempts())
 			}
 
 			if len(clock.Slept()) != 1 {
-				t.Errorf("waits got %v, want one", clock.Slept())
+				t.Errorf("waits got %v, want one, %s", clock.Slept(), transport.attempts())
 			}
 		})
 
 		t.Run("should not retry a connection failure when RetryConnection is off", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				calls.Add(1)
-
-				hijacker, ok := w.(http.Hijacker)
-				if !ok {
-					return
-				}
-
-				conn, _, hijackErr := hijacker.Hijack()
-				if hijackErr != nil {
-					return
-				}
-
-				_ = conn.Close()
-			}))
-			defer server.Close()
-
 			policy := onesie.DefaultRetryPolicy()
 			policy.RetryConnection = false
 
-			client, _ := newTestClient(t, server.URL, onesie.WithRetry(policy))
+			client, _, transport := newScriptedClient(t, []scriptedReply{dropped}, onesie.WithRetry(policy))
 
-			_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+			_, err := client.SystemOne(t.Context(), ask)
 
 			if !errors.Is(err, onesie.ErrConnection) {
-				t.Fatalf("error got %v, want ErrConnection", err)
+				t.Fatalf("error got %v, want ErrConnection, %s", err, transport.attempts())
 			}
 
-			if calls.Load() != 1 {
-				t.Errorf("call count got %d, want 1", calls.Load())
+			if transport.calls() != 1 {
+				t.Errorf("call count got %d, want 1, %s", transport.calls(), transport.attempts())
 			}
 		})
 
 		t.Run("should respect a per call retry override", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
-
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				calls.Add(1)
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}))
-			defer server.Close()
-
-			client, _ := newTestClient(t, server.URL)
+			client, _, transport := newScriptedClient(t, []scriptedReply{{status: http.StatusServiceUnavailable}})
 
 			policy := client.RetryPolicy()
 			policy.MaxRetries = 0
 
-			_, err := client.SystemOne(
-				t.Context(),
-				onesie.Request{State: "x", Questions: oneNoul()},
-				onesie.WithRequestRetry(policy),
-			)
-			if err == nil {
+			if _, err := client.SystemOne(t.Context(), ask, onesie.WithRequestRetry(policy)); err == nil {
 				t.Fatalf("expected an error, got none")
 			}
 
-			if calls.Load() != 1 {
-				t.Errorf("call count got %d, want 1", calls.Load())
+			if transport.calls() != 1 {
+				t.Errorf("call count got %d, want 1, %s", transport.calls(), transport.attempts())
 			}
 		})
 	})
@@ -1575,22 +1489,14 @@ func TestClientSystemOne(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 
-				var calls atomic.Int64
-
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					calls.Add(1)
-					w.Header().Set("Retry-After", tc.retryAfter)
-					w.WriteHeader(http.StatusTooManyRequests)
-					if _, err := w.Write([]byte(`{"error":{"message":"slow down"}}`)); err != nil {
-						t.Errorf("writing stub response: %v", err)
-					}
-				}))
-				defer srv.Close()
-
 				policy := onesie.DefaultRetryPolicy()
 				policy.MaxRetryAfter = tc.cap
 
-				client, _ := newTestClient(t, srv.URL, onesie.WithRetry(policy))
+				client, _, transport := newScriptedClient(t, []scriptedReply{{
+					status: http.StatusTooManyRequests,
+					header: http.Header{"Retry-After": {tc.retryAfter}},
+					body:   `{"error":{"message":"slow down"}}`,
+				}}, onesie.WithRetry(policy))
 
 				_, err := client.SystemOne(t.Context(), onesie.Request{
 					State:     "hello",
@@ -1601,8 +1507,8 @@ func TestClientSystemOne(t *testing.T) {
 					t.Fatal("expected an error, got none")
 				}
 
-				if got := int(calls.Load()); got != tc.wantCalls {
-					t.Errorf("server calls = %d, want %d", got, tc.wantCalls)
+				if got := transport.calls(); got != tc.wantCalls {
+					t.Errorf("server calls = %d, want %d, %s", got, tc.wantCalls, transport.attempts())
 				}
 
 				if tc.wantCalls == 1 {
@@ -1745,7 +1651,7 @@ func TestClientSystemOne(t *testing.T) {
 				},
 			} {
 				_, err := client.SystemOne(t.Context(), req)
-				if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), "takes no images or box questions") {
+				if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), "takes no images") {
 					t.Errorf("error = %v, want the provider's refusal", err)
 				}
 			}
@@ -2506,12 +2412,14 @@ func TestClientSystemOneRaw(t *testing.T) {
 			status:   http.StatusOK,
 			response: `{"model":"onesie-1.0.0","answers":{}}`,
 			send:     json.RawMessage(`{"state":"a < b & c > d"}`),
+			wantSent: `{"model":"jev-latest","state":"a < b & c > d"}`,
 		},
 		{
 			name:     "should forward the line separators json.Marshal would escape",
 			status:   http.StatusOK,
 			response: `{"model":"onesie-1.0.0","answers":{}}`,
 			send:     json.RawMessage("{\"state\":\"a\u2028b\u2029c\"}"),
+			wantSent: "{\"model\":\"jev-latest\",\"state\":\"a\u2028b\u2029c\"}",
 		},
 		{
 			name:     "should compact a pretty printed body without reordering it",
@@ -2707,6 +2615,30 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 			if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "true" {
 				t.Errorf("%s = %q, want true", onesie.HeaderLongContext, got)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{name: "should send the default model in a raw body that names none", body: `{"state":"s"}`, want: `{"model":"custom","state":"s"}`},
+		{name: "should send the default model in place of a blank one", body: `{"state":"s","model":" "}`, want: `{"state":"s","model":"custom"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example",
+				onesie.WithDefaultModel("custom"), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			if _, err := client.SystemOneRaw(t.Context(), json.RawMessage(tc.body)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			want := string(onesie.PrepareRawBody(json.RawMessage(tc.body), "custom", false))
+			if got := transport.lastBody(); got != tc.want || got != want {
+				t.Errorf("body = %s, want %s, as PrepareRawBody prints it", got, tc.want)
 			}
 		})
 	}
@@ -3284,4 +3216,99 @@ func (s stallingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	<-req.Context().Done()
 
 	return nil, req.Context().Err()
+}
+
+func newScriptedClient(
+	t *testing.T, replies []scriptedReply, opts ...onesie.Option,
+) (*onesie.Client, *mockClock, *scriptedTransport) {
+	t.Helper()
+
+	transport := &scriptedTransport{replies: replies}
+	client, clock := newTestClient(t, "https://api.example", append([]onesie.Option{
+		onesie.WithHTTPClient(&http.Client{Transport: transport}),
+		onesie.WithAttemptObserver(transport.observe),
+	}, opts...)...)
+
+	return client, clock, transport
+}
+
+type scriptedReply struct {
+	status int
+	header http.Header
+	body   string
+	err    error
+}
+
+type scriptedTransport struct {
+	replies []scriptedReply
+
+	mu       sync.Mutex
+	requests []*http.Request
+	seen     []onesie.Attempt
+}
+
+func (s *scriptedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Body != nil {
+		if _, err := io.Copy(io.Discard, req.Body); err != nil {
+			return nil, err
+		}
+	}
+
+	s.mu.Lock()
+	s.requests = append(s.requests, req)
+	reply := s.replies[min(len(s.requests), len(s.replies))-1]
+	s.mu.Unlock()
+
+	if reply.err != nil {
+		return nil, reply.err
+	}
+
+	header := reply.header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
+
+	return &http.Response{
+		StatusCode: reply.status,
+		Header:     header,
+		Body:       io.NopCloser(strings.NewReader(reply.body)),
+		Request:    req,
+	}, nil
+}
+
+func (s *scriptedTransport) observe(attempt onesie.Attempt) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.seen = append(s.seen, attempt)
+}
+
+func (s *scriptedTransport) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return len(s.requests)
+}
+
+func (s *scriptedTransport) retryCounts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	counts := make([]string, 0, len(s.requests))
+	for _, req := range s.requests {
+		counts = append(counts, req.Header.Get("X-TypeSafe-Retry-Count"))
+	}
+
+	return counts
+}
+
+func (s *scriptedTransport) attempts() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.seen) == 0 {
+		return "no attempt was observed"
+	}
+
+	return fmt.Sprintf("first attempt status %d, error %v, of %d attempts", s.seen[0].Status, s.seen[0].Err, len(s.seen))
 }

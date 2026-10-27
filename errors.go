@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
 const (
 	maxBodyInError = 200
+	byteOrderMark  = "\ufeff"
 )
 
 // Sentinels for errors.Is. An APIError reports itself as the one matching its status.
@@ -51,6 +54,12 @@ func NewAPIError(status int, message string) *APIError {
 
 func newAPIError(status int, header http.Header, requestIDHeader string, body []byte, now time.Time) *APIError {
 	parsed := decodeBody(body)
+	isJSON := len(body) > 0 && json.Valid(body)
+
+	message := describe(status, header, parsed)
+	if len(body) > 0 && !isJSON && !redirected(status, header) {
+		message = describeText(status, string(body))
+	}
 
 	retryAfter, _ := parseRetryAfter(header, now)
 
@@ -59,10 +68,57 @@ func newAPIError(status int, header http.Header, requestIDHeader string, body []
 		RequestID:  header.Get(requestIDHeader),
 		Header:     header,
 		Body:       parsed,
+		RawBody:    body,
+		BodyJSON:   isJSON,
 		RetryAfter: retryAfter,
-		message:    describe(status, header, parsed),
+		message:    message,
 		keyRefused: cloudflareAuthFailure(parsed),
 	}
+}
+
+func redirected(status int, header http.Header) bool {
+	return status >= 300 && status < 400 && header.Get("Location") != ""
+}
+
+func describeText(status int, body string) string {
+	statusLine := fmt.Sprintf("%d %s", status, http.StatusText(status))
+	if http.StatusText(status) == "" {
+		statusLine = fmt.Sprintf("%d status code", status)
+	}
+
+	message := "onesie: " + statusLine + ", with a response body that is not JSON"
+
+	// An HTML page from a proxy or a web server says nothing one line can show, while a line of text
+	// may name the cause.
+	line := firstLine(body)
+	if line == "" || strings.HasPrefix(line, "<") || repeatsStatus(line, status) {
+		return message
+	}
+
+	return message + ": " + line
+}
+
+func firstLine(body string) string {
+	line, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(body), byteOrderMark), "\n")
+
+	return printable(line)
+}
+
+func printable(text string) string {
+	return truncate(strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+
+		return r
+	}, text)))
+}
+
+func repeatsStatus(line string, status int) bool {
+	text := strings.TrimSuffix(line, ".")
+	text = strings.TrimSpace(strings.TrimPrefix(text, strconv.Itoa(status)))
+
+	return strings.EqualFold(text, http.StatusText(status))
 }
 
 func cloudflareAuthFailure(body any) bool {
@@ -89,9 +145,9 @@ func cloudflareAuthFailure(body any) bool {
 }
 
 func describe(status int, header http.Header, body any) string {
-	if location := header.Get("Location"); status >= 300 && status < 400 && location != "" {
+	if redirected(status, header) {
 		return fmt.Sprintf("onesie: %d redirect to %s, which onesie does not follow, since the request "+
-			"carries the API key. Point the base URL at where the API is", status, truncate(location))
+			"carries the API key. Point the base URL at where the API is", status, truncate(header.Get("Location")))
 	}
 
 	if detail := extractMessage(body); detail != "" {
@@ -320,11 +376,17 @@ type APIError struct {
 	Body       any
 	RetryAfter time.Duration
 
+	// RawBody is the response body as it arrived, and BodyJSON reports whether it parsed as JSON.
+	// Body holds a body that did not parse as a string, as it holds a JSON string.
+	RawBody  []byte
+	BodyJSON bool
+
 	message    string
 	keyRefused bool
 }
 
-// Error returns the status and the message extracted from the response body.
+// Error returns the status and the message extracted from the response body. A body that is not JSON
+// is summarised by its first line of text, and an HTML page is left out.
 func (e *APIError) Error() string {
 	return e.message
 }
@@ -465,6 +527,53 @@ func (e *ValidationError) Is(target error) bool {
 	return target == ErrValidation
 }
 
+func newCapabilityError(provider, model string, missing Needs, takers []string) *CapabilityError {
+	var lacking []string
+
+	if missing.Images {
+		lacking = append(lacking, "images")
+	}
+
+	if missing.Box {
+		lacking = append(lacking, "box questions")
+	}
+
+	if missing.LongContext {
+		lacking = append(lacking, "long context")
+	}
+
+	message := fmt.Sprintf("the %s provider takes no %s", provider, joinNames(lacking, "or"))
+
+	switch len(takers) {
+	case 0:
+	case 1:
+		message += ". The " + takers[0] + " provider does"
+	default:
+		message += ". The " + joinNames(takers, "and") + " providers do"
+	}
+
+	return &CapabilityError{
+		ValidationError: ValidationError{Message: message},
+		Provider:        provider, Model: model, Missing: missing, Takers: takers,
+	}
+}
+
+// CapabilityError is a request the provider's route for Model does not take. Missing holds only what
+// it lacks, and Takers the other providers from Providers whose default model takes all of it.
+type CapabilityError struct {
+	ValidationError
+
+	Provider string
+	Model    string
+	Missing  Needs
+	Takers   []string
+}
+
+// Unwrap returns the embedded ValidationError, so errors.As reaches it.
+func (e *CapabilityError) Unwrap() error {
+	return &e.ValidationError
+}
+
 // AnswerError reports an answer that is absent or of another type.
 type AnswerError struct {
 	Name    string
@@ -480,4 +589,88 @@ func (e *AnswerError) Error() string {
 	}
 
 	return fmt.Sprintf("onesie: answer %q is a %s, not a %s", e.Name, e.Got, e.Want)
+}
+
+// ResultShapeError is a response body that is not the System One result it should be. Answer names
+// the answer at fault, or is empty when the body itself is wrong. Got is empty for a missing field.
+type ResultShapeError struct {
+	Answer string
+	Field  string
+	Want   string
+	Got    string
+
+	cause error
+}
+
+// Unwrap returns the decoder's error behind a wrong JSON type, or nil.
+func (e *ResultShapeError) Unwrap() error {
+	return e.cause
+}
+
+// Error describes the fault in the response's own terms, with no Go types. Text from the response is
+// cleaned of control characters and cut short.
+func (e *ResultShapeError) Error() string {
+	field, got := printable(e.Field), printable(e.Got)
+
+	if e.Answer == "" {
+		return resultSentence(field, e.Want, got)
+	}
+
+	name := "answer '" + printable(e.Answer) + "'"
+	if field == "" {
+		return fmt.Sprintf("%s is %s, not %s", name, got, e.Want)
+	}
+
+	phrase, bare, verb := fieldPhrase(field)
+
+	switch {
+	case got == "":
+		return fmt.Sprintf("%s has no %s, or it is null", name, bare)
+	case field == "type" && e.Want == answerKinds:
+		return fmt.Sprintf("%s has the type '%s', which is not %s", name, got, e.Want)
+	case strings.HasPrefix(got, "an empty "):
+		return fmt.Sprintf("%s has %s that %s empty", name, phrase, verb)
+	default:
+		return fmt.Sprintf("%s has %s that %s not %s", name, phrase, verb, e.Want)
+	}
+}
+
+func resultSentence(field, want, got string) string {
+	const lead = "the response is not a System One result"
+
+	switch {
+	case field == "" && got == "":
+		return lead
+	case field == "":
+		return lead + ", since it is " + got
+	case got == "":
+		return lead + ", since it has no " + field + ", or it is null"
+	default:
+		_, _, verb := fieldPhrase(field)
+
+		return lead + ", since its " + field + " " + verb + " not " + want
+	}
+}
+
+func fieldPhrase(field string) (phrase, bare, verb string) {
+	parent, key, nested := strings.Cut(field, ".")
+
+	switch {
+	case nested && parent == "probabilities":
+		bare = "probability for '" + key + "'"
+	case nested && parent == "legend":
+		bare = "legend entry for '" + key + "'"
+	case nested && parent == "box":
+		bare = "box " + key + " edge"
+	case !nested && strings.HasSuffix(field, "s"):
+		return field, field, "are"
+	default:
+		bare = field
+	}
+
+	if strings.ContainsAny(bare[:1], "aeiou") {
+		return "an " + bare, bare, "is"
+	}
+
+	return "a " + bare, bare, "is"
 }
