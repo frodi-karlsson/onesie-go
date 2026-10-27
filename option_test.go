@@ -50,13 +50,33 @@ func TestValidateBaseURL(t *testing.T) {
 		},
 		{
 			name:    "should leave the reason out when it could hold part of the userinfo",
-			raw:     "https://user:sec/ret@api.example",
-			wantErr: "onesie: base URL https://api.example does not parse",
+			raw:     "https://user:secret@api.example:port",
+			wantErr: "onesie: base URL https://api.example:port does not parse",
 		},
 		{
-			name:    "should leave out userinfo a URL with no scheme carries",
+			name:    "should echo no URL when the last @ comes after the authority",
+			raw:     "https://user:sec/ret@api.example",
+			wantErr: "onesie: the base URL does not parse",
+		},
+		{
+			name:    "should echo no URL for an @ in the query",
+			raw:     "ftp://host/p?q=a@b",
+			wantErr: "onesie: the base URL is not an http or https URL",
+		},
+		{
+			name:    "should echo no URL for userinfo ahead of the scheme",
+			raw:     "user:secret@https://host",
+			wantErr: "onesie: the base URL is not an http or https URL",
+		},
+		{
+			name:    "should echo no URL for an @ in the scheme",
+			raw:     "user@x://user:secret@host",
+			wantErr: "onesie: the base URL does not parse",
+		},
+		{
+			name:    "should echo no URL for userinfo with no scheme",
 			raw:     "user:secret@api.example",
-			wantErr: "onesie: base URL api.example is not an http or https URL",
+			wantErr: "onesie: the base URL is not an http or https URL",
 		},
 	}
 

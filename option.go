@@ -310,45 +310,53 @@ type requestConfig struct {
 }
 
 // ValidateBaseURL rejects anything that is not an absolute http or https URL, saying why. The
-// message echoes the URL as given, without any userinfo.
+// message echoes the URL as given, without any userinfo, or names no URL when it cannot tell.
 func ValidateBaseURL(raw string) error {
-	echo, hadUserinfo := withoutUserinfo(raw)
+	subject, hadAt := baseURLSubject(raw)
 
 	parsed, err := url.Parse(raw)
 
 	var malformed *url.Error
 
 	switch {
-	case errors.As(err, &malformed) && hadUserinfo:
-		return &ValidationError{Message: "base URL " + echo + " does not parse"}
+	case err != nil && hadAt:
+		return &ValidationError{Message: subject + " does not parse"}
 	case errors.As(err, &malformed):
-		return &ValidationError{Message: "base URL " + echo + " does not parse: " + malformed.Err.Error()}
-	case err != nil:
-		return &ValidationError{Message: "base URL " + echo + " does not parse"}
+		return &ValidationError{Message: subject + " does not parse: " + malformed.Err.Error()}
 	case parsed.Scheme != "http" && parsed.Scheme != "https":
-		return &ValidationError{Message: "base URL " + echo + " is not an http or https URL"}
+		return &ValidationError{Message: subject + " is not an http or https URL"}
 	case parsed.Host == "":
 		return &ValidationError{Message: fmt.Sprintf(
-			"base URL %s names no host. Write it as %s://HOST", echo, parsed.Scheme)}
+			"%s names no host. Write it as %s://HOST", subject, parsed.Scheme)}
 	default:
 		return nil
 	}
 }
 
-func withoutUserinfo(raw string) (string, bool) {
-	// Up to the last @ anywhere, not only in the authority, since a password holding a / ends the
-	// authority early as url.Parse reads it.
-	prefix, rest := "", raw
-	if scheme, after, found := strings.Cut(raw, "://"); found {
-		prefix, rest = scheme+"://", after
-	}
-
-	at := strings.LastIndex(rest, "@")
+func baseURLSubject(raw string) (string, bool) {
+	at := strings.LastIndex(raw, "@")
 	if at < 0 {
-		return raw, false
+		return "base URL " + raw, false
 	}
 
-	return prefix + rest[at+1:], true
+	scheme, authority, found := strings.Cut(raw, "://")
+	if !found || strings.Contains(scheme, "@") {
+		return "the base URL", true
+	}
+
+	// The echo is kept only when the last @ sits in the authority, so no part of the userinfo can
+	// be left in the host, the path, the query or the fragment.
+	end := strings.IndexAny(authority, "/?#")
+	if end < 0 {
+		end = len(authority)
+	}
+
+	inAuthority := strings.LastIndex(authority[:end], "@")
+	if inAuthority < 0 || len(scheme)+len("://")+inAuthority != at {
+		return "the base URL", true
+	}
+
+	return "base URL " + scheme + "://" + authority[inAuthority+1:], true
 }
 
 func orEnv(value string, lookup func(string) (string, bool), name string) string {
