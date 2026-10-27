@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
 const (
 	maxBodyInError = 200
+	maxLineInError = 120
 )
 
 // Sentinels for errors.Is. An APIError reports itself as the one matching its status.
@@ -51,6 +54,12 @@ func NewAPIError(status int, message string) *APIError {
 
 func newAPIError(status int, header http.Header, requestIDHeader string, body []byte, now time.Time) *APIError {
 	parsed := decodeBody(body)
+	isJSON := len(body) > 0 && json.Valid(body)
+
+	message := describe(status, header, parsed)
+	if len(body) > 0 && !isJSON && !redirected(status, header) {
+		message = describeText(status, string(body))
+	}
 
 	retryAfter, _ := parseRetryAfter(header, now)
 
@@ -59,10 +68,58 @@ func newAPIError(status int, header http.Header, requestIDHeader string, body []
 		RequestID:  header.Get(requestIDHeader),
 		Header:     header,
 		Body:       parsed,
+		RawBody:    body,
+		BodyJSON:   isJSON,
 		RetryAfter: retryAfter,
-		message:    describe(status, header, parsed),
+		message:    message,
 		keyRefused: cloudflareAuthFailure(parsed),
 	}
+}
+
+func redirected(status int, header http.Header) bool {
+	return status >= 300 && status < 400 && header.Get("Location") != ""
+}
+
+func describeText(status int, body string) string {
+	statusLine := fmt.Sprintf("%d %s", status, http.StatusText(status))
+	if http.StatusText(status) == "" {
+		statusLine = fmt.Sprintf("%d status code", status)
+	}
+
+	message := "onesie: " + statusLine + ", with a response body that is not JSON"
+
+	// An HTML page from a proxy or a web server says nothing one line can show, while a line of text
+	// may name the cause.
+	line := firstLine(body)
+	if line == "" || strings.HasPrefix(line, "<") || repeatsStatus(line, status) {
+		return message
+	}
+
+	return message + ": " + line
+}
+
+func firstLine(body string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(body), "\n")
+	line = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+
+		return r
+	}, line))
+
+	if runes := []rune(line); len(runes) > maxLineInError {
+		return string(runes[:maxLineInError]) + "..."
+	}
+
+	return line
+}
+
+func repeatsStatus(line string, status int) bool {
+	text := strings.TrimSuffix(line, ".")
+	text = strings.TrimSpace(strings.TrimPrefix(text, strconv.Itoa(status)))
+
+	return strings.EqualFold(text, http.StatusText(status))
 }
 
 func cloudflareAuthFailure(body any) bool {
@@ -89,9 +146,9 @@ func cloudflareAuthFailure(body any) bool {
 }
 
 func describe(status int, header http.Header, body any) string {
-	if location := header.Get("Location"); status >= 300 && status < 400 && location != "" {
+	if redirected(status, header) {
 		return fmt.Sprintf("onesie: %d redirect to %s, which onesie does not follow, since the request "+
-			"carries the API key. Point the base URL at where the API is", status, truncate(location))
+			"carries the API key. Point the base URL at where the API is", status, truncate(header.Get("Location")))
 	}
 
 	if detail := extractMessage(body); detail != "" {
@@ -320,11 +377,17 @@ type APIError struct {
 	Body       any
 	RetryAfter time.Duration
 
+	// RawBody is the response body as it arrived, and BodyJSON reports whether it parsed as JSON.
+	// Body holds a body that did not parse as a string, as it holds a JSON string.
+	RawBody  []byte
+	BodyJSON bool
+
 	message    string
 	keyRefused bool
 }
 
-// Error returns the status and the message extracted from the response body.
+// Error returns the status and the message extracted from the response body. A body that is not JSON
+// is summarised by its first line of text, and an HTML page is left out.
 func (e *APIError) Error() string {
 	return e.message
 }

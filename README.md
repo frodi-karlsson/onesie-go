@@ -95,6 +95,11 @@ result, err := client.SystemOne(ctx, onesie.Request{
 })
 ```
 
+A response outside 2xx fails with an `APIError`. Its message carries the server's own message when
+the body is JSON. A body that is not JSON is summarised: the status, a note that the body is not
+JSON, and the first line of a text body unless it only repeats the status. An HTML page is left
+out. `RawBody` keeps the body as it arrived, and `BodyJSON` reports whether it parsed.
+
 A 200 response that is not a System One result fails with a `ResponseError` that wraps a
 `ResultShapeError`. Reach it with `errors.As` to read the answer, the field, the JSON kind it wanted
 and the kind it got. Its message reads in the response's own terms, such as

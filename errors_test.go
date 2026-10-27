@@ -123,7 +123,43 @@ func TestNewAPIError(t *testing.T) {
 			status:   529,
 			body:     `overloaded`,
 			sentinel: ErrServer,
-			message:  "onesie: 529 overloaded",
+			message:  "onesie: 529 status code, with a response body that is not JSON: overloaded",
+		},
+		{
+			name:     "should leave an HTML body out of the message",
+			status:   502,
+			body:     "<!DOCTYPE html>\n<html><body><h1>502 Bad Gateway</h1></body></html>",
+			sentinel: ErrServer,
+			message:  "onesie: 502 Bad Gateway, with a response body that is not JSON",
+		},
+		{
+			name:     "should leave out a text body that only repeats the status",
+			status:   401,
+			body:     "401 Unauthorized.\n",
+			sentinel: ErrAuthentication,
+			message:  "onesie: 401 Unauthorized, with a response body that is not JSON",
+		},
+		{
+			name:     "should show only the first line of a text body",
+			status:   503,
+			body:     "\n  upstream connect error\x07 \nreset reason: overflow",
+			sentinel: ErrServer,
+			message:  "onesie: 503 Service Unavailable, with a response body that is not JSON: upstream connect error",
+		},
+		{
+			name:     "should cut a long first line of a text body",
+			status:   500,
+			body:     strings.Repeat("é", 130),
+			sentinel: ErrServer,
+			message: "onesie: 500 Internal Server Error, with a response body that is not JSON: " +
+				strings.Repeat("é", 120) + "...",
+		},
+		{
+			name:     "should keep a JSON string body as the message",
+			status:   429,
+			body:     `"slow down"`,
+			sentinel: ErrRateLimit,
+			message:  "onesie: 429 slow down",
 		},
 		{
 			name:     "should read a cloudflare 401",
@@ -308,6 +344,27 @@ func TestNewAPIError(t *testing.T) {
 
 			if errors.Is(err, tc.not) {
 				t.Errorf("status %d matched %v", tc.status, tc.not)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		json bool
+	}{
+		{name: "should keep a JSON body and say it parsed", body: `{"error":"bad"}`, json: true},
+		{name: "should keep a JSON string body and say it parsed", body: `"bad"`, json: true},
+		{name: "should keep a text body and say it did not parse", body: "bad gateway"},
+		{name: "should keep no body and say it did not parse"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := newAPIError(502, http.Header{}, "X-TypeSafe-Request-Id", []byte(tc.body), time.Now())
+
+			if string(err.RawBody) != tc.body || err.BodyJSON != tc.json {
+				t.Errorf("RawBody = %q, BodyJSON = %v, want %q and %v", err.RawBody, err.BodyJSON, tc.body, tc.json)
 			}
 		})
 	}
