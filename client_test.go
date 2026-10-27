@@ -1764,7 +1764,7 @@ func TestClientSystemOne(t *testing.T) {
 				},
 			} {
 				_, err := client.SystemOne(t.Context(), req)
-				if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), "takes no images or box questions") {
+				if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), "takes no images") {
 					t.Errorf("error = %v, want the provider's refusal", err)
 				}
 			}

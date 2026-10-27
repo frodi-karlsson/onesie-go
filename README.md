@@ -57,9 +57,10 @@ belongs, usually as a state value. `SystemOne` sends the images header itself.
 A request is checked in two layers. `ValidateRequest` checks it for any provider.
 `Provider.Encode` refuses what one provider does not take and returns the body it would send.
 `SystemOne` runs both, in that order, before it sends. `Provider.Refuse` gives the same refusal
-from a model and its `Needs`, before a request exists. The body `Encode` returns carries no
-headers, so `SystemOne` also sends the images header for TypeSafe, and a blank model there is the
-provider's built in default.
+from a model and its `Needs`, before a request exists. A refusal is a `CapabilityError`, which
+carries the provider, the model, the `Needs` it lacks and the providers from `Providers` whose
+default model takes them. The body `Encode` returns carries no headers, so `SystemOne` also sends
+the images header for TypeSafe, and a blank model there is the provider's built in default.
 
 Set `Request.LongContext`, or pass `onesie.WithLongContext()` to one call, to raise the context
 limits. A body from `MarshalBody` carries it as `long_context`, which `SystemOneRaw` turns back

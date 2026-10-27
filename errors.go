@@ -465,6 +465,53 @@ func (e *ValidationError) Is(target error) bool {
 	return target == ErrValidation
 }
 
+func newCapabilityError(provider, model string, missing Needs, takers []string) *CapabilityError {
+	var lacking []string
+
+	if missing.Images {
+		lacking = append(lacking, "images")
+	}
+
+	if missing.Box {
+		lacking = append(lacking, "box questions")
+	}
+
+	if missing.LongContext {
+		lacking = append(lacking, "long context")
+	}
+
+	message := fmt.Sprintf("the %s provider takes no %s", provider, joinNames(lacking, "or"))
+
+	switch len(takers) {
+	case 0:
+	case 1:
+		message += ". The " + takers[0] + " provider does"
+	default:
+		message += ". The " + joinNames(takers, "and") + " providers do"
+	}
+
+	return &CapabilityError{
+		ValidationError: ValidationError{Message: message},
+		Provider:        provider, Model: model, Missing: missing, Takers: takers,
+	}
+}
+
+// CapabilityError is a request the provider's route for Model does not take. Missing holds only what
+// it lacks, and Takers the providers from Providers whose default model takes all of it.
+type CapabilityError struct {
+	ValidationError
+
+	Provider string
+	Model    string
+	Missing  Needs
+	Takers   []string
+}
+
+// Unwrap returns the embedded ValidationError, so errors.As reaches it.
+func (e *CapabilityError) Unwrap() error {
+	return &e.ValidationError
+}
+
 // AnswerError reports an answer that is absent or of another type.
 type AnswerError struct {
 	Name    string

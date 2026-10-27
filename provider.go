@@ -15,24 +15,39 @@ const (
 	keyCheckByEndpoint
 )
 
-// ProviderNamed returns the provider a --provider value or ONESIE_PROVIDER names.
+// ProviderNamed returns the provider a --provider value or ONESIE_PROVIDER names. An empty name is
+// TypeSafe.
 func ProviderNamed(name string) (Provider, error) {
-	switch strings.TrimSpace(name) {
-	case "", "typesafe":
+	wanted := strings.TrimSpace(name)
+	if wanted == "" {
 		return TypeSafe(), nil
-	case "openrouter":
-		return OpenRouter(), nil
-	case "berget":
-		return Berget(), nil
-	case "levanto":
-		return Levanto(), nil
-	case "cloudflare":
-		return Cloudflare(), nil
-	default:
-		return Provider{}, &ValidationError{
-			Message: "unknown provider " + name + ". Use typesafe, openrouter, berget, levanto or cloudflare",
-		}
 	}
+
+	providers := Providers()
+	names := make([]string, 0, len(providers))
+
+	for _, provider := range providers {
+		if provider.Name == wanted {
+			return provider, nil
+		}
+
+		names = append(names, provider.Name)
+	}
+
+	return Provider{}, &ValidationError{Message: "unknown provider " + name + ". Use " + joinNames(names, "or")}
+}
+
+// Providers lists every provider this package serves, TypeSafe first, in the order a refusal names them.
+func Providers() []Provider {
+	return []Provider{TypeSafe(), OpenRouter(), Berget(), Levanto(), Cloudflare()}
+}
+
+func joinNames(names []string, conjunction string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+
+	return strings.Join(names[:len(names)-1], ", ") + " " + conjunction + " " + names[len(names)-1]
 }
 
 // TypeSafe is the TypeSafe System One API, the default provider.

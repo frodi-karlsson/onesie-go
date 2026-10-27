@@ -302,7 +302,7 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, 
 	}
 
 	needs.longContext = needs.longContext || c.sendsLongContext(opts)
-	if refusal := via.refuse(c.provider.Name, needs); refusal != nil {
+	if refusal := via.refuse(c.provider.Name, model, needs); refusal != nil {
 		return route{}, nil, nil, refusal
 	}
 
