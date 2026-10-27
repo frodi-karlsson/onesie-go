@@ -93,7 +93,7 @@ func TestInlineParts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := inlineParts([]byte(tc.body))
+			got, err := inlineParts(parseBody([]byte(tc.body)).members)
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want a validation error containing %q", err, tc.wantErr)
@@ -106,8 +106,9 @@ func TestInlineParts(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if string(got) != tc.want {
-				t.Errorf("body\ngot  %s\nwant %s", got, tc.want)
+			out, writeErr := writeMembers(got)
+			if writeErr != nil || string(out) != tc.want {
+				t.Errorf("body\ngot  %s\nwant %s", out, tc.want)
 			}
 		})
 	}
@@ -165,7 +166,7 @@ func TestAssetsToImages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := assetsToImages([]byte(tc.body))
+			got, err := assetsToImages(parseBody([]byte(tc.body)).members)
 			if tc.wantErr != "" {
 				if err == nil || err.Error() != tc.wantErr {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
@@ -178,8 +179,9 @@ func TestAssetsToImages(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if string(got) != tc.want {
-				t.Errorf("assetsToImages =\n%s\nwant\n%s", got, tc.want)
+			out, writeErr := writeMembers(got)
+			if writeErr != nil || string(out) != tc.want {
+				t.Errorf("body\ngot  %s\nwant %s", out, tc.want)
 			}
 		})
 	}

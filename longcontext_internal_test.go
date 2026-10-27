@@ -38,7 +38,7 @@ func TestTakeLongContext(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, on, err := takeLongContext([]byte(tc.body))
+			got, on, err := takeLongContext(parseBody([]byte(tc.body)))
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrValidation) || err.Error() != "onesie: "+tc.wantErr {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
@@ -47,12 +47,13 @@ func TestTakeLongContext(t *testing.T) {
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			out, writeErr := got.bytes()
+			if err != nil || writeErr != nil {
+				t.Fatalf("unexpected error: %v, %v", err, writeErr)
 			}
 
-			if string(got) != tc.want || on != tc.wantOn {
-				t.Errorf("got %s, %v, want %s, %v", got, on, tc.want, tc.wantOn)
+			if string(out) != tc.want || on != tc.wantOn {
+				t.Errorf("got %s, %v, want %s, %v", out, on, tc.want, tc.wantOn)
 			}
 		})
 	}

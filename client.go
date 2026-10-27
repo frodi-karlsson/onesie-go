@@ -360,23 +360,18 @@ func (c *Client) SystemOneRaw(
 }
 
 func (c *Client) prepareRaw(body json.RawMessage, longContext bool) (encoded, error) {
-	trimmed, bodyLongContext, err := takeLongContext(PrepareRawBody(body, c.defaultModel, false))
+	parsed, bodyLongContext, err := takeLongContext(fillModel(parseBody(body), c.defaultModel))
 	if err != nil {
 		return encoded{}, err
 	}
 
-	scan := scanBody(trimmed)
-
-	model := scan.model
-	if model == "" {
-		model = c.defaultModel
-	}
-
+	scan := scanMembers(parsed.members)
+	model := orDefault(scan.model, c.defaultModel)
 	via := c.provider.route(model)
 	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext || bodyLongContext}
 
 	if needs.images || needs.box {
-		if fault := checkBodyImages(trimmed); fault != nil {
+		if fault := checkBodyImages(parsed.members); fault != nil {
 			return encoded{}, fault
 		}
 	}
@@ -385,7 +380,7 @@ func (c *Client) prepareRaw(body json.RawMessage, longContext bool) (encoded, er
 		return encoded{}, refusal
 	}
 
-	return encodeBody(via, needs, trimmed)
+	return encodeBody(via, needs, parsed)
 }
 
 // ListModels reports the model names this account may send.

@@ -1,7 +1,6 @@
 package onesie
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +41,7 @@ func TestEnvelope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := envelope("typesafe/jev")([]byte(tc.body))
+			got, err := envelope("typesafe/jev")(parseBody([]byte(tc.body)))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -54,7 +53,7 @@ func TestEnvelope(t *testing.T) {
 	}
 }
 
-func TestDropAssets(t *testing.T) {
+func TestWithoutAssets(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -72,43 +71,12 @@ func TestDropAssets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := dropAssets([]byte(tc.body))
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if string(got) != tc.want {
-				t.Errorf("dropAssets = %s, want %s", got, tc.want)
+			got, err := withoutAssets(parseBody([]byte(tc.body))).bytes()
+			if err != nil || string(got) != tc.want {
+				t.Errorf("withoutAssets = %s, %v, want %s", got, err, tc.want)
 			}
 		})
 	}
-}
-
-func TestChain(t *testing.T) {
-	t.Parallel()
-
-	appendByte := func(b byte) func([]byte) ([]byte, error) {
-		return func(body []byte) ([]byte, error) { return append(body, b), nil }
-	}
-
-	t.Run("should run the steps in order", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := chain(appendByte('a'), appendByte('b'))([]byte("x"))
-		if err != nil || string(got) != "xab" {
-			t.Errorf("chain = %q, %v, want xab", got, err)
-		}
-	})
-
-	t.Run("should stop at the first error", func(t *testing.T) {
-		t.Parallel()
-
-		failing := func([]byte) ([]byte, error) { return nil, errors.New("failed") }
-
-		if _, err := chain(failing, appendByte('b'))([]byte("x")); err == nil || err.Error() != "failed" {
-			t.Errorf("error = %v, want failed", err)
-		}
-	})
 }
 
 func TestUnwrapResult(t *testing.T) {
@@ -188,7 +156,7 @@ func TestCloudflareRoute(t *testing.T) {
 			}
 
 			body := `{"state":"s","model":"x","questions":{},"assets":{}}`
-			sent, err := got.encode([]byte(body))
+			sent, err := got.encode(parseBody([]byte(body)))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -207,7 +175,7 @@ func TestCloudflareRoute(t *testing.T) {
 	t.Run("should send a body naming no model as the default model", func(t *testing.T) {
 		t.Parallel()
 
-		sent, err := Cloudflare().route(cloudflareJev).encode([]byte(`{"state":"s","questions":{}}`))
+		sent, err := Cloudflare().route(cloudflareJev).encode(parseBody([]byte(`{"state":"s","questions":{}}`)))
 		if err != nil || string(sent) != `{"model":"typesafe/jev","input":{"state":"s","questions":{}}}` {
 			t.Errorf("encode = %s, %v, want the default model's envelope", sent, err)
 		}

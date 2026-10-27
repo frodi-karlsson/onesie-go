@@ -66,7 +66,7 @@ func encodeRequest(p Provider, req Request, longContext bool) (encoded, error) {
 		return encoded{}, unencodable(err)
 	}
 
-	return encodeBody(via, needs, body)
+	return encodeBody(via, needs, parseBody(body))
 }
 
 type encoded struct {
@@ -76,19 +76,19 @@ type encoded struct {
 	images bool
 }
 
-func encodeBody(via route, needs capabilities, body []byte) (encoded, error) {
+func encodeBody(via route, needs capabilities, b jsonBody) (encoded, error) {
 	withImages := needs.images || needs.box
 
 	if withImages && via.images != nil {
-		sent, err := via.images(body)
+		members, err := via.images(b.members)
 		if err != nil {
 			return encoded{}, err
 		}
 
-		body = sent
+		b = b.with(members)
 	}
 
-	sent, err := via.encode(body)
+	sent, err := via.encode(b)
 	if err != nil {
 		return encoded{}, err
 	}
@@ -108,39 +108,17 @@ func requestNeeds(req Request) capabilities {
 	}
 }
 
-func scanBody(body []byte) bodyScan {
+func scanMembers(members []member) bodyScan {
 	var scan bodyScan
 
-	// A bytes.Buffer, which jsontext parses in place, so no image is copied.
-	dec := jsontext.NewDecoder(bytes.NewBuffer(body), rawOptions()...)
-	if dec.PeekKind() != '{' {
-		return scan
-	}
-
-	if _, err := dec.ReadToken(); err != nil {
-		return scan
-	}
-
-	for dec.PeekKind() != '}' {
-		name, err := dec.ReadToken()
-		if err != nil {
-			return scan
-		}
-
-		key := name.String()
-
-		value, err := dec.ReadValue()
-		if err != nil {
-			return scan
-		}
-
-		switch key {
+	for _, m := range members {
+		switch m.name {
 		case "model":
-			scan.model = modelName(value)
+			scan.model = modelName(m.value)
 		case "assets":
-			scan.assets = scan.assets || nonEmptyAssets(value)
+			scan.assets = scan.assets || nonEmptyAssets(m.value)
 		case "questions":
-			scan.box = scan.box || hasBoxQuestion(value)
+			scan.box = scan.box || hasBoxQuestion(m.value)
 		}
 	}
 

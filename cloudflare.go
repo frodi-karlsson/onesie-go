@@ -15,7 +15,7 @@ func cloudflareRoute(model string) route {
 			path:   "/run",
 			takes:  capabilities{images: true},
 			images: assetsToImages,
-			encode: chain(dropAssets, envelope(wireID)),
+			encode: encodeClef(wireID),
 			decode: unwrapResult,
 		}
 	}
@@ -43,17 +43,23 @@ func cloudflareBaseURL(account string) string {
 	return "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai"
 }
 
-func envelope(wireID string) func([]byte) ([]byte, error) {
-	return func(body []byte) ([]byte, error) {
-		input := body
+func encodeClef(wireID string) func(jsonBody) ([]byte, error) {
+	wrap := envelope(wireID)
 
-		if members, readable := objectMembers(body); readable {
-			kept, err := writeMembers(slices.DeleteFunc(members, func(m member) bool { return m.name == "model" }))
-			if err != nil {
-				return nil, err
-			}
+	return func(b jsonBody) ([]byte, error) {
+		return wrap(withoutAssets(b))
+	}
+}
 
-			input = kept
+func envelope(wireID string) func(jsonBody) ([]byte, error) {
+	return func(b jsonBody) ([]byte, error) {
+		if b.object {
+			b = b.with(slices.DeleteFunc(slices.Clone(b.members), named("model")))
+		}
+
+		input, err := b.bytes()
+		if err != nil {
+			return nil, err
 		}
 
 		model, err := json.Marshal(wireID)
@@ -65,32 +71,12 @@ func envelope(wireID string) func([]byte) ([]byte, error) {
 	}
 }
 
-func dropAssets(body []byte) ([]byte, error) {
-	members, readable := objectMembers(body)
-	if !readable || !slices.ContainsFunc(members, isAssets) {
-		return body, nil
+func withoutAssets(b jsonBody) jsonBody {
+	if !b.object || !slices.ContainsFunc(b.members, named("assets")) {
+		return b
 	}
 
-	return writeMembers(slices.DeleteFunc(members, isAssets))
-}
-
-func isAssets(m member) bool {
-	return m.name == "assets"
-}
-
-func chain(steps ...func([]byte) ([]byte, error)) func([]byte) ([]byte, error) {
-	return func(body []byte) ([]byte, error) {
-		for _, step := range steps {
-			next, err := step(body)
-			if err != nil {
-				return nil, err
-			}
-
-			body = next
-		}
-
-		return body, nil
-	}
+	return b.with(slices.DeleteFunc(slices.Clone(b.members), named("assets")))
 }
 
 func unwrapResult(body []byte) ([]byte, error) {

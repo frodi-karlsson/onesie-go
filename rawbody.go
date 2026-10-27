@@ -2,6 +2,7 @@ package onesie
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"slices"
 	"strings"
 )
@@ -9,40 +10,38 @@ import (
 // PrepareRawBody fills an absent, null or blank last model key with defaultModel, as SystemOneRaw does first.
 // longContext sets long_context true for a printed body fed back in, which SystemOneRaw sends as a header.
 func PrepareRawBody(body json.RawMessage, defaultModel string, longContext bool) json.RawMessage {
-	if !json.Valid(body) {
-		return body
+	prepared := fillModel(parseBody(body), defaultModel)
+	if longContext {
+		prepared = setLongContext(prepared)
 	}
 
-	members, readable := objectMembers(body)
-	if !readable {
-		return body
-	}
-
-	changed := false
-
-	if defaultModel != "" && blankModel(members) {
-		name, err := json.Marshal(defaultModel)
-		if err != nil {
-			return body
-		}
-
-		members, changed = replaceMembers(members, member{name: "model", value: name}, true), true
-	}
-
-	if longContext && !soleLongContext(members) {
-		members, changed = replaceMembers(members, member{name: "long_context", value: []byte("true")}, false), true
-	}
-
-	if !changed {
-		return body
-	}
-
-	rewritten, err := writeMembers(members)
+	out, err := prepared.bytes()
 	if err != nil {
 		return body
 	}
 
-	return rewritten
+	return out
+}
+
+func fillModel(b jsonBody, model string) jsonBody {
+	if !b.object || model == "" || !blankModel(b.members) {
+		return b
+	}
+
+	name, err := json.Marshal(model)
+	if err != nil {
+		return b
+	}
+
+	return b.with(replaceMembers(b.members, member{name: "model", value: name}, true))
+}
+
+func setLongContext(b jsonBody) jsonBody {
+	if !b.object || soleLongContext(b.members) {
+		return b
+	}
+
+	return b.with(replaceMembers(b.members, member{name: "long_context", value: jsontext.Value("true")}, false))
 }
 
 func blankModel(members []member) bool {
@@ -82,8 +81,8 @@ func soleLongContext(members []member) bool {
 }
 
 func replaceMembers(members []member, replacement member, first bool) []member {
-	at := slices.IndexFunc(members, func(m member) bool { return m.name == replacement.name })
-	kept := slices.DeleteFunc(slices.Clone(members), func(m member) bool { return m.name == replacement.name })
+	at := slices.IndexFunc(members, named(replacement.name))
+	kept := slices.DeleteFunc(slices.Clone(members), named(replacement.name))
 
 	switch {
 	case at >= 0:

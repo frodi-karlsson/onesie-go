@@ -9,12 +9,12 @@ import (
 	"slices"
 )
 
-func checkBodyImages(body []byte) error {
-	return validationOnly(scanBodyImages(body))
+func checkBodyImages(members []member) error {
+	return validationOnly(scanBodyImages(members))
 }
 
 func validationOnly(err error) error {
-	// A body that does not parse is forwarded, so the server reports it as it does today.
+	// A body the scan cannot read is forwarded, so the server reports it.
 	var validation *ValidationError
 	if errors.As(err, &validation) {
 		return err
@@ -23,32 +23,25 @@ func validationOnly(err error) error {
 	return nil
 }
 
-func scanBodyImages(body []byte) error {
-	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions()...)
-	if _, err := dec.ReadToken(); err != nil {
-		return err
-	}
-
+func scanBodyImages(members []member) error {
 	var (
 		faults map[string]*ValidationError
 		texts  []string
 	)
 
-	for dec.PeekKind() != '}' {
-		name, err := dec.ReadToken()
-		if err != nil {
-			return err
-		}
+	for _, m := range members {
+		// A bytes.Buffer, which jsontext parses in place, so no image is copied.
+		dec := jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)
 
-		switch name.String() {
+		var err error
+
+		switch m.name {
 		case "assets":
 			faults, err = assetFaults(dec)
 		case "state":
 			err = collectTexts(dec, &texts)
 		case "questions":
 			err = questionTexts(dec, &texts)
-		default:
-			err = dec.SkipValue()
 		}
 
 		if err != nil {

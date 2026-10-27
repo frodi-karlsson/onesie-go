@@ -34,7 +34,7 @@ func TestClientVerifyKey(t *testing.T) {
 				routeFor: oneRoute(route{
 					path:   systemOnePath,
 					takes:  takesEverything(),
-					encode: identity,
+					encode: encodeAsIs,
 					decode: identity,
 				}),
 			},

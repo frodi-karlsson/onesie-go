@@ -455,22 +455,27 @@ func fakeProvider() Provider {
 				return route{
 					path:  "/wrapped",
 					takes: capabilities{images: true},
-					encode: func(body []byte) ([]byte, error) {
+					encode: func(b jsonBody) ([]byte, error) {
+						body, err := b.bytes()
+						if err != nil {
+							return nil, err
+						}
+
 						return []byte(`{"input":` + string(body) + `}`), nil
 					},
 					decode: unwrapResult,
 				}
 			case "bare":
-				return route{path: "/bare", encode: identity, decode: identity}
+				return route{path: "/bare", encode: encodeAsIs, decode: identity}
 			case "broken":
 				return route{
 					path:   "/broken",
 					takes:  takesEverything(),
-					encode: func([]byte) ([]byte, error) { return nil, errors.New("encode failed") },
+					encode: func(jsonBody) ([]byte, error) { return nil, errors.New("encode failed") },
 					decode: identity,
 				}
 			default:
-				return route{path: "/plain", takes: takesEverything(), encode: identity, decode: identity}
+				return route{path: "/plain", takes: takesEverything(), encode: encodeAsIs, decode: identity}
 			}
 		},
 	}

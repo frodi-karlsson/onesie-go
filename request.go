@@ -1,6 +1,7 @@
 package onesie
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -194,16 +195,35 @@ func checkBodySize(req Request) error {
 		return nil
 	}
 
-	body, err := MarshalBody(req)
+	size, err := bodySize(req)
 	if err != nil {
-		return unencodable(err)
+		return err
 	}
 
-	if len(body) > MaxBodyBytes {
+	if size > MaxBodyBytes {
 		return &ValidationError{Message: fmt.Sprintf(
 			"the request body is %d bytes, and the API takes at most %d. Send fewer or smaller images",
-			len(body), MaxBodyBytes)}
+			size, MaxBodyBytes)}
 	}
 
 	return nil
+}
+
+func bodySize(req Request) (int, error) {
+	hollow := make(Assets, len(req.Assets))
+	data := 0
+
+	for ref, img := range req.Assets {
+		hollow[ref] = Image{Format: img.Format}
+		data += base64.StdEncoding.EncodedLen(len(img.Data))
+	}
+
+	req.Assets = hollow
+
+	rest, err := MarshalBody(req)
+	if err != nil {
+		return 0, unencodable(err)
+	}
+
+	return len(rest) + data, nil
 }

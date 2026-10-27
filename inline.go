@@ -11,12 +11,7 @@ import (
 	"strings"
 )
 
-func inlineParts(body []byte) ([]byte, error) {
-	members, err := readMembers(body)
-	if err != nil {
-		return nil, err
-	}
-
+func inlineParts(members []member) ([]member, error) {
 	urls, err := dataURLsOf(members)
 	if err != nil {
 		return nil, err
@@ -27,30 +22,27 @@ func inlineParts(body []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	rewriter := &inliner{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}, render: partsRenderer(parts)}
+	rewriter := &inliner{
+		matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}, render: partsRenderer(parts),
+	}
 
-	rewritten, err := rewriter.rewrite(members, nil)
+	rewritten, err := rewriter.rewrite(members)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(rewritten) > MaxBodyBytes {
+	if size := encodedSize(rewritten); size > MaxBodyBytes {
 		return nil, &ValidationError{Message: fmt.Sprintf(
 			"the request body is %d bytes once each image is placed where it is named, and the API takes "+
 				"at most %d. This provider takes an image once per place it is named, so name each image once",
-			len(rewritten), MaxBodyBytes)}
+			size, MaxBodyBytes)}
 	}
 
 	return rewritten, nil
 }
 
-func assetsToImages(body []byte) ([]byte, error) {
-	members, err := readMembers(body)
-	if err != nil {
-		return nil, err
-	}
-
-	if slices.ContainsFunc(members, func(m member) bool { return m.name == "images" }) {
+func assetsToImages(members []member) ([]member, error) {
+	if slices.ContainsFunc(members, named("images")) {
 		return nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
 	}
 
@@ -62,101 +54,41 @@ func assetsToImages(body []byte) ([]byte, error) {
 	rewriter := &inliner{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}}
 	rewriter.render = rewriter.labels
 
-	rewritten, err := rewriter.rewrite(members, func(enc *jsontext.Encoder) error {
-		if writeErr := enc.WriteToken(jsontext.String("images")); writeErr != nil {
-			return writeErr
-		}
-
-		ordered := make([]string, 0, len(rewriter.order))
-		for _, ref := range rewriter.order {
-			ordered = append(ordered, urls[ref])
-		}
-
-		images, marshalErr := json.Marshal(ordered)
-		if marshalErr != nil {
-			return marshalErr
-		}
-
-		return enc.WriteValue(images)
-	})
+	rewritten, err := rewriter.rewrite(members)
 	if err != nil {
 		return nil, err
 	}
 
-	return rewritten, nil
-}
+	ordered := make([]string, 0, len(rewriter.order))
+	for _, ref := range rewriter.order {
+		ordered = append(ordered, urls[ref])
+	}
 
-func (r *inliner) rewrite(members []member, last func(*jsontext.Encoder) error) ([]byte, error) {
-	var out bytes.Buffer
-
-	enc := jsontext.NewEncoder(&out, rawOptions()...)
-	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+	images, err := json.Marshal(ordered)
+	if err != nil {
 		return nil, err
 	}
+
+	return append(rewritten, member{name: "images", value: images}), nil
+}
+
+func (r *inliner) rewrite(members []member) ([]member, error) {
+	rewritten := make([]member, 0, len(members))
 
 	for _, m := range members {
 		if m.name == "assets" {
 			continue
 		}
 
-		if err := enc.WriteToken(jsontext.String(m.name)); err != nil {
-			return nil, err
-		}
-
-		if err := r.member(enc, m); err != nil {
-			return nil, err
-		}
-	}
-
-	if last != nil {
-		if err := last(enc); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := enc.WriteToken(jsontext.EndObject); err != nil {
-		return nil, err
-	}
-
-	// The encoder ends a top level value with a newline, which a request body does not need.
-	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
-}
-
-func readMembers(body []byte) ([]member, error) {
-	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions()...)
-
-	if _, err := dec.ReadToken(); err != nil {
-		return nil, unreadableBody(err)
-	}
-
-	var members []member
-
-	for dec.PeekKind() != '}' {
-		name, err := dec.ReadToken()
+		value, err := r.member(m)
 		if err != nil {
-			return nil, unreadableBody(err)
+			return nil, err
 		}
 
-		key := name.String()
-
-		value, err := dec.ReadValue()
-		if err != nil {
-			return nil, unreadableBody(err)
-		}
-
-		members = append(members, member{name: key, value: slices.Clone(value)})
+		rewritten = append(rewritten, member{name: m.name, value: value})
 	}
 
-	return members, nil
-}
-
-func unreadableBody(err error) error {
-	return &ValidationError{Message: "the request body cannot be read: " + err.Error()}
-}
-
-type member struct {
-	name  string
-	value jsontext.Value
+	return rewritten, nil
 }
 
 func dataURLsOf(members []member) (map[string]string, error) {
@@ -239,15 +171,25 @@ type imageURL struct {
 	URL string `json:"url"`
 }
 
-func (r *inliner) member(enc *jsontext.Encoder, m member) error {
-	switch m.name {
-	case "state":
-		return r.value(enc, jsontext.NewDecoder(bytes.NewReader(m.value), rawOptions()...))
-	case "questions":
-		return r.questions(enc, jsontext.NewDecoder(bytes.NewReader(m.value), rawOptions()...))
-	default:
-		return enc.WriteValue(m.value)
+func (r *inliner) member(m member) (jsontext.Value, error) {
+	if m.name != "state" && m.name != "questions" {
+		return m.value, nil
 	}
+
+	write := r.value
+	if m.name == "questions" {
+		write = r.questions
+	}
+
+	var out bytes.Buffer
+
+	enc := jsontext.NewEncoder(&out, rawOptions()...)
+	if err := write(enc, jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)); err != nil {
+		return nil, err
+	}
+
+	// The encoder ends a top level value with a newline, which a member does not need.
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
 }
 
 func (r *inliner) questions(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
@@ -480,8 +422,4 @@ func copyValue(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	}
 
 	return enc.WriteValue(raw)
-}
-
-func rawOptions() []jsontext.Options {
-	return []jsontext.Options{jsontext.AllowDuplicateNames(true), jsontext.PreserveRawStrings(true)}
 }

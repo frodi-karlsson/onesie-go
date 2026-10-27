@@ -79,7 +79,7 @@ func TypeSafe() Provider {
 			path:         systemOnePath,
 			takes:        takesEverything(),
 			imagesHeader: true,
-			encode:       identity,
+			encode:       encodeAsIs,
 			decode:       identity,
 		}),
 	}
@@ -100,7 +100,7 @@ func OpenRouter() Provider {
 			path:   systemOnePath,
 			takes:  takesEverything(),
 			images: inlineParts,
-			encode: identity,
+			encode: encodeAsIs,
 			decode: identity,
 		}),
 	}
@@ -120,7 +120,7 @@ func Berget() Provider {
 		routeFor: oneRoute(route{
 			path:   systemOnePath,
 			takes:  capabilities{longContext: true},
-			encode: identity,
+			encode: encodeAsIs,
 			decode: identity,
 		}),
 	}
@@ -139,7 +139,7 @@ func Levanto() Provider {
 		routeFor: oneRoute(route{
 			path:   systemOnePath,
 			takes:  capabilities{longContext: true},
-			encode: identity,
+			encode: encodeAsIs,
 			decode: identity,
 		}),
 	}
