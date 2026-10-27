@@ -66,10 +66,11 @@ Set `Request.LongContext`, or pass `onesie.WithLongContext()` to one call, to ra
 limits. A body from `MarshalBody` carries it as `long_context`, which `SystemOneRaw` turns back
 into the header, since TypeSafe refuses the key itself.
 
-`PrepareRawBody` returns a raw body as `SystemOneRaw` sends it, with no client or key. A body that
-names no model, or a blank one, gets the default model, and a long context flag sets `long_context`
-to true. `SystemOneRaw` runs it with the client's default model, so a printed body and a sent body
-carry the same model. When a body has several `model` keys, the last one decides, as
+`PrepareRawBody` fills the model of a raw body the way `SystemOneRaw` does, with no client or key.
+A body that names no model, or a blank one, gets the default model. `SystemOneRaw` runs it with the
+client's default model, so a printed body and a sent body carry the same model. Its long context
+flag sets `long_context` to true, for a caller that prints a body to feed back in later.
+`SystemOneRaw` moves `long_context` into the header before it sends. When a body has several `model` keys, the last one decides, as
 `encoding/json` reads it. A named model keeps every key as written, and a blank one gives way to one
 key with the default model. Several `long_context` keys likewise become one. A body that needs no
 change, or is not a JSON object, comes back byte for byte.

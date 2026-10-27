@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// PrepareRawBody returns body as SystemOneRaw sends it before provider encoding, with no client. An absent,
-// null or blank last model key becomes defaultModel, and longContext sets long_context to true.
+// PrepareRawBody fills an absent, null or blank last model key with defaultModel, as SystemOneRaw does first.
+// longContext sets long_context true for a printed body fed back in, which SystemOneRaw sends as a header.
 func PrepareRawBody(body json.RawMessage, defaultModel string, longContext bool) json.RawMessage {
 	if !json.Valid(body) {
 		return body
