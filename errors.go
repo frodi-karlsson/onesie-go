@@ -78,19 +78,21 @@ func NewAPIError(status int, message string) *APIError {
 	return &APIError{Status: status, Header: http.Header{}, message: message}
 }
 
-func newAPIError(status int, header http.Header, requestIDHeader string, body []byte, now time.Time) *APIError {
+func newAPIError(via route, needs Needs, status int, header http.Header, body []byte, now time.Time) *APIError {
 	parsed := decodeBody(body)
 	retryAfter, _ := parseRetryAfter(header, now)
+	message := describe(status, header, parsed, body, via.reader())
 
 	return &APIError{
 		Status:     status,
-		RequestID:  header.Get(requestIDHeader),
+		RequestID:  header.Get(via.requestIDHeader),
 		Header:     header,
 		Body:       parsed,
 		RawBody:    body,
 		RetryAfter: retryAfter,
-		message:    describe(status, header, parsed, body),
-		keyRefused: cloudflareAuthFailure(parsed),
+		Code:       codeOf(parsed),
+		message:    message,
+		sentinel:   via.classify(status, parsed, message, needs),
 	}
 }
 
@@ -151,30 +153,7 @@ func repeatsStatus(line string, status int) bool {
 	return strings.EqualFold(text, http.StatusText(status))
 }
 
-func cloudflareAuthFailure(body any) bool {
-	fields, isObject := body.(map[string]any)
-	if !isObject {
-		return false
-	}
-
-	list, isList := fields["errors"].([]any)
-	if !isList || len(list) == 0 {
-		return false
-	}
-
-	entry, isEntry := list[0].(map[string]any)
-	if !isEntry {
-		return false
-	}
-
-	// Cloudflare refuses a token with 10000 on most endpoints, and with 9106 under a 400 on the
-	// models search.
-	code, isNumber := entry["code"].(float64)
-
-	return isNumber && (code == 10000 || code == 9106)
-}
-
-func describe(status int, header http.Header, body any, raw []byte) string {
+func describe(status int, header http.Header, body any, raw []byte, read func(any) string) string {
 	switch {
 	case redirected(status, header):
 		return fmt.Sprintf("%d redirect to %s, which onesie does not follow, since the request "+
@@ -189,7 +168,7 @@ func describe(status int, header http.Header, body any, raw []byte) string {
 		return describeString(status, text)
 	}
 
-	if detail := extractMessage(body); detail != "" {
+	if detail := read(body); detail != "" {
 		// Truncated here rather than inside extraction, so a hostile body cannot reach a log line at
 		// full length.
 		return fmt.Sprintf("%d %s", status, truncate(detail))
@@ -216,7 +195,7 @@ func truncate(raw string) string {
 	return raw[:cut] + "..."
 }
 
-func extractMessage(body any) string {
+func readMessage(body any) string {
 	if text, ok := body.(string); ok {
 		return text
 	}
@@ -232,7 +211,7 @@ func extractMessage(body any) string {
 
 	if nested, ok := fields["error"].(map[string]any); ok {
 		if text, ok := nested["message"].(string); ok {
-			return unwrapMessage(text)
+			return text
 		}
 	}
 
@@ -277,58 +256,37 @@ func firstError(fields map[string]any) string {
 		return ""
 	}
 
-	return trimWorkersAI(text)
-}
-
-func trimWorkersAI(text string) string {
-	for {
-		trimmed := strings.TrimPrefix(strings.TrimPrefix(text, "AiError: "), "Ai: ")
-		if trimmed == text {
-			break
-		}
-
-		text = trimmed
-	}
-
-	text = strings.TrimPrefix(text, "Model execution failed (User Input Error): ")
-
-	// AI Gateway forwards TypeSafe's own error body as the rest of the message.
-	if strings.HasPrefix(text, "{") && json.Valid([]byte(text)) {
-		if inner := extractMessage(decodeBody([]byte(text))); inner != "" {
-			return inner
-		}
-	}
-
 	return text
 }
 
-func unwrapMessage(text string) string {
-	// OpenRouter forwards a TypeSafe error as the text HTTP 400: followed by TypeSafe's body.
-	if rest, ok := strings.CutPrefix(text, "HTTP "); ok && len(rest) > 5 && rest[3] == ':' {
-		forwarded := []byte(strings.TrimSpace(rest[4:]))
-		if json.Valid(forwarded) {
-			if inner := extractMessage(decodeBody(forwarded)); inner != "" {
-				return inner
-			}
+func codeOf(body any) string {
+	fields, isObject := body.(map[string]any)
+	if !isObject {
+		return ""
+	}
+
+	if nested, isNested := fields["error"].(map[string]any); isNested {
+		return codeText(nested["code"])
+	}
+
+	if list, isList := fields["errors"].([]any); isList && len(list) > 0 {
+		if entry, isEntry := list[0].(map[string]any); isEntry {
+			return codeText(entry["code"])
 		}
 	}
 
-	// OpenRouter's validation puts its issue list in the message as a JSON string.
-	var issues []struct {
-		Path    any    `json:"path"`
-		Message string `json:"message"`
-	}
+	return ""
+}
 
-	if json.Unmarshal([]byte(text), &issues) != nil || len(issues) == 0 {
-		return text
+func codeText(code any) string {
+	switch typed := code.(type) {
+	case string:
+		return typed
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	default:
+		return ""
 	}
-
-	path := validationPath(issues[0].Path)
-	if path == "" {
-		return issues[0].Message
-	}
-
-	return path + ": " + issues[0].Message
 }
 
 func describeValidation(entries []any) string {
@@ -411,8 +369,11 @@ type APIError struct {
 	Body    any
 	RawBody []byte
 
-	message    string
-	keyRefused bool
+	// Code is the provider's machine readable error code, a number written in decimal, or empty.
+	Code string
+
+	message  string
+	sentinel error
 }
 
 // Error is Reason with the package prefix.
@@ -431,7 +392,7 @@ func (e *APIError) Is(target error) bool {
 	case ErrBadRequest:
 		return e.Status == http.StatusBadRequest
 	case ErrAuthentication:
-		return e.Status == http.StatusUnauthorized || e.keyRefused
+		return e.Status == http.StatusUnauthorized || e.sentinel == ErrAuthentication
 	case ErrPaymentRequired:
 		return e.Status == http.StatusPaymentRequired
 	case ErrPermissionDenied:
@@ -445,7 +406,7 @@ func (e *APIError) Is(target error) bool {
 	case ErrServer:
 		return e.Status >= 500 && e.Status <= 599
 	default:
-		return false
+		return e.sentinel != nil && target == e.sentinel
 	}
 }
 

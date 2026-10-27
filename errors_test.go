@@ -16,8 +16,14 @@ import (
 func TestNewAPIError(t *testing.T) {
 	t.Parallel()
 
+	typesafe := TypeSafe().route(jevLatest)
+	openrouter := OpenRouter().route(jevLatest)
+	gateway := Cloudflare().route(cloudflareJev)
+	workers := Cloudflare().route("clef")
+
 	tests := []struct {
 		name     string
+		via      route
 		status   int
 		body     string
 		sentinel error
@@ -170,6 +176,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:     "should read a cloudflare 401",
+			via:      gateway,
 			status:   401,
 			body:     `{"result":null,"success":false,"errors":[{"code":10000,"message":"Authentication error"}],"messages":[]}`,
 			sentinel: ErrAuthentication,
@@ -177,6 +184,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:     "should match ErrAuthentication for a token the models search refuses with a 400",
+			via:      gateway,
 			status:   400,
 			body:     `{"success":false,"errors":[{"code":9106,"message":"Authentication failed (status: 400)"}],"messages":[],"result":null}`,
 			sentinel: ErrAuthentication,
@@ -184,6 +192,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:     "should read a cloudflare 402",
+			via:      gateway,
 			status:   402,
 			body:     `{"errors":[{"message":"Insufficient balance; add money to your gateway or use BYOK","code":2021}],"success":false,"result":{},"messages":[]}`,
 			sentinel: ErrPaymentRequired,
@@ -191,6 +200,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:     "should read a cloudflare 404 for an unknown model",
+			via:      gateway,
 			status:   404,
 			body:     `{"errors":[{"message":"Model not found: typesafe/jev-nope","code":7003}],"success":false,"result":{},"messages":[]}`,
 			sentinel: ErrNotFound,
@@ -198,6 +208,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:   "should trim the gateway's prefix from a forwarded typesafe error",
+			via:    gateway,
 			status: 400,
 			body: `{"errors":[{"message":"Model execution failed (User Input Error): Noul question must have ` +
 				`criteria or instructions: c","code":7003}],"success":false,"result":{},"messages":[]}`,
@@ -206,6 +217,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:   "should read a forwarded typesafe body inside the message",
+			via:    gateway,
 			status: 400,
 			body: `{"errors":[{"message":"Model execution failed (User Input Error): {\"detail\":{\"error_type\":` +
 				`\"max_tokens_exceeded\"}}","code":7003}],"success":false,"result":{},"messages":[]}`,
@@ -214,6 +226,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:   "should trim every AiError prefix",
+			via:    workers,
 			status: 422,
 			body: `{"errors":[{"message":"AiError: AiError: Request body failed validation: images: request ` +
 				`exceeds the image count limit (cd32f070-7a36-4ef3-b9d3-a4c01b75bee9)","code":3030}],` +
@@ -224,6 +237,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:   "should read a workers ai 400 for an unknown model",
+			via:    workers,
 			status: 400,
 			body: `{"errors":[{"message":"AiError: No such model: No such model @cf/cloudflare/clef-nope or task ` +
 				`(72980980-d159-4205-859d-0aca1986d075)","code":5007}],"success":false,"result":{},"messages":[]}`,
@@ -233,6 +247,7 @@ func TestNewAPIError(t *testing.T) {
 		},
 		{
 			name:     "should leave an AiError text in another shape untrimmed",
+			via:      workers,
 			status:   400,
 			body:     `{"error":"AiError: something"}`,
 			sentinel: ErrBadRequest,
@@ -272,7 +287,12 @@ func TestNewAPIError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := newAPIError(tc.status, http.Header{}, "X-TypeSafe-Request-Id", []byte(tc.body), time.Now())
+			via := tc.via
+			if via.path == "" {
+				via = typesafe
+			}
+
+			err := newAPIError(via, Needs{}, tc.status, http.Header{}, []byte(tc.body), time.Now())
 
 			if !errors.Is(err, tc.sentinel) {
 				t.Errorf("errors.Is did not match the expected sentinel")
@@ -323,7 +343,7 @@ func TestNewAPIError(t *testing.T) {
 				t.Fatalf("reading the fixture: %v", err)
 			}
 
-			got := newAPIError(400, http.Header{}, "X-Generation-Id", body, time.Now()).Error()
+			got := newAPIError(openrouter, Needs{}, 400, http.Header{}, body, time.Now()).Error()
 			if got != tc.message {
 				t.Errorf("message\n got: %s\nwant: %s", got, tc.message)
 			}
@@ -340,7 +360,7 @@ func TestNewAPIError(t *testing.T) {
 		want := "onesie: 413 The estimated number of input and maximum output tokens (50025) exceeded this " +
 			"model context window limit (24576). (6c70e61c-5f06-4c89-8345-d375ce1cda94)"
 
-		if got := newAPIError(413, http.Header{}, "Cf-Ray", []byte(body), time.Now()).Error(); got != want {
+		if got := newAPIError(workers, Needs{}, 413, http.Header{}, []byte(body), time.Now()).Error(); got != want {
 			t.Errorf("message\n got: %s\nwant: %s", got, want)
 		}
 	})
@@ -397,7 +417,7 @@ func TestNewAPIError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := newAPIError(502, http.Header{}, "X-TypeSafe-Request-Id", []byte(tc.body), time.Now())
+			err := newAPIError(typesafe, Needs{}, 502, http.Header{}, []byte(tc.body), time.Now())
 
 			if string(err.RawBody) != tc.body || (err.Body != nil) != tc.json {
 				t.Errorf("RawBody = %q, Body = %v, want %q and parsed %v", err.RawBody, err.Body, tc.body, tc.json)
@@ -409,7 +429,7 @@ func TestNewAPIError(t *testing.T) {
 		t.Parallel()
 
 		for _, status := range []int{400, 401, 403} {
-			err := newAPIError(status, http.Header{}, "X-Generation-Id", nil, time.Now())
+			err := newAPIError(typesafe, Needs{}, status, http.Header{}, nil, time.Now())
 			if errors.Is(err, ErrPaymentRequired) {
 				t.Errorf("status %d matched ErrPaymentRequired", status)
 			}
@@ -424,7 +444,7 @@ func TestNewAPIError(t *testing.T) {
 
 			header := http.Header{"X-Typesafe-Request-Id": {"req_123"}}
 
-			if got := newAPIError(500, header, "X-TypeSafe-Request-Id", nil, time.Now()).RequestID; got != "req_123" {
+			if got := newAPIError(typesafe, Needs{}, 500, header, nil, time.Now()).RequestID; got != "req_123" {
 				t.Errorf("request id got %q, want %q", got, "req_123")
 			}
 		})
@@ -434,7 +454,7 @@ func TestNewAPIError(t *testing.T) {
 
 			header := http.Header{"Retry-After": {"3"}}
 
-			if got := newAPIError(429, header, "X-TypeSafe-Request-Id", nil, time.Now()).RetryAfter; got != 3*time.Second {
+			if got := newAPIError(typesafe, Needs{}, 429, header, nil, time.Now()).RetryAfter; got != 3*time.Second {
 				t.Errorf("retry after got %v, want %v", got, 3*time.Second)
 			}
 		})
@@ -442,7 +462,7 @@ func TestNewAPIError(t *testing.T) {
 		t.Run("should leave retry after zero when the header is absent", func(t *testing.T) {
 			t.Parallel()
 
-			if got := newAPIError(429, http.Header{}, "X-TypeSafe-Request-Id", nil, time.Now()).RetryAfter; got != 0 {
+			if got := newAPIError(typesafe, Needs{}, 429, http.Header{}, nil, time.Now()).RetryAfter; got != 0 {
 				t.Errorf("retry after got %v, want 0", got)
 			}
 		})
@@ -452,7 +472,7 @@ func TestNewAPIError(t *testing.T) {
 
 			body := []byte(fmt.Sprintf("%400s", "x"))
 
-			got := newAPIError(500, http.Header{}, "X-TypeSafe-Request-Id", body, time.Now()).Error()
+			got := newAPIError(typesafe, Needs{}, 500, http.Header{}, body, time.Now()).Error()
 
 			if len(got) > maxBodyInError+30 {
 				t.Errorf("message was not truncated, length %d", len(got))
@@ -464,12 +484,75 @@ func TestNewAPIError(t *testing.T) {
 
 			body := []byte(fmt.Sprintf(`{"error":"%400s"}`, "x"))
 
-			got := newAPIError(500, http.Header{}, "X-TypeSafe-Request-Id", body, time.Now()).Error()
+			got := newAPIError(typesafe, Needs{}, 500, http.Header{}, body, time.Now()).Error()
 
 			if len(got) > maxBodyInError+30 {
 				t.Errorf("extracted message was not truncated, length %d", len(got))
 			}
 		})
+	})
+
+	for _, tc := range []struct {
+		name    string
+		via     route
+		body    string
+		message string
+	}{
+		{
+			name: "should leave an AiError prefix alone outside cloudflare", via: typesafe,
+			body: `{"errors":[{"message":"AiError: x","code":1}]}`, message: "onesie: 400 AiError: x",
+		},
+		{
+			name: "should leave a forwarded body alone outside openrouter", via: typesafe,
+			body: `{"error":{"message":"HTTP 400: {\"detail\":\"x\"}"}}`, message: `onesie: 400 HTTP 400: {"detail":"x"}`,
+		},
+		{
+			name: "should unwrap a forwarded body on openrouter", via: openrouter,
+			body: `{"error":{"message":"HTTP 400: {\"detail\":\"x\"}"}}`, message: "onesie: 400 x",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := newAPIError(tc.via, Needs{}, 400, http.Header{}, []byte(tc.body), time.Now()).Error(); got != tc.message {
+				t.Errorf("message = %q, want %q", got, tc.message)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		body string
+		code string
+	}{
+		{name: "should write a numeric code in decimal", body: `{"errors":[{"message":"No such model","code":5007}]}`, code: "5007"},
+		{name: "should keep a string code as given", body: `{"error":{"message":"Model not found","code":"model_not_found"}}`, code: "model_not_found"},
+		{name: "should leave the code empty when the body has none", body: `{"detail":"x"}`},
+		{name: "should leave the code empty for a body that is not JSON", body: `oops`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := newAPIError(typesafe, Needs{}, 400, http.Header{}, []byte(tc.body), time.Now()).Code; got != tc.code {
+				t.Errorf("Code = %q, want %q", got, tc.code)
+			}
+		})
+	}
+
+	t.Run("should read cloudflare's token codes only on cloudflare's routes", func(t *testing.T) {
+		t.Parallel()
+
+		body := []byte(`{"errors":[{"code":10000,"message":"Authentication error"}],"success":false}`)
+
+		for _, via := range []route{gateway, workers} {
+			if err := newAPIError(via, Needs{}, 400, http.Header{}, body, time.Now()); !errors.Is(err, ErrAuthentication) {
+				t.Errorf("error = %v on %s, want ErrAuthentication", err, via.path)
+			}
+		}
+
+		if err := newAPIError(openrouter, Needs{}, 400, http.Header{}, body, time.Now()); errors.Is(err, ErrAuthentication) {
+			t.Errorf("error = %v on openrouter, want no ErrAuthentication", err)
+		}
 	})
 }
 

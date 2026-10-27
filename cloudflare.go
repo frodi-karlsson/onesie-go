@@ -17,6 +17,9 @@ func cloudflareRoute(model string) route {
 			images: assetsToImages,
 			encode: encodeClef(wireID),
 			decode: unwrapResult,
+
+			describeError: readCloudflareMessage,
+			classifyError: classifyBy(cloudflareAuth),
 		}
 	}
 
@@ -25,7 +28,42 @@ func cloudflareRoute(model string) route {
 		takes:  capabilities{images: true},
 		encode: envelope(model),
 		decode: unwrapResult,
+
+		describeError: readCloudflareMessage,
+		classifyError: classifyBy(cloudflareAuth),
 	}
+}
+
+func readCloudflareMessage(body any) string {
+	if fields, isObject := body.(map[string]any); isObject {
+		if text := firstError(fields); text != "" {
+			return trimCloudflare(text)
+		}
+	}
+
+	return readMessage(body)
+}
+
+func trimCloudflare(text string) string {
+	for {
+		trimmed := strings.TrimPrefix(strings.TrimPrefix(text, "AiError: "), "Ai: ")
+		if trimmed == text {
+			break
+		}
+
+		text = trimmed
+	}
+
+	text = strings.TrimPrefix(text, "Model execution failed (User Input Error): ")
+
+	// AI Gateway forwards TypeSafe's own error body as the rest of the message.
+	if strings.HasPrefix(text, "{") {
+		if inner := readMessage(decodeBody([]byte(text))); inner != "" {
+			return inner
+		}
+	}
+
+	return text
 }
 
 func clefWireID(model string) (string, bool) {

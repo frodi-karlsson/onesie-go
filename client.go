@@ -205,7 +205,10 @@ func (c *Client) checkKey(ctx context.Context, opts []RequestOption) error {
 
 		var discarded json.RawMessage
 
-		_, err = c.do(ctx, cfg, call{method: http.MethodGet, path: check.path, out: &discarded, decode: identity})
+		_, err = c.do(ctx, cfg, call{
+			method: http.MethodGet, path: check.path, out: &discarded, decode: identity,
+			via: c.provider.route(c.defaultModel),
+		})
 
 		return err
 	default:
@@ -240,6 +243,7 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 
 	res, err := c.do(ctx, cfg, call{
 		method: http.MethodPost, path: sent.via.path, payload: sent.body, out: result, decode: sent.via.decode,
+		via: sent.via, needs: sent.needs.asNeeds(),
 	})
 	if err != nil {
 		return nil, withUsage(err, &result.Usage)
@@ -277,6 +281,8 @@ type call struct {
 	payload []byte
 	out     any
 	decode  func([]byte) ([]byte, error)
+	via     route
+	needs   Needs
 }
 
 func withUsage(err error, usage *Usage) error {
@@ -339,7 +345,10 @@ func (c *Client) SystemOneRaw(
 
 	cfg.longContext, cfg.images = sent.needs.longContext, sent.images
 
-	res, err := c.do(ctx, cfg, call{method: http.MethodPost, path: sent.via.path, payload: sent.body, decode: identity})
+	res, err := c.do(ctx, cfg, call{
+		method: http.MethodPost, path: sent.via.path, payload: sent.body, decode: identity,
+		via: sent.via, needs: sent.needs.asNeeds(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +376,10 @@ func (c *Client) ListModels(ctx context.Context, opts ...RequestOption) ([]Model
 
 	var raw json.RawMessage
 
-	res, err := c.do(ctx, cfg, call{method: http.MethodGet, path: c.provider.modelsPath, out: &raw, decode: identity})
+	res, err := c.do(ctx, cfg, call{
+		method: http.MethodGet, path: c.provider.modelsPath, out: &raw, decode: identity,
+		via: c.provider.route(c.defaultModel),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +449,7 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 			return res, decodeInto(res, url, req.out, req.decode)
 		}
 
-		apiErr := newAPIError(res.status, res.header, c.provider.requestIDHeader, res.body, c.clock.Now())
+		apiErr := newAPIError(req.via, req.needs, res.status, res.header, res.body, c.clock.Now())
 
 		if retriesLeft <= 0 || !cfg.retry.RetryStatus(res.status) {
 			return nil, apiErr

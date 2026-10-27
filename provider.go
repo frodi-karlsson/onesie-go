@@ -97,13 +97,52 @@ func OpenRouter() Provider {
 		decodeModels:    decodeOpenRouterModels,
 		keyCheck:        keyCheck{by: keyCheckByEndpoint, path: "/v1/key"},
 		routeFor: oneRoute(route{
-			path:   systemOnePath,
-			takes:  takesEverything(),
-			images: inlineParts,
-			encode: encodeAsIs,
-			decode: identity,
+			path:          systemOnePath,
+			takes:         takesEverything(),
+			images:        inlineParts,
+			encode:        encodeAsIs,
+			decode:        identity,
+			describeError: readOpenRouterMessage,
 		}),
 	}
+}
+
+func readOpenRouterMessage(body any) string {
+	if fields, isObject := body.(map[string]any); isObject {
+		if nested, isNested := fields["error"].(map[string]any); isNested {
+			if text, isText := nested["message"].(string); isText {
+				return unwrapForwarded(text)
+			}
+		}
+	}
+
+	return readMessage(body)
+}
+
+func unwrapForwarded(text string) string {
+	// OpenRouter forwards a TypeSafe error as the text HTTP 400: followed by TypeSafe's body.
+	if rest, ok := strings.CutPrefix(text, "HTTP "); ok && len(rest) > 5 && rest[3] == ':' {
+		if inner := readMessage(decodeBody([]byte(strings.TrimSpace(rest[4:])))); inner != "" {
+			return inner
+		}
+	}
+
+	// OpenRouter's validation puts its issue list in the message as a JSON string.
+	var issues []struct {
+		Path    any    `json:"path"`
+		Message string `json:"message"`
+	}
+
+	if json.Unmarshal([]byte(text), &issues) != nil || len(issues) == 0 {
+		return text
+	}
+
+	path := validationPath(issues[0].Path)
+	if path == "" {
+		return issues[0].Message
+	}
+
+	return path + ": " + issues[0].Message
 }
 
 // Berget serves the same wire protocol with its own models, which do not include jev-latest.
@@ -239,7 +278,10 @@ func (p Provider) ResolveModel(model string, lookupEnv func(string) (string, boo
 }
 
 func (p Provider) route(model string) route {
-	return p.routeFor(model)
+	via := p.routeFor(model)
+	via.requestIDHeader = p.requestIDHeader
+
+	return via
 }
 
 // ResolveBaseURL resolves the base URL as New does: explicit, then accountID, then EnvBaseURL, then
