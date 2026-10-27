@@ -2506,12 +2506,14 @@ func TestClientSystemOneRaw(t *testing.T) {
 			status:   http.StatusOK,
 			response: `{"model":"onesie-1.0.0","answers":{}}`,
 			send:     json.RawMessage(`{"state":"a < b & c > d"}`),
+			wantSent: `{"model":"jev-latest","state":"a < b & c > d"}`,
 		},
 		{
 			name:     "should forward the line separators json.Marshal would escape",
 			status:   http.StatusOK,
 			response: `{"model":"onesie-1.0.0","answers":{}}`,
 			send:     json.RawMessage("{\"state\":\"a\u2028b\u2029c\"}"),
+			wantSent: "{\"model\":\"jev-latest\",\"state\":\"a\u2028b\u2029c\"}",
 		},
 		{
 			name:     "should compact a pretty printed body without reordering it",
@@ -2707,6 +2709,30 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 			if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "true" {
 				t.Errorf("%s = %q, want true", onesie.HeaderLongContext, got)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{name: "should send the default model in a raw body that names none", body: `{"state":"s"}`, want: `{"model":"custom","state":"s"}`},
+		{name: "should send the default model in place of a blank one", body: `{"state":"s","model":" "}`, want: `{"state":"s","model":"custom"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example",
+				onesie.WithDefaultModel("custom"), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			if _, err := client.SystemOneRaw(t.Context(), json.RawMessage(tc.body)); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			want := string(onesie.PrepareRawBody(json.RawMessage(tc.body), "custom", false))
+			if got := transport.lastBody(); got != tc.want || got != want {
+				t.Errorf("body = %s, want %s, as PrepareRawBody prints it", got, tc.want)
 			}
 		})
 	}

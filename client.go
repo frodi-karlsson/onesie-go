@@ -254,7 +254,7 @@ type Request struct {
 }
 
 // SystemOneRaw sends a prepared request body through the SystemOne retry loop and returns the
-// response body unchanged, with no validation or normalization.
+// response body unchanged. The body goes through PrepareRawBody with the default model first.
 func (c *Client) SystemOneRaw(
 	ctx context.Context,
 	body json.RawMessage,
@@ -280,7 +280,7 @@ func (c *Client) SystemOneRaw(
 }
 
 func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, []byte, []RequestOption, error) {
-	trimmed, longContext, err := takeLongContext(body)
+	trimmed, longContext, err := takeLongContext(PrepareRawBody(body, c.defaultModel, false))
 	if err != nil {
 		return route{}, nil, nil, err
 	}
