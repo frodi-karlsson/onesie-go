@@ -55,16 +55,16 @@ func New(opts ...Option) (*Client, error) {
 	c.defaultModel = c.provider.ResolveModel(c.defaultModel, c.lookupEnv)
 	c.runtime = fmt.Sprintf("go/%s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 
-	baseURL, err := c.provider.baseURL(c.baseURL, c.accountID, c.lookupEnv)
+	baseURL, source, err := c.provider.ResolveBaseURL(c.baseURL, c.accountID, c.lookupEnv)
 	if err != nil {
 		return nil, err
 	}
 
-	if err = ValidateBaseURL(baseURL); err != nil {
-		return nil, err
+	if !c.insecureHTTP && InsecureBaseURL(baseURL) {
+		return nil, refuseInsecure(baseURL, source)
 	}
 
-	c.baseURL = strings.TrimRight(baseURL, "/")
+	c.baseURL, c.baseURLSource = baseURL, source
 
 	if err = c.retry.validate(); err != nil {
 		return nil, err
@@ -119,6 +119,8 @@ type Client struct {
 	keyFunc          func() (string, error)
 	accountID        string
 	baseURL          string
+	baseURLSource    BaseURLSource
+	insecureHTTP     bool
 	defaultModel     string
 	userAgent        string
 	runtime          string
@@ -141,6 +143,11 @@ type Client struct {
 // default are applied.
 func (c *Client) BaseURL() string {
 	return c.baseURL
+}
+
+// BaseURLSource reports where the client's base URL came from.
+func (c *Client) BaseURLSource() BaseURLSource {
+	return c.baseURLSource
 }
 
 // Provider returns the provider this client talks to.

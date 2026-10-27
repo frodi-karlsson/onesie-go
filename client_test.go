@@ -415,7 +415,7 @@ func TestNew(t *testing.T) {
 		}
 	})
 
-	t.Run("should echo a refused base url as it was given", func(t *testing.T) {
+	t.Run("should show the scheme and host of a refused base url", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := onesie.New(
@@ -424,8 +424,59 @@ func TestNew(t *testing.T) {
 			onesie.WithBaseURL("https:///"),
 		)
 
-		if err == nil || err.Error() != "onesie: base URL https:/// names no host. Write it as https://HOST" {
-			t.Errorf("error = %v, want the base url echoed with its trailing slash", err)
+		if err == nil || err.Error() != "onesie: base URL https:// names no host" {
+			t.Errorf("error = %v, want the scheme and the empty host shown", err)
+		}
+	})
+
+	t.Run("should refuse a plain http base url to another host", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name   string
+			opts   []onesie.Option
+			env    map[string]string
+			source onesie.BaseURLSource
+		}{
+			{name: "should name an option as the source", opts: []onesie.Option{onesie.WithBaseURL("http://proxy.example")}, source: onesie.BaseURLFromOption},
+			{name: "should name the variable as the source", env: map[string]string{"TYPESAFE_BASE_URL": "http://proxy.example"}, source: onesie.BaseURLFromEnv},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := onesie.New(append([]onesie.Option{onesie.WithEnv(lookupFrom(tc.env)), onesie.WithAPIKey("k")}, tc.opts...)...)
+
+				var refused *onesie.BaseURLError
+				if !errors.As(err, &refused) || !errors.Is(err, onesie.ErrInsecureBaseURL) || !errors.Is(err, onesie.ErrValidation) {
+					t.Fatalf("error = %v, want an insecure BaseURLError", err)
+				}
+
+				const want = "onesie: base URL http://proxy.example is plain http to a host other than this machine"
+				if err.Error() != want || refused.Source != tc.source {
+					t.Errorf("error = %q from %v, want %q from %v", err.Error(), refused.Source, want, tc.source)
+				}
+			})
+		}
+	})
+
+	t.Run("should take a plain http base url with WithInsecureHTTP", func(t *testing.T) {
+		t.Parallel()
+
+		client, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKey("k"),
+			onesie.WithBaseURL("http://proxy.example"), onesie.WithInsecureHTTP())
+		if err != nil || client.BaseURL() != "http://proxy.example" {
+			t.Fatalf("New = %v, %v, want the plain http URL taken", client, err)
+		}
+	})
+
+	t.Run("should refuse a bad base url before a missing key", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithBaseURL("http://proxy.example"))
+		if !errors.Is(err, onesie.ErrInsecureBaseURL) || errors.Is(err, onesie.ErrNoAPIKey) {
+			t.Fatalf("error = %v, want the base url refused first", err)
 		}
 	})
 
@@ -2941,6 +2992,34 @@ func TestClientDefaultModel(t *testing.T) {
 
 			if got := client.DefaultModel(); got != tc.want {
 				t.Errorf("DefaultModel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClientBaseURLSource(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []onesie.Option
+		want onesie.BaseURLSource
+	}{
+		{name: "should report the default", want: onesie.BaseURLFromDefault},
+		{name: "should report an option", opts: []onesie.Option{onesie.WithBaseURL("https://proxy.example")}, want: onesie.BaseURLFromOption},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, err := onesie.New(append([]onesie.Option{onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKey("k")}, tc.opts...)...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := client.BaseURLSource(); got != tc.want {
+				t.Errorf("BaseURLSource() = %v, want %v", got, tc.want)
 			}
 		})
 	}

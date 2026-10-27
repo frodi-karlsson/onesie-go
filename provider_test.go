@@ -458,3 +458,83 @@ func TestProvider(t *testing.T) {
 		}
 	})
 }
+
+func TestProviderResolveBaseURL(t *testing.T) {
+	t.Parallel()
+
+	const account = "0123456789abcdef0123456789abcdef"
+
+	accountURL := "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai"
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		explicit string
+		account  string
+		env      map[string]string
+		want     string
+		source   onesie.BaseURLSource
+		wantErr  error
+	}{
+		{name: "should give the default", provider: onesie.TypeSafe(), want: "https://api.typesafe.ai", source: onesie.BaseURLFromDefault},
+		{
+			name: "should read the environment and trim its slash", provider: onesie.TypeSafe(),
+			env: map[string]string{"TYPESAFE_BASE_URL": "https://proxy.example/"}, want: "https://proxy.example", source: onesie.BaseURLFromEnv,
+		},
+		{
+			name: "should let the explicit URL win", provider: onesie.TypeSafe(), explicit: " https://explicit.example ",
+			env: map[string]string{"TYPESAFE_BASE_URL": "https://proxy.example"}, want: "https://explicit.example", source: onesie.BaseURLFromOption,
+		},
+		{name: "should build the URL from the account", provider: onesie.Cloudflare(), account: account, want: accountURL, source: onesie.BaseURLFromAccount},
+		{
+			name: "should build the URL from the account variable", provider: onesie.Cloudflare(),
+			env: map[string]string{"CLOUDFLARE_ACCOUNT_ID": account}, want: accountURL, source: onesie.BaseURLFromAccount,
+		},
+		{
+			name: "should take plain http, which only New refuses", provider: onesie.TypeSafe(), explicit: "http://proxy.example",
+			want: "http://proxy.example", source: onesie.BaseURLFromOption,
+		},
+		{name: "should refuse a missing account", provider: onesie.Cloudflare(), wantErr: onesie.ErrNoAccountID},
+		{name: "should refuse a zero provider", wantErr: onesie.ErrValidation},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, source, err := tc.provider.ResolveBaseURL(tc.explicit, tc.account, lookupFrom(tc.env))
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+
+				return
+			}
+
+			if err != nil || got != tc.want || source != tc.source {
+				t.Errorf("ResolveBaseURL = %q, %v, %v, want %q from %v", got, source, err, tc.want, tc.source)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name     string
+		explicit string
+		env      map[string]string
+		source   onesie.BaseURLSource
+	}{
+		{name: "should name an explicit URL as the source of its refusal", explicit: "https://k@host", source: onesie.BaseURLFromOption},
+		{name: "should name the variable as the source of its refusal", env: map[string]string{"TYPESAFE_BASE_URL": "https://k@host"}, source: onesie.BaseURLFromEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := onesie.TypeSafe().ResolveBaseURL(tc.explicit, "", lookupFrom(tc.env))
+
+			var refused *onesie.BaseURLError
+			if !errors.As(err, &refused) || refused.Source != tc.source {
+				t.Fatalf("error = %v, want a BaseURLError from %v", err, tc.source)
+			}
+		})
+	}
+}

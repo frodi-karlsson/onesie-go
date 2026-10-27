@@ -67,6 +67,9 @@ var (
 	ErrNoAPIKey = errors.New("no API key")
 	// ErrNoAccountID matches the ValidationError New returns when a provider with accounts has none.
 	ErrNoAccountID = errors.New("no account id")
+	// ErrInsecureBaseURL matches the BaseURLError New returns for plain http to a host other than
+	// this machine.
+	ErrInsecureBaseURL = errors.New("insecure base URL")
 )
 
 // NewAPIError builds an APIError from a status and a message, for fakes and mocks. The message

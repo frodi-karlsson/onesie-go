@@ -242,35 +242,61 @@ func (p Provider) route(model string) route {
 	return p.routeFor(model)
 }
 
-func (p Provider) baseURL(explicit, accountID string, lookupEnv func(string) (string, bool)) (string, error) {
+// ResolveBaseURL resolves the base URL as New does: explicit, then accountID, then EnvBaseURL, then
+// EnvAccountID, then DefaultBaseURL. It checks the URL's shape and needs no key.
+func (p Provider) ResolveBaseURL(
+	explicit, accountID string,
+	lookupEnv func(string) (string, bool),
+) (string, BaseURLSource, error) {
+	if err := p.check(); err != nil {
+		return "", BaseURLSourceUnknown, err
+	}
+
+	raw, source, err := p.chooseBaseURL(strings.TrimSpace(explicit), strings.TrimSpace(accountID), lookupEnv)
+	if err != nil {
+		return "", source, err
+	}
+
+	if refused := checkBaseURL(raw, source); refused != nil {
+		return "", source, refused
+	}
+
+	return strings.TrimRight(raw, "/"), source, nil
+}
+
+func (p Provider) chooseBaseURL(
+	explicit, accountID string,
+	lookupEnv func(string) (string, bool),
+) (string, BaseURLSource, error) {
 	if accountID != "" {
 		if err := p.checkAccountID(accountID, "the account id"); err != nil {
-			return "", err
+			return "", BaseURLFromAccount, err
 		}
 	}
 
 	switch fromEnv := orEnv("", lookupEnv, p.envBaseURL); {
-	case strings.TrimSpace(explicit) != "":
-		return strings.TrimSpace(explicit), nil
+	case explicit != "":
+		return explicit, BaseURLFromOption, nil
 	case accountID != "":
-		return p.accountBaseURL(accountID), nil
+		return p.accountBaseURL(accountID), BaseURLFromAccount, nil
 	case fromEnv != "":
-		return fromEnv, nil
+		return fromEnv, BaseURLFromEnv, nil
 	case p.envAccountID == "":
-		return p.defaultBaseURL, nil
+		return p.defaultBaseURL, BaseURLFromDefault, nil
 	}
 
 	account := orEnv("", lookupEnv, p.envAccountID)
 	if account == "" {
-		return "", &ValidationError{Message: fmt.Sprintf("no %s account id. Set %s, or pass the base URL %s",
+		return "", BaseURLSourceUnknown, &ValidationError{Message: fmt.Sprintf(
+			"no %s account id. Set %s, or pass the base URL %s",
 			p.name, p.envAccountID, p.accountBaseURL("<account_id>")), kind: ErrNoAccountID}
 	}
 
 	if err := p.checkAccountID(account, p.envAccountID); err != nil {
-		return "", err
+		return "", BaseURLFromAccount, err
 	}
 
-	return p.accountBaseURL(account), nil
+	return p.accountBaseURL(account), BaseURLFromAccount, nil
 }
 
 func (p Provider) checkAccountID(account, subject string) error {
