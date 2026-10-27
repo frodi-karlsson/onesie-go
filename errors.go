@@ -598,6 +598,13 @@ type ResultShapeError struct {
 	Field  string
 	Want   string
 	Got    string
+
+	cause error
+}
+
+// Unwrap returns the decoder's error behind a wrong JSON type, or nil.
+func (e *ResultShapeError) Unwrap() error {
+	return e.cause
 }
 
 // Error describes the fault in the response's own terms, with no Go types. Text from the response is

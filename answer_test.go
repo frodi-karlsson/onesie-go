@@ -501,8 +501,9 @@ func TestResultUnmarshalJSON(t *testing.T) {
 				t.Fatalf("error = %v, want a ResultShapeError", err)
 			}
 
-			if *shape != tc.want {
-				t.Errorf("error = %+v, want %+v", *shape, tc.want)
+			got := onesie.ResultShapeError{Answer: shape.Answer, Field: shape.Field, Want: shape.Want, Got: shape.Got}
+			if got != tc.want {
+				t.Errorf("error = %+v, want %+v", got, tc.want)
 			}
 
 			if err.Error() != tc.text {
@@ -510,6 +511,32 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should keep the decoder's error as the cause of a wrong JSON type", func(t *testing.T) {
+		t.Parallel()
+
+		var result onesie.Result
+
+		err := json.Unmarshal([]byte(`{"answers":{"x":{"type":"noul","noul":"0.9"}}}`), &result)
+
+		var mistyped *json.UnmarshalTypeError
+		if !errors.As(err, &mistyped) || mistyped.Field != "noul" {
+			t.Errorf("error = %v, want it to unwrap to the decoder's UnmarshalTypeError", err)
+		}
+	})
+
+	t.Run("should have no cause for a missing field", func(t *testing.T) {
+		t.Parallel()
+
+		var result onesie.Result
+
+		err := json.Unmarshal([]byte(`{"answers":{"x":{"type":"noul"}}}`), &result)
+
+		var shape *onesie.ResultShapeError
+		if !errors.As(err, &shape) || shape.Unwrap() != nil {
+			t.Errorf("error = %v, want a ResultShapeError with no cause", err)
+		}
+	})
 
 	t.Run("should round trip back to the wire shape", func(t *testing.T) {
 		t.Parallel()

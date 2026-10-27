@@ -133,6 +133,7 @@ func describeShape(err error) error {
 		Field: strings.TrimPrefix(mistyped.Field, "."),
 		Want:  wantedKind(mistyped.Type),
 		Got:   foundKind(mistyped.Value),
+		cause: err,
 	}
 }
 
