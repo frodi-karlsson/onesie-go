@@ -7,6 +7,14 @@ import (
 	"reflect"
 )
 
+// The question limits the API documents. ValidateQuestions checks them, and SystemOneRaw checks a raw body.
+const (
+	// MaxChoiceOptions is the most options a choice question may have.
+	MaxChoiceOptions = 255
+	// MaxScoreLevels is the most levels a score question may have.
+	MaxScoreLevels = 10
+)
+
 // Levels widens plain strings into Score criteria, which is what most rubrics are.
 func Levels(levels ...string) []any {
 	widened := make([]any, len(levels))
@@ -131,7 +139,11 @@ func (q Choice) MarshalJSON() ([]byte, error) {
 	}{Type: "choice", Instructions: q.Instructions, Criteria: q.Criteria})
 }
 
-func (Choice) validate(string) error {
+func (q Choice) validate(name string) error {
+	if len(q.Criteria) > MaxChoiceOptions {
+		return tooManyOptions(name, len(q.Criteria))
+	}
+
 	return nil
 }
 
@@ -176,16 +188,30 @@ func (q Score) MarshalJSON() ([]byte, error) {
 }
 
 func (q Score) validate(name string) error {
-	if len(q.Criteria) >= 2 {
+	switch {
+	case len(q.Criteria) < 2:
+		return &ValidationError{
+			Question: name,
+			Message:  fmt.Sprintf("score question %q has %d criteria, at least two are required", name, len(q.Criteria)),
+		}
+	case len(q.Criteria) > MaxScoreLevels:
+		return tooManyLevels(name, len(q.Criteria))
+	default:
 		return nil
 	}
+}
 
+func tooManyOptions(name string, count int) error {
 	return &ValidationError{
 		Question: name,
-		Message: fmt.Sprintf(
-			"score question %q has %d criteria, at least two are required",
-			name, len(q.Criteria),
-		),
+		Message:  fmt.Sprintf("choice question %q has %d options, and at most %d are allowed", name, count, MaxChoiceOptions),
+	}
+}
+
+func tooManyLevels(name string, count int) error {
+	return &ValidationError{
+		Question: name,
+		Message:  fmt.Sprintf("score question %q has %d levels, and at most %d are allowed", name, count, MaxScoreLevels),
 	}
 }
 

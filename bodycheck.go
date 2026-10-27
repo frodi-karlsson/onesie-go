@@ -2,6 +2,7 @@ package onesie
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -254,4 +255,47 @@ func collectTexts(dec *jsontext.Decoder, texts *[]string) error {
 	default:
 		return dec.SkipValue()
 	}
+}
+
+func checkQuestionCounts(members []member) error {
+	for _, m := range members {
+		if m.name != "questions" {
+			continue
+		}
+
+		var questions map[string]struct {
+			Type     string          `json:"type"`
+			Criteria json.RawMessage `json:"criteria"`
+		}
+
+		// A body whose questions do not decode is forwarded, so the server reports it.
+		if json.Unmarshal(m.value, &questions) != nil {
+			continue
+		}
+
+		for _, id := range slices.Sorted(maps.Keys(questions)) {
+			if err := checkCount(id, questions[id].Type, questions[id].Criteria); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func checkCount(id, kind string, criteria json.RawMessage) error {
+	switch kind {
+	case "choice":
+		var options map[string]json.RawMessage
+		if json.Unmarshal(criteria, &options) == nil && len(options) > MaxChoiceOptions {
+			return tooManyOptions(id, len(options))
+		}
+	case "score":
+		var levels []json.RawMessage
+		if json.Unmarshal(criteria, &levels) == nil && len(levels) > MaxScoreLevels {
+			return tooManyLevels(id, len(levels))
+		}
+	}
+
+	return nil
 }

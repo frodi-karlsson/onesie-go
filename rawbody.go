@@ -37,6 +37,10 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (pr
 		return preparedBody{}, err
 	}
 
+	if err = checkQuestionCounts(b.members); err != nil {
+		return preparedBody{}, err
+	}
+
 	if longContext {
 		b = setLongContext(b)
 	}

@@ -3,6 +3,8 @@ package onesie_test
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/frodi-karlsson/onesie-go"
@@ -58,6 +60,21 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{
 			name: "should refuse long context the provider does not take", provider: onesie.Cloudflare(), body: `{"state":"s"}`, opts: longContext,
 			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+		},
+		{
+			name:    "should refuse a raw score over the levels limit",
+			body:    `{"state":"s","questions":{"rate":{"type":"score","instructions":"x","criteria":["0","1","2","3","4","5","6","7","8","9","10"]}}}`,
+			wantErr: `onesie: score question "rate" has 11 levels, and at most 10 are allowed`,
+		},
+		{
+			name: "should take a raw score at the levels limit",
+			body: `{"model":"m","questions":{"rate":{"type":"score","criteria":["0","1","2","3","4","5","6","7","8","9"]}}}`,
+			want: `{"model":"m","questions":{"rate":{"type":"score","criteria":["0","1","2","3","4","5","6","7","8","9"]}}}`,
+		},
+		{
+			name:    "should refuse a raw choice over the options limit",
+			body:    `{"state":"s","questions":{"pick":{"type":"choice","criteria":` + manyOptions(256) + `}}}`,
+			wantErr: `onesie: choice question "pick" has 256 options, and at most 255 are allowed`,
 		},
 		{name: "should refuse a failing option", body: `{}`, opts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(0)}, wantErr: "onesie: attempt timeout must be positive"},
 	}
@@ -126,4 +143,13 @@ func TestClientPrepareRaw(t *testing.T) {
 			t.Errorf("PrepareRaw = %s, %v, want the client's model", got, err)
 		}
 	})
+}
+
+func manyOptions(n int) string {
+	names := make([]string, n)
+	for i := range names {
+		names[i] = `"option ` + strconv.Itoa(i) + `":"x"`
+	}
+
+	return "{" + strings.Join(names, ",") + "}"
 }

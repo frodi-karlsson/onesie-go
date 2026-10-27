@@ -3,6 +3,7 @@ package onesie_test
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -246,6 +247,24 @@ func TestValidateQuestions(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:      "should accept a choice at the options limit",
+			questions: onesie.Questions{{ID: "pick", Question: onesie.Choice{Criteria: options(onesie.MaxChoiceOptions)}}},
+		},
+		{
+			name:      "should reject a choice over the options limit",
+			questions: onesie.Questions{{ID: "pick", Question: onesie.Choice{Criteria: options(onesie.MaxChoiceOptions + 1)}}},
+			wantErr:   `onesie: choice question "pick" has 256 options, and at most 255 are allowed`,
+		},
+		{
+			name:      "should accept a score at the levels limit",
+			questions: onesie.Questions{{ID: "rate", Question: onesie.Score{Criteria: levels(onesie.MaxScoreLevels)}}},
+		},
+		{
+			name:      "should reject a score over the levels limit",
+			questions: onesie.Questions{{ID: "rate", Question: onesie.Score{Criteria: levels(onesie.MaxScoreLevels + 1)}}},
+			wantErr:   `onesie: score question "rate" has 11 levels, and at most 10 are allowed`,
+		},
 	}
 
 	for _, tc := range tests {
@@ -323,6 +342,24 @@ func TestValidateQuestions(t *testing.T) {
 			})
 		}
 	})
+}
+
+func options(n int) onesie.Criteria {
+	criteria := make(onesie.Criteria, n)
+	for i := range criteria {
+		criteria[i] = onesie.NamedCriterion{Name: "option " + strconv.Itoa(i)}
+	}
+
+	return criteria
+}
+
+func levels(n int) []any {
+	rubric := make([]any, n)
+	for i := range rubric {
+		rubric[i] = "level " + strconv.Itoa(i)
+	}
+
+	return rubric
 }
 
 func TestLevels(t *testing.T) {
