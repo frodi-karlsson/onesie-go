@@ -1,6 +1,8 @@
 package onesie
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -307,15 +309,46 @@ type requestConfig struct {
 	header         http.Header
 }
 
-// ValidateBaseURL rejects anything that is not an absolute http or https URL. It is exported so
-// The CLI credential command uses the same validation before storing the value.
+// ValidateBaseURL rejects anything that is not an absolute http or https URL, saying why. The
+// message echoes the URL as given, without any userinfo.
 func ValidateBaseURL(raw string) error {
+	echo, hadUserinfo := withoutUserinfo(raw)
+
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return &ValidationError{Message: "base URL must be an absolute http or https URL, got " + raw}
+
+	var malformed *url.Error
+
+	switch {
+	case errors.As(err, &malformed) && hadUserinfo:
+		return &ValidationError{Message: "base URL " + echo + " does not parse"}
+	case errors.As(err, &malformed):
+		return &ValidationError{Message: "base URL " + echo + " does not parse: " + malformed.Err.Error()}
+	case err != nil:
+		return &ValidationError{Message: "base URL " + echo + " does not parse"}
+	case parsed.Scheme != "http" && parsed.Scheme != "https":
+		return &ValidationError{Message: "base URL " + echo + " is not an http or https URL"}
+	case parsed.Host == "":
+		return &ValidationError{Message: fmt.Sprintf(
+			"base URL %s names no host. Write it as %s://HOST", echo, parsed.Scheme)}
+	default:
+		return nil
+	}
+}
+
+func withoutUserinfo(raw string) (string, bool) {
+	// Up to the last @ anywhere, not only in the authority, since a password holding a / ends the
+	// authority early as url.Parse reads it.
+	prefix, rest := "", raw
+	if scheme, after, found := strings.Cut(raw, "://"); found {
+		prefix, rest = scheme+"://", after
 	}
 
-	return nil
+	at := strings.LastIndex(rest, "@")
+	if at < 0 {
+		return raw, false
+	}
+
+	return prefix + rest[at+1:], true
 }
 
 func orEnv(value string, lookup func(string) (string, bool), name string) string {

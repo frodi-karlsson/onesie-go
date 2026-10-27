@@ -270,6 +270,20 @@ func TestNew(t *testing.T) {
 		}
 	})
 
+	t.Run("should echo a refused base url as it was given", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := onesie.New(
+			onesie.WithEnv(mockEnv(nil)),
+			onesie.WithAPIKey("sk"),
+			onesie.WithBaseURL("https:///"),
+		)
+
+		if err == nil || err.Error() != "onesie: base URL https:/// names no host. Write it as https://HOST" {
+			t.Errorf("error = %v, want the base url echoed with its trailing slash", err)
+		}
+	})
+
 	t.Run("should reject an invalid retry policy", func(t *testing.T) {
 		t.Parallel()
 

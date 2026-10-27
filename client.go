@@ -67,7 +67,7 @@ func New(opts ...Option) (*Client, error) {
 		return nil, accountErr
 	}
 
-	if err := ValidateBaseURL(c.baseURL); err != nil {
+	if err := ValidateBaseURL(baseURL); err != nil {
 		return nil, err
 	}
 
