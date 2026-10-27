@@ -148,6 +148,14 @@ func TestProviders(t *testing.T) {
 func TestCapabilityError(t *testing.T) {
 	t.Parallel()
 
+	t.Run("should match ErrNotServed, as a server refusal does", func(t *testing.T) {
+		t.Parallel()
+
+		if err := onesie.Levanto().Refuse("", onesie.Needs{Images: true}); !errors.Is(err, onesie.ErrNotServed) {
+			t.Errorf("error = %v, want ErrNotServed", err)
+		}
+	})
+
 	t.Run("should carry the provider, the model, what is missing and who takes it", func(t *testing.T) {
 		t.Parallel()
 

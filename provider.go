@@ -76,11 +76,12 @@ func TypeSafe() Provider {
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
 		routeFor: oneRoute(route{
-			path:         systemOnePath,
-			takes:        takesEverything(),
-			imagesHeader: true,
-			encode:       encodeAsIs,
-			decode:       identity,
+			path:          systemOnePath,
+			takes:         takesEverything(),
+			imagesHeader:  true,
+			encode:        encodeAsIs,
+			decode:        identity,
+			classifyError: classifyBy(unknownModel("Unknown model"), contextTooLong, boxNotServed, questionLimit),
 		}),
 	}
 }
@@ -103,6 +104,9 @@ func OpenRouter() Provider {
 			encode:        encodeAsIs,
 			decode:        identity,
 			describeError: readOpenRouterMessage,
+			classifyError: classifyBy(
+				unknownModel("Unknown model"), unknownModel("does not exist"), contextTooLong, boxNotServed, questionLimit,
+			),
 		}),
 	}
 }
@@ -157,10 +161,11 @@ func Berget() Provider {
 		decodeModels:    decodeBergetModels,
 		keyCheck:        keyCheck{by: keyCheckByQuestion},
 		routeFor: oneRoute(route{
-			path:   systemOnePath,
-			takes:  capabilities{longContext: true},
-			encode: encodeAsIs,
-			decode: identity,
+			path:          systemOnePath,
+			takes:         capabilities{longContext: true},
+			encode:        encodeAsIs,
+			decode:        identity,
+			classifyError: classifyBy(unknownModel("Model not found")),
 		}),
 	}
 }
@@ -176,10 +181,11 @@ func Levanto() Provider {
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
 		routeFor: oneRoute(route{
-			path:   systemOnePath,
-			takes:  capabilities{longContext: true},
-			encode: encodeAsIs,
-			decode: identity,
+			path:          systemOnePath,
+			takes:         capabilities{longContext: true},
+			encode:        encodeAsIs,
+			decode:        identity,
+			classifyError: classifyBy(unknownModel("unknown model")),
 		}),
 	}
 }

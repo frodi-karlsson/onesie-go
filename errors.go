@@ -36,7 +36,7 @@ const (
 	kindNull
 )
 
-// Sentinels for errors.Is. An APIError reports itself as the one matching its status.
+// Sentinels for errors.Is. An APIError matches the one for its status, and one its route reads from the body.
 var (
 	// ErrBadRequest matches an APIError with status 400.
 	ErrBadRequest = errors.New("bad request")
@@ -55,6 +55,15 @@ var (
 	ErrRateLimit = errors.New("rate limited")
 	// ErrServer matches an APIError with any status from 500 to 599.
 	ErrServer = errors.New("server error")
+	// ErrUnknownModel matches an APIError for a model the provider does not serve.
+	ErrUnknownModel = errors.New("unknown model")
+	// ErrContextTooLong matches an APIError for a request longer than the model's context.
+	ErrContextTooLong = errors.New("context too long")
+	// ErrNotServed matches a request the model does not serve, a CapabilityError or an APIError alike.
+	ErrNotServed = errors.New("not served")
+	// ErrQuestionLimit matches an APIError refusing a question for a count of options, levels, images
+	// or pixels. It is best effort, since the server owns the wording.
+	ErrQuestionLimit = errors.New("question limit")
 	// ErrConnection matches a ConnectionError, including a TimeoutError.
 	ErrConnection = errors.New("connection error")
 	// ErrTimeout matches a TimeoutError.
@@ -565,7 +574,7 @@ func newCapabilityError(provider, model string, missing Needs, takers []string) 
 	}
 
 	return &CapabilityError{
-		ValidationError: ValidationError{Message: message},
+		ValidationError: ValidationError{Message: message, kind: ErrNotServed},
 		Provider:        provider, Model: model, Missing: missing, Takers: takers,
 	}
 }

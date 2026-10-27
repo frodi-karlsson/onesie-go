@@ -554,6 +554,95 @@ func TestNewAPIError(t *testing.T) {
 			t.Errorf("error = %v on openrouter, want no ErrAuthentication", err)
 		}
 	})
+	boxed := Needs{Images: true, Box: true}
+
+	classified := []struct {
+		name     string
+		file     string
+		status   int
+		via      route
+		needs    Needs
+		sentinel error
+	}{
+		{name: "should read typesafe's unknown model", file: "typesafe-unknown-model.json", status: 400, via: typesafe, sentinel: ErrUnknownModel},
+		{name: "should read typesafe's context limit", file: "typesafe-context-too-long.json", status: 400, via: typesafe, sentinel: ErrContextTooLong},
+		{name: "should read typesafe's box refusal", file: "typesafe-box-not-served.json", status: 400, via: typesafe, needs: boxed, sentinel: ErrNotServed},
+		{name: "should read typesafe's count refusal", file: "typesafe-question-limit.json", status: 400, via: typesafe, sentinel: ErrQuestionLimit},
+		{name: "should read openrouter's unknown model", file: "openrouter-unknown-model.json", status: 400, via: openrouter, sentinel: ErrUnknownModel},
+		{name: "should read openrouter's context limit", file: "openrouter-context-too-long.json", status: 400, via: openrouter, sentinel: ErrContextTooLong},
+		{name: "should read openrouter's box refusal", file: "openrouter-box-not-served.json", status: 400, via: openrouter, needs: boxed, sentinel: ErrNotServed},
+		{name: "should read openrouter's count refusal", file: "openrouter-question-limit.json", status: 400, via: openrouter, sentinel: ErrQuestionLimit},
+		{name: "should read berget's unknown model", file: "berget-unknown-model.json", status: 404, via: Berget().route(bergetModel), sentinel: ErrUnknownModel},
+		{name: "should read levanto's unknown model", file: "levanto-unknown-model.json", status: 422, via: Levanto().route(levantoModel), sentinel: ErrUnknownModel},
+		{name: "should read the gateway's unknown model", file: "gateway-unknown-model.json", status: 404, via: gateway, sentinel: ErrUnknownModel},
+		{name: "should read the gateway's context limit", file: "gateway-context-too-long.json", status: 400, via: gateway, sentinel: ErrContextTooLong},
+		{name: "should read the gateway's box refusal", file: "gateway-box-not-served.json", status: 400, via: gateway, needs: boxed, sentinel: ErrNotServed},
+		{name: "should read the gateway's count refusal", file: "gateway-question-limit.json", status: 400, via: gateway, sentinel: ErrQuestionLimit},
+		{name: "should read cloudflare's refused token", file: "cloudflare-auth.json", status: 401, via: gateway, sentinel: ErrAuthentication},
+		{name: "should read the models search's refused token", file: "cloudflare-models-auth.json", status: 400, via: workers, sentinel: ErrAuthentication},
+		{name: "should read workers ai's unknown model", file: "workers-unknown-model.json", status: 400, via: workers, sentinel: ErrUnknownModel},
+	}
+
+	refusals := []error{ErrUnknownModel, ErrContextTooLong, ErrNotServed, ErrQuestionLimit}
+
+	for _, tc := range classified {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			body, err := os.ReadFile(filepath.Join("testdata", "errors", tc.file))
+			if err != nil {
+				t.Fatalf("reading the fixture: %v", err)
+			}
+
+			got := newAPIError(tc.via, tc.needs, tc.status, http.Header{}, body, time.Now())
+			if !errors.Is(got, tc.sentinel) {
+				t.Fatalf("error = %v, want %v", got, tc.sentinel)
+			}
+
+			for _, other := range refusals {
+				if !errors.Is(other, tc.sentinel) && errors.Is(got, other) {
+					t.Errorf("error = %v also matched %v", got, other)
+				}
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		file   string
+		status int
+		via    route
+		needs  Needs
+		not    error
+	}{
+		{name: "should not read berget's wording as an unknown model on openrouter", file: "berget-unknown-model.json", status: 404, via: openrouter, not: ErrUnknownModel},
+		{name: "should not read levanto's wording as an unknown model on typesafe", file: "levanto-unknown-model.json", status: 422, via: typesafe, not: ErrUnknownModel},
+		{name: "should not read an invalid request as a box refusal without a box", file: "typesafe-box-not-served.json", status: 400, via: typesafe, not: ErrNotServed},
+		{name: "should not read an unknown model from a server error", file: "typesafe-unknown-model.json", status: 500, via: typesafe, not: ErrUnknownModel},
+		{name: "should not read typesafe's count wording on berget", file: "typesafe-question-limit.json", status: 400, via: Berget().route(bergetModel), not: ErrQuestionLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			body, err := os.ReadFile(filepath.Join("testdata", "errors", tc.file))
+			if err != nil {
+				t.Fatalf("reading the fixture: %v", err)
+			}
+
+			if got := newAPIError(tc.via, tc.needs, tc.status, http.Header{}, body, time.Now()); errors.Is(got, tc.not) {
+				t.Errorf("error = %v, want no %v", got, tc.not)
+			}
+		})
+	}
+
+	t.Run("should match the first refusal in order when several match", func(t *testing.T) {
+		t.Parallel()
+
+		got := newAPIError(typesafe, boxed, 400, http.Header{}, []byte(`{"detail":"Unknown model, max_tokens_exceeded, Invalid request"}`), time.Now())
+		if !errors.Is(got, ErrUnknownModel) || errors.Is(got, ErrContextTooLong) || errors.Is(got, ErrNotServed) {
+			t.Errorf("error = %v, want ErrUnknownModel alone", got)
+		}
+	})
 }
 
 func TestRetryAfterError(t *testing.T) {

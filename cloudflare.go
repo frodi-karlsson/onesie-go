@@ -19,7 +19,7 @@ func cloudflareRoute(model string) route {
 			decode: unwrapResult,
 
 			describeError: readCloudflareMessage,
-			classifyError: classifyBy(cloudflareAuth),
+			classifyError: classifyBy(cloudflareAuth, unknownModel("No such model")),
 		}
 	}
 
@@ -30,7 +30,10 @@ func cloudflareRoute(model string) route {
 		decode: unwrapResult,
 
 		describeError: readCloudflareMessage,
-		classifyError: classifyBy(cloudflareAuth),
+		classifyError: classifyBy(
+			cloudflareAuth, unknownModel("Unknown model"), unknownModel("Model not found"),
+			contextTooLong, boxNotServed, questionLimit,
+		),
 	}
 }
 

@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -891,6 +893,116 @@ func TestLiveErrors(t *testing.T) {
 			t.Fatalf("error = %v, want an APIError naming the model", err)
 		}
 	})
+
+	t.Run("should classify each route's refusals and log their bodies", func(t *testing.T) {
+		t.Parallel()
+
+		typesafe := func(t *testing.T) *onesie.Client { return liveClient(t) }
+		noul := onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "Is this urgent?"}}}
+		long := strings.Repeat("The payout failed again and the customer is angry about it. ", 40000)
+
+		ask := func(model string, state any) func(*testing.T) onesie.Request {
+			return func(*testing.T) onesie.Request {
+				return onesie.Request{State: state, Model: model, Questions: noul}
+			}
+		}
+
+		boxOnLatest := func(t *testing.T) onesie.Request {
+			square, err := onesie.NewImage(squarePNG(t))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			return onesie.Request{
+				State: map[string]any{"photo": "image-square"}, Model: "jev-latest",
+				Questions: onesie.Questions{{ID: "square", Question: onesie.Box{Instructions: "the red square in `photo`"}}},
+				Assets:    onesie.Assets{"image-square": square},
+			}
+		}
+
+		tests := []struct {
+			name     string
+			client   func(*testing.T) *onesie.Client
+			req      func(*testing.T) onesie.Request
+			sentinel error
+		}{
+			{name: "typesafe-unknown-model", client: typesafe, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "openrouter-unknown-model", client: liveOpenRouterClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "berget-unknown-model", client: liveBergetClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "levanto-unknown-model", client: liveLevantoClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "gateway-unknown-model", client: liveCloudflareClient, req: ask("typesafe/jev-nope", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "workers-unknown-model", client: liveCloudflareClient, req: ask("clef-nope", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "typesafe-context-too-long", client: typesafe, req: ask("", long), sentinel: onesie.ErrContextTooLong},
+			{name: "openrouter-context-too-long", client: liveOpenRouterClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
+			{name: "gateway-context-too-long", client: liveCloudflareClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
+			{name: "typesafe-box-not-served", client: typesafe, req: boxOnLatest, sentinel: onesie.ErrNotServed},
+			{name: "openrouter-box-not-served", client: liveOpenRouterClient, req: boxOnLatest, sentinel: onesie.ErrNotServed},
+		}
+
+		for _, tc := range tests {
+			t.Run("should match the sentinel for "+tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := tc.client(t).SystemOne(liveContext(t, time.Minute), tc.req(t))
+
+				var api *onesie.APIError
+				if errors.As(err, &api) {
+					t.Logf("fixture %s.json, status %d: %s", tc.name, api.Status, api.RawBody)
+				}
+
+				if !errors.Is(err, tc.sentinel) {
+					t.Errorf("error = %v, want %v", err, tc.sentinel)
+				}
+			})
+		}
+	})
+
+	t.Run("should log each route's count refusal past the library's own check", func(t *testing.T) {
+		t.Parallel()
+
+		const question = `{"state":"x","model":"%s","questions":{"rate":{"type":"score","instructions":"How bad?",` +
+			`"criteria":["0","1","2","3","4","5","6","7","8","9","10"]}}}`
+
+		for _, tc := range []struct {
+			name   string
+			target func(t *testing.T) (url, key, body string)
+		}{
+			{
+				name: "typesafe-question-limit",
+				target: func(t *testing.T) (string, string, string) {
+					return "https://api.typesafe.ai/v1/systemone", apiKey(t), fmt.Sprintf(question, "jev-latest")
+				},
+			},
+			{
+				name: "openrouter-question-limit",
+				target: func(t *testing.T) (string, string, string) {
+					return "https://openrouter.ai/api/v1/systemone", openRouterKey(t), fmt.Sprintf(question, "jev-latest")
+				},
+			},
+			{
+				name: "gateway-question-limit",
+				target: func(t *testing.T) (string, string, string) {
+					token, account := cloudflareCredentials(t)
+
+					return "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run", token,
+						`{"model":"typesafe/jev","input":` + fmt.Sprintf(question, "typesafe/jev") + `}`
+				},
+			},
+		} {
+			t.Run("should refuse eleven levels for "+tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				url, key, body := tc.target(t)
+
+				status, raw := postLive(t, url, key, body)
+				t.Logf("fixture %s.json, status %d: %s", tc.name, status, raw)
+
+				if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+					t.Errorf("status = %d, want 400 or 422", status)
+				}
+			})
+		}
+	})
 }
 
 func liveClient(t *testing.T, opts ...onesie.Option) *onesie.Client {
@@ -934,6 +1046,51 @@ func liveLevantoClient(t *testing.T) *onesie.Client {
 	}
 
 	return client
+}
+
+func liveBergetClient(t *testing.T) *onesie.Client {
+	t.Helper()
+
+	client, err := onesie.New(
+		onesie.WithProvider(onesie.Berget()),
+		onesie.WithAPIKey(bergetKey(t)),
+		onesie.WithUserAgent("onesie-integration"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	return client
+}
+
+func postLive(t *testing.T, url, key, body string) (int, []byte) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(liveContext(t, time.Minute), http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("sending the request: %v", err)
+	}
+
+	defer func() {
+		if closeErr := res.Body.Close(); closeErr != nil {
+			t.Logf("closing the body: %v", closeErr)
+		}
+	}()
+
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("reading the body: %v", err)
+	}
+
+	return res.StatusCode, raw
 }
 
 func liveCloudflareClient(t *testing.T) *onesie.Client {
