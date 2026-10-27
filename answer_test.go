@@ -102,7 +102,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 		var result onesie.Result
 
 		err := json.Unmarshal([]byte(body), &result)
-		if err == nil || !strings.HasPrefix(err.Error(), `answer "x": `) {
+		if err == nil || !strings.HasPrefix(err.Error(), `answer 'x' `) {
 			t.Fatalf("error = %v, want one naming the answer", err)
 		}
 	})
@@ -289,7 +289,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			case tc.refuse && err == nil:
 				t.Fatalf("decoded %s as %+v, want it refused", tc.answer, result.Answers["x"])
-			case tc.refuse && !strings.HasPrefix(err.Error(), `answer "x": `):
+			case tc.refuse && !strings.HasPrefix(err.Error(), `answer 'x' `):
 				t.Fatalf("error = %v, want one naming the answer like an unknown type", err)
 			}
 		})
@@ -306,7 +306,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 		var result onesie.Result
 
 		err := json.Unmarshal([]byte(body), &result)
-		if err == nil || err.Error() != `answer "broken": the choice answer has no choice, or it is null` {
+		if err == nil || err.Error() != `answer 'broken' has no choice, or it is null` {
 			t.Fatalf("error = %v, want the broken answer named", err)
 		}
 	})
@@ -321,7 +321,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			var result onesie.Result
 
 			err := json.Unmarshal([]byte(body), &result)
-			if err == nil || err.Error() != `answer "x": the probability of "b" is null` {
+			if err == nil || err.Error() != `answer 'x' has no probability for 'b', or it is null` {
 				t.Fatalf("error = %v, want the null probability of b named", err)
 			}
 		}
@@ -336,11 +336,150 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			var result onesie.Result
 
 			err := json.Unmarshal([]byte(body), &result)
-			if err == nil || err.Error() != `answer "x": the box answer has no box bottom, or it is null` {
+			if err == nil || err.Error() != `answer 'x' has no box bottom edge, or it is null` {
 				t.Fatalf("error = %v, want the bottom edge named", err)
 			}
 		}
 	})
+
+	shapes := []struct {
+		name string
+		body string
+		want onesie.ResultShapeError
+		text string
+	}{
+		{
+			name: "should report a body that is an array",
+			body: `[1]`,
+			want: onesie.ResultShapeError{Want: "an object", Got: "an array"},
+			text: "the response is not a System One result, since it is an array",
+		},
+		{
+			name: "should report answers that are not an object",
+			body: `{"model":"m","answers":[1],"usage":{}}`,
+			want: onesie.ResultShapeError{Field: "answers", Want: "an object", Got: "an array"},
+			text: "the response is not a System One result, since its answers are not an object",
+		},
+		{
+			name: "should report a usage count that is not a number",
+			body: `{"model":"m","answers":{},"usage":{"input_tokens":"7"}}`,
+			want: onesie.ResultShapeError{Field: "usage.input_tokens", Want: "a number", Got: "a string"},
+			text: "the response is not a System One result, since its usage.input_tokens is not a number",
+		},
+		{
+			name: "should report an answer that is not an object",
+			body: `{"answers":{"x":[1]}}`,
+			want: onesie.ResultShapeError{Answer: "x", Want: "an object", Got: "an array"},
+			text: "answer 'x' is an array, not an object",
+		},
+		{
+			name: "should report an answer that is null",
+			body: `{"answers":{"x":null}}`,
+			want: onesie.ResultShapeError{Answer: "x", Want: "an object", Got: "null"},
+			text: "answer 'x' is null, not an object",
+		},
+		{
+			name: "should report an answer with no type",
+			body: `{"answers":{"x":{"noul":0.5}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "type", Want: "a string"},
+			text: "answer 'x' has no type, or it is null",
+		},
+		{
+			name: "should report an answer whose type is not a string",
+			body: `{"answers":{"x":{"type":5}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "type", Want: "a string", Got: "a number"},
+			text: "answer 'x' has a type that is not a string",
+		},
+		{
+			name: "should report an unknown answer type",
+			body: `{"answers":{"x":{"type":"tarot"}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "type", Want: "noul, choice, score or box", Got: "tarot"},
+			text: "answer 'x' has the type 'tarot', which is not noul, choice, score or box",
+		},
+		{
+			name: "should report a missing noul",
+			body: `{"answers":{"x":{"type":"noul"}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "noul", Want: "a number"},
+			text: "answer 'x' has no noul, or it is null",
+		},
+		{
+			name: "should report a noul that is not a number",
+			body: `{"answers":{"x":{"type":"noul","noul":"0.9"}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "noul", Want: "a number", Got: "a string"},
+			text: "answer 'x' has a noul that is not a number",
+		},
+		{
+			name: "should report an empty choice",
+			body: `{"answers":{"x":{"type":"choice","choice":"","probabilities":{"a":1}}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "choice", Want: "a string", Got: "an empty string"},
+			text: "answer 'x' has a choice that is empty",
+		},
+		{
+			name: "should report empty probabilities",
+			body: `{"answers":{"x":{"type":"choice","choice":"a","probabilities":{}}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "probabilities", Want: "an object", Got: "an empty object"},
+			text: "answer 'x' has probabilities that are empty",
+		},
+		{
+			name: "should report probabilities that are a list",
+			body: `{"answers":{"x":{"type":"score","score":1,"probabilities":[1]}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "probabilities", Want: "an object", Got: "an array"},
+			text: "answer 'x' has probabilities that are not an object",
+		},
+		{
+			name: "should report a probability that is not a number",
+			body: `{"answers":{"x":{"type":"choice","choice":"a","probabilities":{"a":"0.8"}}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "probabilities.a", Want: "a number", Got: "a string"},
+			text: "answer 'x' has a probability for 'a' that is not a number",
+		},
+		{
+			name: "should report a confidence that is not a number",
+			body: `{"answers":{"x":{"type":"choice","choice":"a","probabilities":{"a":1},"confidence":"high"}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "confidence", Want: "a number", Got: "a string"},
+			text: "answer 'x' has a confidence that is not a number",
+		},
+		{
+			name: "should report a legend entry that is not a string",
+			body: `{"answers":{"x":{"type":"score","score":1,"probabilities":{"0":1},"legend":{"0":5}}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "legend.0", Want: "a string", Got: "a number"},
+			text: "answer 'x' has a legend entry for '0' that is not a string",
+		},
+		{
+			name: "should report a box edge that is not a number",
+			body: `{"answers":{"x":{"type":"box","box":{"top":"0.1","bottom":1,"left":0,"right":1}}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "box.top", Want: "a number", Got: "a string"},
+			text: "answer 'x' has a box top edge that is not a number",
+		},
+		{
+			name: "should report a box that is a list",
+			body: `{"answers":{"x":{"type":"box","box":[0.1]}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "box", Want: "an object", Got: "an array"},
+			text: "answer 'x' has a box that is not an object",
+		},
+	}
+
+	for _, tc := range shapes {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var result onesie.Result
+
+			err := json.Unmarshal([]byte(tc.body), &result)
+
+			var shape *onesie.ResultShapeError
+			if !errors.As(err, &shape) {
+				t.Fatalf("error = %v, want a ResultShapeError", err)
+			}
+
+			if *shape != tc.want {
+				t.Errorf("error = %+v, want %+v", *shape, tc.want)
+			}
+
+			if err.Error() != tc.text {
+				t.Errorf("message = %q, want %q", err.Error(), tc.text)
+			}
+		})
+	}
 
 	t.Run("should round trip back to the wire shape", func(t *testing.T) {
 		t.Parallel()

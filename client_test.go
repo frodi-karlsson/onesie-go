@@ -544,9 +544,14 @@ func TestClientSystemOne(t *testing.T) {
 					t.Fatalf("error = %v, want a ResponseError matching ErrResponse", err)
 				}
 
-				const prefix = `onesie: 200 response could not be used: answer "q": `
+				const prefix = `onesie: 200 response could not be used: answer 'q' `
 				if !strings.HasPrefix(want.Error(), prefix) || !strings.HasPrefix(got.Error(), prefix) {
 					t.Errorf("errors = %q and %q, want both to start %q", want.Error(), got.Error(), prefix)
+				}
+
+				var shape *onesie.ResultShapeError
+				if !errors.As(err, &shape) || shape.Answer != "q" {
+					t.Errorf("error = %v, want a ResultShapeError naming q", err)
 				}
 
 				if got.Status != want.Status || string(got.Body) != response || got.Message != "" {

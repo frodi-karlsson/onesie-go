@@ -481,3 +481,77 @@ func (e *AnswerError) Error() string {
 
 	return fmt.Sprintf("onesie: answer %q is a %s, not a %s", e.Name, e.Got, e.Want)
 }
+
+// ResultShapeError is a response body that is not the System One result it should be. Answer names
+// the answer at fault, or is empty when the body itself is wrong. Got is empty for a missing field.
+type ResultShapeError struct {
+	Answer string
+	Field  string
+	Want   string
+	Got    string
+}
+
+// Error describes the fault in the response's own terms, with no Go types.
+func (e *ResultShapeError) Error() string {
+	if e.Answer == "" {
+		return e.resultSentence()
+	}
+
+	name := "answer '" + e.Answer + "'"
+	if e.Field == "" {
+		return fmt.Sprintf("%s is %s, not %s", name, e.Got, e.Want)
+	}
+
+	phrase, bare, verb := fieldPhrase(e.Field)
+
+	switch {
+	case e.Got == "":
+		return fmt.Sprintf("%s has no %s, or it is null", name, bare)
+	case e.Field == "type" && e.Want == answerKinds:
+		return fmt.Sprintf("%s has the type '%s', which is not %s", name, e.Got, e.Want)
+	case strings.HasPrefix(e.Got, "an empty "):
+		return fmt.Sprintf("%s has %s that %s empty", name, phrase, verb)
+	default:
+		return fmt.Sprintf("%s has %s that %s not %s", name, phrase, verb, e.Want)
+	}
+}
+
+func (e *ResultShapeError) resultSentence() string {
+	const lead = "the response is not a System One result"
+
+	switch {
+	case e.Field == "" && e.Got == "":
+		return lead
+	case e.Field == "":
+		return lead + ", since it is " + e.Got
+	case e.Got == "":
+		return lead + ", since it has no " + e.Field + ", or it is null"
+	default:
+		_, _, verb := fieldPhrase(e.Field)
+
+		return lead + ", since its " + e.Field + " " + verb + " not " + e.Want
+	}
+}
+
+func fieldPhrase(field string) (phrase, bare, verb string) {
+	parent, key, nested := strings.Cut(field, ".")
+
+	switch {
+	case nested && parent == "probabilities":
+		bare = "probability for '" + key + "'"
+	case nested && parent == "legend":
+		bare = "legend entry for '" + key + "'"
+	case nested && parent == "box":
+		bare = "box " + key + " edge"
+	case !nested && strings.HasSuffix(field, "s"):
+		return field, field, "are"
+	default:
+		bare = field
+	}
+
+	if strings.ContainsAny(bare[:1], "aeiou") {
+		return "an " + bare, bare, "is"
+	}
+
+	return "a " + bare, bare, "is"
+}

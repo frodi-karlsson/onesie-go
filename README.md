@@ -94,6 +94,11 @@ result, err := client.SystemOne(ctx, onesie.Request{
 })
 ```
 
+A 200 response that is not a System One result fails with a `ResponseError` that wraps a
+`ResultShapeError`. Reach it with `errors.As` to read the answer, the field, the JSON kind it wanted
+and the kind it got. Its message reads in the response's own terms, such as
+`answer 'x' has a noul that is not a number`, so it can be shown as it is.
+
 Use the CLI for streams, question files, shell assertions, caching and calibration. Those workflows
 remain in the onesie command.
 

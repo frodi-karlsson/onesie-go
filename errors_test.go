@@ -509,3 +509,39 @@ func TestTruncate(t *testing.T) {
 		}
 	})
 }
+
+func TestResultShapeError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  *ResultShapeError
+		want string
+	}{
+		{
+			name: "should report a body that is not an object",
+			err:  &ResultShapeError{Want: "an object", Got: "a string"},
+			want: "the response is not a System One result, since it is a string",
+		},
+		{
+			name: "should report a missing top level field",
+			err:  &ResultShapeError{Field: "model", Want: "a string"},
+			want: "the response is not a System One result, since it has no model, or it is null",
+		},
+		{
+			name: "should report a missing answer field",
+			err:  &ResultShapeError{Answer: "x", Field: "score", Want: "a number"},
+			want: "answer 'x' has no score, or it is null",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.err.Error(); got != tc.want {
+				t.Errorf("\n got: %s\nwant: %s", got, tc.want)
+			}
+		})
+	}
+}
