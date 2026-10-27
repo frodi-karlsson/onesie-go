@@ -314,9 +314,8 @@ func MarshalBody(req Request) ([]byte, error) {
 	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
 }
 
-// Request is one evaluation. All questions see the same state and are answered independently.
-// Assets are the images the state and questions reference. LongContext raises the context limits
-// on a provider that has them.
+// Request is one evaluation, whose questions all see the same state and are answered independently.
+// Assets holds the images they reference, and LongContext raises the context limits.
 type Request struct {
 	State       any
 	Questions   Questions

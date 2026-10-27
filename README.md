@@ -37,81 +37,28 @@ if err != nil {
 fmt.Println(urgent.Noul)
 ```
 
-The client uses the TypeSafe provider by default and reads `TYPESAFE_API_KEY`. Pass
-`onesie.WithAPIKey` for explicit credentials, `onesie.WithProvider` to select OpenRouter, Berget,
-Levanto or Cloudflare, and `onesie.WithHTTPClient` to supply a transport. Requests accept a context so the calling
-service can set its own deadline and cancellation policy.
+## Providers
 
-`VerifyKey` lists the models and returns them. On TypeSafe, Levanto and Cloudflare the list itself
-needs the key. Berget's list does not, so it also asks one small question with the default model,
-which spends a few tokens. OpenRouter's list does not either, so it also requests the key endpoint,
-which spends none. A key that endpoint refuses fails with `ErrAuthentication` or
-`ErrPermissionDenied`, the same errors a refused listing returns. Under a custom base URL the key
-endpoint must be reachable too, so a proxy that serves the models but not the key endpoint makes
-`VerifyKey` fail.
+The client talks to TypeSafe by default. Pass `onesie.WithProvider` with `onesie.ProviderNamed` or
+a constructor such as `onesie.OpenRouter()` to use OpenRouter, Berget, Levanto or Cloudflare.
+Each provider reads its key from the variable `Provider.EnvAPIKey` names, unless
+`onesie.WithAPIKey` or `onesie.WithAPIKeyFunc` supplies it. Cloudflare also needs an account, from
+`onesie.WithAccountID` or the variable `Provider.EnvAccountID` names.
 
-Images and Box questions are experimental on TypeSafe's side. Put an `onesie.Image` from
-`onesie.NewImage` in `Request.Assets` under a reference, and write the reference where the image
-belongs, usually as a state value. `SystemOne` sends the images header itself.
+## Errors
 
-A request is checked in two layers. `ValidateRequest` checks it for any provider.
-`Provider.Encode` refuses what one provider does not take and returns the body it would send.
-`SystemOne` runs both, in that order, before it sends. `Provider.Refuse` gives the same refusal
-from a model and its `Needs`, before a request exists. A refusal is a `CapabilityError`, which
-carries the provider, the model, the `Needs` it lacks and the providers from `Providers` whose
-default model takes them. The body `Encode` returns carries no headers, so `SystemOne` also sends
-the images header for TypeSafe, and a blank model there is the provider's built in default.
+A request the client refuses before sending matches `onesie.ErrValidation`.
+A response outside 2xx is an `*onesie.APIError`, matched with `errors.Is` against a sentinel such as `onesie.ErrUnknownModel`.
+Every error the package returns has `Reason()`, its message without the `onesie: ` prefix.
 
-Set `Request.LongContext`, or pass `onesie.WithLongContext()` to one call, to raise the context
-limits. A body from `MarshalBody` carries it as `long_context`, which `SystemOneRaw` turns back
-into the header, since TypeSafe refuses the key itself.
+## Reference
 
-`PrepareRawBody` fills the model of a raw body the way `SystemOneRaw` does, with no client or key.
-A body that names no model, or a blank one, gets the default model. `SystemOneRaw` runs it with the
-client's default model, so a printed body and a sent body carry the same model. Its long context
-flag sets `long_context` to true, for a caller that prints a body to feed back in later.
-`SystemOneRaw` moves `long_context` into the header before it sends. When a body has several `model` keys, the last one decides, as
-`encoding/json` reads it. A named model keeps every key as written, and a blank one gives way to one
-key with the default model. Several `long_context` keys likewise become one. A body that needs no
-change, or is not a JSON object, comes back byte for byte.
-
-Each provider gets images the way it reads them: TypeSafe as the assets map, OpenRouter as inline
-image parts, Cloudflare's Jev as the assets map and Clef as an images array numbered in the order
-the images are named, and Levanto and Berget refuse them, as `Provider.Refuse` reports.
-
-`onesie.Cloudflare()` reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, or takes the account
-inside `WithBaseURL`. Its default model is `typesafe/jev`, billed from AI Gateway credits, and
-`clef`, `clef-flash` and `clef-omni` select Cloudflare's own models:
-
-```go
-client, err := onesie.New(onesie.WithProvider(onesie.Cloudflare()))
-if err != nil {
-	return err
-}
-
-result, err := client.SystemOne(ctx, onesie.Request{
-	State:     "The checkout page has been down for an hour.",
-	Model:     "clef-flash",
-	Questions: onesie.Questions{{ID: "urgent", Question: onesie.Noul{Instructions: "Is this urgent?"}}},
-})
-```
-
-A response outside 2xx fails with an `APIError`. Its message carries the server's own message when
-the body is JSON. A body that is not JSON is summarised: the status, a note that the body is not
-JSON, and the first line of a text body unless it only repeats the status. An HTML page is left
-out. `RawBody` keeps the body as it arrived, and `BodyJSON` reports whether it parsed.
-
-A 200 response that is not a System One result fails with a `ResponseError` that wraps a
-`ResultShapeError`. Reach it with `errors.As` to read the answer, the field, the JSON kind it wanted
-and the kind it got. Its message reads in the response's own terms, such as
-`answer 'x' has a noul that is not a number`, so it can be shown as it is.
-
-Use the CLI for streams, question files, shell assertions, caching and calibration. Those workflows
-remain in the onesie command.
+The full API is documented at [pkg.go.dev](https://pkg.go.dev/github.com/frodi-karlsson/onesie-go).
 
 ## Development
 
 Run `make check` for lint and race enabled tests. Run `make tidy` to verify the module files.
 The live suite is available with `make test-integration`. It reads `TYPESAFE_API_KEY`,
-`OPENROUTER_API_KEY`, `LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the
-environment or a local `.env` file.
+`OPENROUTER_API_KEY`, `BERGET_API_KEY`, `LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` from the environment or a local `.env` file, and skips the cases whose keys
+are missing.

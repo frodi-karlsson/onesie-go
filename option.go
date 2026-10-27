@@ -206,8 +206,7 @@ func WithHeader(name, value string) Option {
 	}
 }
 
-// WithEnv replaces the environment lookup. It exists so configuration tests need no process
-// mutation, because t.Setenv cannot be combined with t.Parallel.
+// WithEnv replaces the environment lookup, which is os.LookupEnv by default.
 func WithEnv(lookup func(string) (string, bool)) Option {
 	return func(c *Client) error {
 		if lookup == nil {
@@ -220,7 +219,7 @@ func WithEnv(lookup func(string) (string, bool)) Option {
 	}
 }
 
-// WithClock replaces the time source. It exists so retry tests are deterministic and instant.
+// WithClock replaces the time source, which is the system clock by default.
 func WithClock(clock Clock) Option {
 	return func(c *Client) error {
 		if clock == nil {
@@ -233,8 +232,8 @@ func WithClock(clock Clock) Option {
 	}
 }
 
-// WithRandom replaces the jitter source, which must return a value from 0 up to but excluding 1.
-// It exists so backoff tests can assert exact delays.
+// WithRandom replaces the jitter source, which is math/rand/v2's Float64 by default. It must return
+// a value from 0 up to but excluding 1.
 func WithRandom(random func() float64) Option {
 	return func(c *Client) error {
 		if random == nil {
