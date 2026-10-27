@@ -113,7 +113,7 @@ func TestNew(t *testing.T) {
 			{
 				name: "should refuse a missing account",
 				env:  map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
-				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, or pass the base URL " +
+				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, pass WithAccountID, or pass the base URL " +
 					"https://api.cloudflare.com/client/v4/accounts/<account_id>/ai",
 			},
 			{
@@ -136,7 +136,7 @@ func TestNew(t *testing.T) {
 			{
 				name: "should report the account before the key",
 				env:  map[string]string{},
-				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, or pass the base URL " +
+				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, pass WithAccountID, or pass the base URL " +
 					"https://api.cloudflare.com/client/v4/accounts/<account_id>/ai",
 			},
 			{

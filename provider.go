@@ -361,7 +361,7 @@ func (p Provider) chooseBaseURL(
 	account := orEnv("", lookupEnv, p.envAccountID)
 	if account == "" {
 		return "", BaseURLSourceUnknown, &ValidationError{Message: fmt.Sprintf(
-			"no %s account id. Set %s, or pass the base URL %s",
+			"no %s account id. Set %s, pass WithAccountID, or pass the base URL %s",
 			p.name, p.envAccountID, p.accountBaseURL("<account_id>")), kind: ErrNoAccountID}
 	}
 
