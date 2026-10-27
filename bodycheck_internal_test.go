@@ -22,8 +22,18 @@ func TestCheckBodyImages(t *testing.T) {
 			body: `{"state":"s","questions":{"q":{"type":"noul","instructions":"is img a dog"}},"assets":{"img":` + asset + `}}`,
 		},
 		{
-			name: "should accept overlapping references as SystemOne does",
-			body: `{"state":"img2","questions":{},"assets":{"img":` + asset + `,"img2":` + asset + `}}`,
+			name:    "should refuse a name found only inside a longer one",
+			body:    `{"state":"img2","questions":{},"assets":{"img":` + asset + `,"img2":` + asset + `}}`,
+			wantErr: "asset 'img' is not referenced in the state or the questions, and the API refuses that",
+		},
+		{
+			name: "should accept nested names each named on its own",
+			body: `{"state":"photo1 and photo10","questions":{},"assets":{"photo1":` + asset + `,"photo10":` + asset + `}}`,
+		},
+		{
+			name:    "should refuse a format that is not a string with the image wording",
+			body:    `{"state":"img","questions":{},"assets":{"img":{"format":1,"data_base64":"AQ=="}}}`,
+			wantErr: "image 'img' has format '', and an image must be png or jpg",
 		},
 		{
 			name:    "should refuse an asset named only in a name",

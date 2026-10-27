@@ -40,11 +40,11 @@ func ValidateRequest(req Request) error {
 // ValidateImage rejects an image the API would reject, naming it in the message. It checks the
 // format, the file size and the sides, reading only the file's header.
 func ValidateImage(name string, img Image) error {
-	format := wireFormat(img.Format)
-	if format != "png" && format != "jpg" {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' has format '%s', and an image must be png or jpg", name, img.Format)}
+	if fault := checkFormat(name, img.Format); fault != nil {
+		return fault
 	}
+
+	format := wireFormat(img.Format)
 
 	if len(img.Data) > MaxImageBytes {
 		return &ValidationError{Message: fmt.Sprintf(
@@ -111,37 +111,27 @@ func checkReferences(req Request) error {
 			total, maxAllReferencesBytes)}
 	}
 
-	unreferenced, err := UnreferencedAssets(req)
+	missing, err := UnreferencedAssets(req)
 	if err != nil {
 		return err
 	}
 
-	if len(unreferenced) > 0 {
-		return &ValidationError{Message: fmt.Sprintf(
-			"asset '%s' is not referenced in the state or the questions, and the API refuses that",
-			unreferenced[0])}
+	if len(missing) > 0 {
+		return notReferenced(missing[0])
 	}
 
 	return nil
 }
 
-// UnreferencedAssets lists, sorted, the references that appear in no string value of the request's
-// state or questions. Object keys do not count, since the API never replaces a reference there.
+// UnreferencedAssets lists, sorted, the references no string value of the state or questions names.
+// At each place in a text the longest reference starting there counts, so one inside a longer one does not.
 func UnreferencedAssets(req Request) ([]string, error) {
 	texts, err := stringValues(req)
 	if err != nil {
 		return nil, err
 	}
 
-	var unreferenced []string
-
-	for _, ref := range slices.Sorted(maps.Keys(req.Assets)) {
-		if !slices.ContainsFunc(texts, func(text string) bool { return strings.Contains(text, ref) }) {
-			unreferenced = append(unreferenced, ref)
-		}
-	}
-
-	return unreferenced, nil
+	return unreferenced(texts, slices.Sorted(maps.Keys(req.Assets))), nil
 }
 
 func stringValues(req Request) ([]string, error) {

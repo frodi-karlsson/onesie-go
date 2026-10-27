@@ -27,7 +27,7 @@ func inlineParts(body []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	rewriter := &inliner{refs: slices.Sorted(maps.Keys(urls)), used: map[string]bool{}, render: partsRenderer(parts)}
+	rewriter := &inliner{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}, render: partsRenderer(parts)}
 
 	rewritten, err := rewriter.rewrite(members, nil)
 	if err != nil {
@@ -59,7 +59,7 @@ func assetsToImages(body []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	rewriter := &inliner{refs: slices.Sorted(maps.Keys(urls)), used: map[string]bool{}}
+	rewriter := &inliner{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}}
 	rewriter.render = rewriter.labels
 
 	rewritten, err := rewriter.rewrite(members, func(enc *jsontext.Encoder) error {
@@ -106,10 +106,6 @@ func (r *inliner) rewrite(members []member, last func(*jsontext.Encoder) error) 
 		if err := r.member(enc, m); err != nil {
 			return nil, err
 		}
-	}
-
-	if err := r.checkUsed(); err != nil {
-		return nil, err
 	}
 
 	if last != nil {
@@ -193,11 +189,9 @@ func dataURLsOf(members []member) (map[string]string, error) {
 }
 
 func dataURLOf(ref string, format, data any) (string, error) {
-	formatText, isText := format.(string)
-
-	mime := map[string]string{"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}[strings.ToLower(formatText)]
-	if !isText || mime == "" {
-		return "", &ValidationError{Message: fmt.Sprintf("asset '%s' needs a format, png or jpg", ref)}
+	formatText := textOf(format)
+	if fault := checkFormat(ref, formatText); fault != nil {
+		return "", fault
 	}
 
 	encoded, isText := data.(string)
@@ -205,7 +199,20 @@ func dataURLOf(ref string, format, data any) (string, error) {
 		return "", &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}
 	}
 
+	mime := "image/png"
+	if wireFormat(formatText) == "jpg" {
+		mime = "image/jpeg"
+	}
+
 	return "data:" + mime + ";base64," + encoded, nil
+}
+
+func textOf(value any) string {
+	if text, isText := value.(string); isText {
+		return text
+	}
+
+	return ""
 }
 
 func partsFrom(urls map[string]string) (map[string]jsontext.Value, error) {
@@ -372,7 +379,7 @@ func (r *inliner) split(text string) []piece {
 	start := 0
 
 	for i := 0; i < len(text); {
-		ref := r.longestAt(text[i:])
+		ref := r.matcher.longestAt(text[i:])
 		if ref == "" {
 			i++
 
@@ -399,18 +406,6 @@ func (r *inliner) split(text string) []piece {
 	}
 
 	return pieces
-}
-
-func (r *inliner) longestAt(text string) string {
-	longest := ""
-
-	for _, ref := range r.refs {
-		if len(ref) > len(longest) && strings.HasPrefix(text, ref) {
-			longest = ref
-		}
-	}
-
-	return longest
 }
 
 func partsRenderer(parts map[string]jsontext.Value) func(*jsontext.Encoder, []piece) error {
@@ -457,22 +452,11 @@ func (r *inliner) labels(enc *jsontext.Encoder, pieces []piece) error {
 	return enc.WriteToken(jsontext.String(text.String()))
 }
 
-func (r *inliner) checkUsed() error {
-	for _, ref := range r.refs {
-		if !r.used[ref] {
-			return &ValidationError{Message: fmt.Sprintf(
-				"asset '%s' is not referenced in the state or the questions, and the API refuses that", ref)}
-		}
-	}
-
-	return nil
-}
-
 type inliner struct {
-	refs   []string
-	used   map[string]bool
-	order  []string
-	render func(*jsontext.Encoder, []piece) error
+	matcher assetMatcher
+	used    map[string]bool
+	order   []string
+	render  func(*jsontext.Encoder, []piece) error
 }
 
 type piece struct {

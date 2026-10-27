@@ -67,14 +67,9 @@ func TestInlineParts(t *testing.T) {
 				"\"d\":1,\"d\":2,\"p\":" + a + "},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":" + b + "}}}",
 		},
 		{
-			name:    "should refuse an asset nothing references",
-			body:    `{"state":"img-a","questions":{},` + assets + `}`,
-			wantErr: "asset 'img-ab' is not referenced",
-		},
-		{
 			name:    "should refuse an asset whose format is not png or jpg",
 			body:    `{"state":"img-a","questions":{},"assets":{"img-a":{"format":"gif","data_base64":"AQ=="}}}`,
-			wantErr: "asset 'img-a' needs a format, png or jpg",
+			wantErr: "image 'img-a' has format 'gif', and an image must be png or jpg",
 		},
 		{
 			name:    "should refuse an asset whose data is not a string",
@@ -158,12 +153,6 @@ func TestAssetsToImages(t *testing.T) {
 				`"assets":{"noul":{"format":"png","data_base64":"AQ=="}}}`,
 			want: `{"state":"image 1","questions":{"q":{"type":"noul","instructions":"q"}},` +
 				`"images":["data:image/png;base64,AQ=="]}`,
-		},
-		{
-			name: "should refuse a name found only inside a longer one",
-			body: `{"state":"img2","questions":{},"assets":{"img":{"format":"png","data_base64":"AQ=="},` +
-				`"img2":{"format":"png","data_base64":"Ag=="}}}`,
-			wantErr: "onesie: asset 'img' is not referenced in the state or the questions, and the API refuses that",
 		},
 		{
 			name:    "should refuse a body with both assets and images",

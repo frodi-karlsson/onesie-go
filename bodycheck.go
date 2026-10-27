@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 )
 
 func checkBodyImages(body []byte) error {
@@ -59,11 +58,8 @@ func scanBodyImages(body []byte) error {
 
 	refs := slices.Sorted(maps.Keys(faults))
 
-	for _, ref := range refs {
-		if !slices.ContainsFunc(texts, func(text string) bool { return strings.Contains(text, ref) }) {
-			return &ValidationError{Message: fmt.Sprintf(
-				"asset '%s' is not referenced in the state or the questions, and the API refuses that", ref)}
-		}
+	if missing := unreferenced(texts, refs); len(missing) > 0 {
+		return notReferenced(missing[0])
 	}
 
 	for _, ref := range refs {
@@ -150,9 +146,8 @@ func assetFault(dec *jsontext.Decoder, ref string) (*ValidationError, error) {
 		return nil, err
 	}
 
-	if wire := wireFormat(format); wire != "png" && wire != "jpg" {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' has format '%s', and an image must be png or jpg", ref, format)}, nil
+	if fault := checkFormat(ref, format); fault != nil {
+		return fault, nil
 	}
 
 	if !hasData {
