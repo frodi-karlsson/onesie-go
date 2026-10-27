@@ -2818,12 +2818,43 @@ func TestClientSystemOneRaw(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			want := string(onesie.PrepareRawBody(json.RawMessage(tc.body), "custom", false))
-			if got := transport.lastBody(); got != tc.want || got != want {
-				t.Errorf("body = %s, want %s, as PrepareRawBody prints it", got, tc.want)
+			prepared, err := client.PrepareRaw(json.RawMessage(tc.body))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := transport.lastBody(); got != tc.want || got != string(prepared) {
+				t.Errorf("body = %s, want %s, as PrepareRaw prints it", got, tc.want)
 			}
 		})
 	}
+
+	t.Run("should send a prepared body as it sends the body itself", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+		body := json.RawMessage(`{"model":"","state":"s","model":"m","long_context":true}`)
+
+		if _, err := client.SystemOneRaw(t.Context(), body); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		direct := transport.lastBody()
+
+		prepared, err := client.PrepareRaw(body)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := client.SystemOneRaw(t.Context(), prepared); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if transport.lastBody() != direct || direct != `{"state":"s","model":"m"}` {
+			t.Errorf("sent %s then %s, want both {\"state\":\"s\",\"model\":\"m\"}", direct, transport.lastBody())
+		}
+	})
 
 	t.Run("should not write long context through the caller's options", func(t *testing.T) {
 		t.Parallel()
@@ -3157,99 +3188,6 @@ func TestMarshalBody(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMarshalQuestionsBody(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		req  onesie.Request
-		want string
-	}{
-		{
-			name: "should write long_context when it is on",
-			req: onesie.Request{
-				Model: "m", LongContext: true,
-				Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "q"}}},
-			},
-			want: `{"model":"m","questions":{"q":{"type":"noul","instructions":"q"}},"long_context":true}`,
-		},
-		{
-			name: "should omit the state entirely",
-			req: onesie.Request{
-				State: "ignored",
-				Model: "onesie-1.13.0",
-				Questions: onesie.Questions{
-					{ID: "urgent", Question: onesie.Noul{Instructions: "q"}},
-				},
-			},
-			want: `{"model":"onesie-1.13.0","questions":` +
-				`{"urgent":{"type":"noul","instructions":"q"}}}`,
-		},
-		{
-			name: "should keep the questions in slice order",
-			req: onesie.Request{
-				Model: "m",
-				Questions: onesie.Questions{
-					{ID: "zebra", Question: onesie.Noul{Instructions: "z"}},
-					{ID: "alpha", Question: onesie.Noul{Instructions: "a"}},
-				},
-			},
-			want: `{"model":"m","questions":` +
-				`{"zebra":{"type":"noul","instructions":"z"},` +
-				`"alpha":{"type":"noul","instructions":"a"}}}`,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, err := onesie.MarshalQuestionsBody(tc.req)
-			if err != nil {
-				t.Fatalf("MarshalQuestionsBody: %v", err)
-			}
-
-			if string(got) != tc.want {
-				t.Errorf("MarshalQuestionsBody = %s, want %s", got, tc.want)
-			}
-		})
-	}
-
-	t.Run("should agree with MarshalBody on every field but the state", func(t *testing.T) {
-		t.Parallel()
-
-		req := onesie.Request{
-			State: "s",
-			Model: "onesie-1.13.0",
-			Questions: onesie.Questions{
-				{ID: "urgent", Question: onesie.Noul{Instructions: "q"}},
-			},
-		}
-
-		full, err := onesie.MarshalBody(req)
-		if err != nil {
-			t.Fatalf("MarshalBody: %v", err)
-		}
-
-		const prefix = `{"state":"s",`
-
-		if !strings.HasPrefix(string(full), prefix) {
-			t.Fatalf("MarshalBody = %s, want it to open with %s", full, prefix)
-		}
-
-		want := "{" + string(full)[len(prefix):]
-
-		got, err := onesie.MarshalQuestionsBody(req)
-		if err != nil {
-			t.Fatalf("MarshalQuestionsBody: %v", err)
-		}
-
-		if string(got) != want {
-			t.Errorf("MarshalQuestionsBody = %s, want %s", got, want)
-		}
-	})
 }
 
 func TestProviderResolveModel(t *testing.T) {

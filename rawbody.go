@@ -3,24 +3,91 @@ package onesie
 import (
 	"encoding/json"
 	"encoding/json/jsontext"
+	"net/http"
 	"slices"
 	"strings"
 )
 
-// PrepareRawBody fills an absent, null or blank last model key with defaultModel, as SystemOneRaw does first.
-// longContext sets long_context true for a printed body fed back in, which SystemOneRaw sends as a header.
-func PrepareRawBody(body json.RawMessage, defaultModel string, longContext bool) json.RawMessage {
-	prepared := fillModel(parseBody(body), defaultModel)
-	if longContext {
-		prepared = setLongContext(prepared)
+// PrepareRaw returns body as SystemOneRaw sees it before provider encoding, refusing what a send
+// refuses. Repeated keys resolve to the last, a blank model to defaultModel, WithLongContext to long_context.
+func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...RequestOption) (json.RawMessage, error) {
+	if err := p.check(); err != nil {
+		return nil, err
 	}
 
-	out, err := prepared.bytes()
+	cfg, err := applyOptions(requestConfig{header: http.Header{}}, opts)
 	if err != nil {
-		return body
+		return nil, err
 	}
 
-	return out
+	prepared, err := p.prepare(body, defaultModel, cfg.longContext)
+	if err != nil {
+		return nil, err
+	}
+
+	return prepared.body.bytes()
+}
+
+func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (preparedBody, error) {
+	model := orDefault(strings.TrimSpace(defaultModel), p.defaultModel)
+	b := fillModel(lastWins(parseBody(raw)), model)
+
+	bodyLongContext, err := longContextOf(b.members)
+	if err != nil {
+		return preparedBody{}, err
+	}
+
+	if longContext {
+		b = setLongContext(b)
+	}
+
+	scan := scanMembers(b.members)
+	model = orDefault(scan.model, model)
+	via := p.route(model)
+	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext || bodyLongContext}
+
+	if needs.images || needs.box {
+		if fault := checkBodyImages(b.members); fault != nil {
+			return preparedBody{}, fault
+		}
+	}
+
+	if refusal := via.refuse(p.name, model, needs); refusal != nil {
+		return preparedBody{}, refusal
+	}
+
+	return preparedBody{body: b, via: via, needs: needs}, nil
+}
+
+type preparedBody struct {
+	body  jsonBody
+	via   route
+	needs capabilities
+}
+
+func lastWins(b jsonBody) jsonBody {
+	if !b.object {
+		return b
+	}
+
+	last := make(map[string]int, len(b.members))
+	for i, m := range b.members {
+		last[m.name] = i
+	}
+
+	if len(last) == len(b.members) {
+		return b
+	}
+
+	kept := make([]member, 0, len(last))
+
+	for i, m := range b.members {
+		if last[m.name] == i {
+			kept = append(kept, m)
+		}
+	}
+
+	return b.with(kept)
 }
 
 func fillModel(b jsonBody, model string) jsonBody {

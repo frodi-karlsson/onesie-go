@@ -293,8 +293,7 @@ func withUsage(err error, usage *Usage) error {
 	return err
 }
 
-// MarshalBody encodes a request exactly as SystemOne sends it. A printed body and a sent body come
-// from this one encoder, which is what makes a printed body safe to replay.
+// MarshalBody encodes a request as a raw body SystemOneRaw accepts.
 func MarshalBody(req Request) ([]byte, error) {
 	return json.Marshal(struct {
 		State       any       `json:"state"`
@@ -303,16 +302,6 @@ func MarshalBody(req Request) ([]byte, error) {
 		LongContext bool      `json:"long_context,omitempty"`
 		Assets      Assets    `json:"assets,omitempty"`
 	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
-}
-
-// MarshalQuestionsBody encodes a request with no state, the body a question only print produces and
-// -f accepts. It is a second encoder because a null or empty state is legitimate.
-func MarshalQuestionsBody(req Request) ([]byte, error) {
-	return json.Marshal(struct {
-		Model       string    `json:"model"`
-		Questions   Questions `json:"questions"`
-		LongContext bool      `json:"long_context,omitempty"`
-	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext})
 }
 
 // Request is one evaluation. All questions see the same state and are answered independently.
@@ -326,8 +315,8 @@ type Request struct {
 	LongContext bool
 }
 
-// SystemOneRaw sends a prepared request body through the SystemOne retry loop and returns the
-// response body unchanged. The body goes through PrepareRawBody with the default model first.
+// SystemOneRaw prepares body as PrepareRaw does, sends it through the SystemOne retry loop and returns
+// the response body unchanged. A body PrepareRaw already prepared is sent the same.
 func (c *Client) SystemOneRaw(
 	ctx context.Context,
 	body json.RawMessage,
@@ -338,7 +327,12 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	sent, err := c.prepareRaw(body, cfg.longContext)
+	prepared, err := c.provider.prepare(body, c.defaultModel, cfg.longContext)
+	if err != nil {
+		return nil, err
+	}
+
+	sent, err := encodeBody(prepared.via, prepared.needs, withoutLongContext(prepared.body))
 	if err != nil {
 		return nil, err
 	}
@@ -359,28 +353,9 @@ func (c *Client) SystemOneRaw(
 	return decoded, nil
 }
 
-func (c *Client) prepareRaw(body json.RawMessage, longContext bool) (encoded, error) {
-	parsed, bodyLongContext, err := takeLongContext(fillModel(parseBody(body), c.defaultModel))
-	if err != nil {
-		return encoded{}, err
-	}
-
-	scan := scanMembers(parsed.members)
-	model := orDefault(scan.model, c.defaultModel)
-	via := c.provider.route(model)
-	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext || bodyLongContext}
-
-	if needs.images || needs.box {
-		if fault := checkBodyImages(parsed.members); fault != nil {
-			return encoded{}, fault
-		}
-	}
-
-	if refusal := via.refuse(c.provider.name, model, needs); refusal != nil {
-		return encoded{}, refusal
-	}
-
-	return encodeBody(via, needs, parsed)
+// PrepareRaw is Provider.PrepareRaw with the client's provider and default model.
+func (c *Client) PrepareRaw(body json.RawMessage, opts ...RequestOption) (json.RawMessage, error) {
+	return c.provider.PrepareRaw(body, c.defaultModel, opts...)
 }
 
 // ListModels reports the model names this account may send.

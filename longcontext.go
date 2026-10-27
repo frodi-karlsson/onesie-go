@@ -2,17 +2,12 @@ package onesie
 
 import "slices"
 
-func takeLongContext(b jsonBody) (jsonBody, bool, error) {
+func withoutLongContext(b jsonBody) jsonBody {
 	if !b.object || !slices.ContainsFunc(b.members, named("long_context")) {
-		return b, false, nil
+		return b
 	}
 
-	on, err := longContextOf(b.members)
-	if err != nil {
-		return jsonBody{}, false, err
-	}
-
-	return b.with(slices.DeleteFunc(slices.Clone(b.members), named("long_context"))), on, nil
+	return b.with(slices.DeleteFunc(slices.Clone(b.members), named("long_context")))
 }
 
 func longContextOf(members []member) (bool, error) {
