@@ -13,52 +13,52 @@ import (
 
 var rawOptions = []jsontext.Options{jsontext.AllowDuplicateNames(true), jsontext.PreserveRawStrings(true)}
 
-func inlineParts(body []byte) ([]byte, []RequestOption, error) {
+func inlineParts(body []byte) ([]byte, error) {
 	members, err := readMembers(body)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	urls, err := dataURLsOf(members)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	parts, err := partsFrom(urls)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	rewriter := &inliner{refs: slices.Sorted(maps.Keys(urls)), used: map[string]bool{}, render: partsRenderer(parts)}
 
 	rewritten, err := rewriter.rewrite(members, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if len(rewritten) > MaxBodyBytes {
-		return nil, nil, &ValidationError{Message: fmt.Sprintf(
+		return nil, &ValidationError{Message: fmt.Sprintf(
 			"the request body is %d bytes once each image is placed where it is named, and the API takes "+
 				"at most %d. This provider takes an image once per place it is named, so name each image once",
 			len(rewritten), MaxBodyBytes)}
 	}
 
-	return rewritten, nil, nil
+	return rewritten, nil
 }
 
-func assetsToImages(body []byte) ([]byte, []RequestOption, error) {
+func assetsToImages(body []byte) ([]byte, error) {
 	members, err := readMembers(body)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if slices.ContainsFunc(members, func(m member) bool { return m.name == "images" }) {
-		return nil, nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
+		return nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
 	}
 
 	urls, err := dataURLsOf(members)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	rewriter := &inliner{refs: slices.Sorted(maps.Keys(urls)), used: map[string]bool{}}
@@ -82,10 +82,10 @@ func assetsToImages(body []byte) ([]byte, []RequestOption, error) {
 		return enc.WriteValue(images)
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return rewritten, nil, nil
+	return rewritten, nil
 }
 
 func (r *inliner) rewrite(members []member, last func(*jsontext.Encoder) error) ([]byte, error) {

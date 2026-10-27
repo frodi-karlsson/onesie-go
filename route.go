@@ -1,11 +1,12 @@
 package onesie
 
 type route struct {
-	path   string
-	takes  capabilities
-	images func(body []byte) ([]byte, []RequestOption, error)
-	encode func(body []byte) ([]byte, error)
-	decode func(body []byte) ([]byte, error)
+	path         string
+	takes        capabilities
+	images       func(body []byte) ([]byte, error)
+	imagesHeader bool
+	encode       func(body []byte) ([]byte, error)
+	decode       func(body []byte) ([]byte, error)
 }
 
 func (r route) refuse(provider, model string, needs capabilities) error {

@@ -23,7 +23,6 @@ func cloudflareRoute(model string) route {
 	return route{
 		path:   "/run",
 		takes:  capabilities{images: true},
-		images: keepAssets,
 		encode: envelope(model),
 		decode: unwrapResult,
 	}
@@ -38,10 +37,6 @@ func clefWireID(model string) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func keepAssets(body []byte) ([]byte, []RequestOption, error) {
-	return body, nil, nil
 }
 
 func cloudflareBaseURL(account string) string {

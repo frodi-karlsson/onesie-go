@@ -76,11 +76,11 @@ func TypeSafe() Provider {
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
 		routeFor: oneRoute(route{
-			path:   systemOnePath,
-			takes:  takesEverything(),
-			images: assetsMap,
-			encode: identity,
-			decode: identity,
+			path:         systemOnePath,
+			takes:        takesEverything(),
+			imagesHeader: true,
+			encode:       identity,
+			decode:       identity,
 		}),
 	}
 }

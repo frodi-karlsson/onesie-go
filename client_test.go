@@ -1932,24 +1932,6 @@ func TestClientSystemOne(t *testing.T) {
 			t.Errorf("%s = %q on the second call, want it absent", onesie.HeaderLongContext, got)
 		}
 	})
-
-	t.Run("should send one long context header beside a client wide one", func(t *testing.T) {
-		t.Parallel()
-
-		transport := &recordingTransport{body: shortAnswer}
-		client, _ := newTestClient(t, "https://api.example",
-			onesie.WithHeader(onesie.HeaderLongContext, "true"),
-			onesie.WithHTTPClient(&http.Client{Transport: transport}))
-
-		if _, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()},
-			onesie.WithLongContext()); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if got := transport.last().Header.Values(onesie.HeaderLongContext); len(got) != 1 {
-			t.Errorf("%s = %v, want one value", onesie.HeaderLongContext, got)
-		}
-	})
 }
 
 func TestClientListModels(t *testing.T) {

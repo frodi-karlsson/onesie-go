@@ -41,12 +41,12 @@ func (p Provider) Encode(req Request) ([]byte, error) {
 		return nil, err
 	}
 
-	_, body, _, err := encodeRequest(p, req, false)
+	sent, err := encodeRequest(p, req, false)
 
-	return body, err
+	return sent.body, err
 }
 
-func encodeRequest(p Provider, req Request, headerLongContext bool) (route, []byte, []RequestOption, error) {
+func encodeRequest(p Provider, req Request, longContext bool) (encoded, error) {
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
 		model = p.defaultModel
@@ -54,48 +54,46 @@ func encodeRequest(p Provider, req Request, headerLongContext bool) (route, []by
 
 	via := p.route(model)
 	needs := requestNeeds(req)
-	needs.longContext = needs.longContext || headerLongContext
+	needs.longContext = needs.longContext || longContext
 
 	if err := via.refuse(p.name, model, needs); err != nil {
-		return route{}, nil, nil, err
+		return encoded{}, err
 	}
 
 	// Long context travels as a header, so the body never carries it.
 	body, err := MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
 	if err != nil {
-		return route{}, nil, nil, err
+		return encoded{}, unencodable(err)
 	}
 
-	sent, extra, err := encodeBody(via, needs, body)
-	if err != nil {
-		return route{}, nil, nil, err
-	}
-
-	return via, sent, extra, nil
+	return encodeBody(via, needs, body)
 }
 
-func encodeBody(via route, needs capabilities, body []byte) ([]byte, []RequestOption, error) {
-	var extra []RequestOption
+type encoded struct {
+	via    route
+	body   []byte
+	needs  capabilities
+	images bool
+}
 
-	if needs.images || needs.box {
-		sent, added, err := via.images(body)
+func encodeBody(via route, needs capabilities, body []byte) (encoded, error) {
+	withImages := needs.images || needs.box
+
+	if withImages && via.images != nil {
+		sent, err := via.images(body)
 		if err != nil {
-			return nil, nil, err
+			return encoded{}, err
 		}
 
-		body, extra = sent, added
+		body = sent
 	}
 
-	encoded, err := via.encode(body)
+	sent, err := via.encode(body)
 	if err != nil {
-		return nil, nil, err
+		return encoded{}, err
 	}
 
-	return encoded, extra, nil
-}
-
-func assetsMap(body []byte) ([]byte, []RequestOption, error) {
-	return body, []RequestOption{WithRequestHeader(HeaderImages, "true")}, nil
+	return encoded{via: via, body: sent, needs: needs, images: withImages && via.imagesHeader}, nil
 }
 
 func requestNeeds(req Request) capabilities {

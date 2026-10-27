@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -203,9 +202,14 @@ func (c *Client) checkKey(ctx context.Context, opts []RequestOption) error {
 
 		return err
 	case keyCheckByEndpoint:
+		cfg, err := c.resolve(opts)
+		if err != nil {
+			return err
+		}
+
 		var discarded json.RawMessage
 
-		_, err := c.do(ctx, http.MethodGet, check.path, nil, &discarded, identity, opts...)
+		_, err = c.do(ctx, cfg, call{method: http.MethodGet, path: check.path, out: &discarded, decode: identity})
 
 		return err
 	default:
@@ -216,29 +220,31 @@ func (c *Client) checkKey(ctx context.Context, opts []RequestOption) error {
 // SystemOne answers named questions about a state. Every question is evaluated in parallel and in
 // isolation, so batching is cheaper than one call per question.
 func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOption) (*Result, error) {
+	cfg, err := c.resolve(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	req.Model = strings.TrimSpace(req.Model)
 	if req.Model == "" {
 		req.Model = c.defaultModel
 	}
 
-	if err := ValidateRequest(req); err != nil {
+	if err = ValidateRequest(req); err != nil {
 		return nil, err
 	}
 
-	via, body, extra, err := encodeRequest(c.provider, req, c.sendsLongContext(opts))
+	sent, err := encodeRequest(c.provider, req, cfg.longContext)
 	if err != nil {
 		return nil, err
 	}
 
-	// Cloned, so the caller's slice is never written through.
-	opts = append(slices.Clone(opts), extra...)
-	if req.LongContext {
-		opts = append(opts, WithLongContext())
-	}
-
+	cfg.longContext, cfg.images = sent.needs.longContext, sent.images
 	result := &Result{}
 
-	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(body), result, via.decode, opts...)
+	res, err := c.do(ctx, cfg, call{
+		method: http.MethodPost, path: sent.via.path, payload: sent.body, out: result, decode: sent.via.decode,
+	})
 	if err != nil {
 		return nil, withUsage(err, &result.Usage)
 	}
@@ -258,6 +264,23 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 	}
 
 	return result, nil
+}
+
+func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
+	return applyOptions(requestConfig{
+		attemptTimeout: c.attemptTimeout,
+		totalTimeout:   c.totalTimeout,
+		retry:          c.retry,
+		header:         c.header.Clone(),
+	}, opts)
+}
+
+type call struct {
+	method  string
+	path    string
+	payload []byte
+	out     any
+	decode  func([]byte) ([]byte, error)
 }
 
 func withUsage(err error, usage *Usage) error {
@@ -314,18 +337,25 @@ func (c *Client) SystemOneRaw(
 	body json.RawMessage,
 	opts ...RequestOption,
 ) (json.RawMessage, error) {
-	via, prepared, sendOpts, err := c.prepareRaw(body, opts)
+	cfg, err := c.resolve(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(prepared), nil, identity, sendOpts...)
+	sent, err := c.prepareRaw(body, cfg.longContext)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg.longContext, cfg.images = sent.needs.longContext, sent.images
+
+	res, err := c.do(ctx, cfg, call{method: http.MethodPost, path: sent.via.path, payload: sent.body, decode: identity})
 	if err != nil {
 		return nil, err
 	}
 
 	// Decoded here, not in do, so a body that is empty or not JSON comes back as it is.
-	decoded, err := via.decode(res.body)
+	decoded, err := sent.via.decode(res.body)
 	if err != nil {
 		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
@@ -333,10 +363,10 @@ func (c *Client) SystemOneRaw(
 	return decoded, nil
 }
 
-func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, []byte, []RequestOption, error) {
-	trimmed, longContext, err := takeLongContext(PrepareRawBody(body, c.defaultModel, false))
+func (c *Client) prepareRaw(body json.RawMessage, longContext bool) (encoded, error) {
+	trimmed, bodyLongContext, err := takeLongContext(PrepareRawBody(body, c.defaultModel, false))
 	if err != nil {
-		return route{}, nil, nil, err
+		return encoded{}, err
 	}
 
 	scan := scanBody(trimmed)
@@ -347,51 +377,31 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, 
 	}
 
 	via := c.provider.route(model)
-	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext}
+	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext || bodyLongContext}
 
 	if needs.images || needs.box {
 		if fault := checkBodyImages(trimmed); fault != nil {
-			return route{}, nil, nil, fault
+			return encoded{}, fault
 		}
 	}
 
-	needs.longContext = needs.longContext || c.sendsLongContext(opts)
 	if refusal := via.refuse(c.provider.name, model, needs); refusal != nil {
-		return route{}, nil, nil, refusal
+		return encoded{}, refusal
 	}
 
-	sent, extra, err := encodeBody(via, needs, trimmed)
-	if err != nil {
-		return route{}, nil, nil, err
-	}
-
-	// Cloned, so the caller's slice is never written through.
-	sendOpts := slices.Clone(opts)
-	if longContext {
-		sendOpts = append(sendOpts, WithLongContext())
-	}
-
-	return via, sent, append(sendOpts, extra...), nil
-}
-
-func (c *Client) sendsLongContext(opts []RequestOption) bool {
-	cfg := requestConfig{header: c.header.Clone()}
-
-	for _, opt := range opts {
-		if err := opt(&cfg); err != nil {
-			// Not a refusal. do applies the options again and reports the error, as it always has.
-			return false
-		}
-	}
-
-	return cfg.header.Get(HeaderLongContext) == "true"
+	return encodeBody(via, needs, trimmed)
 }
 
 // ListModels reports the model names this account may send.
 func (c *Client) ListModels(ctx context.Context, opts ...RequestOption) ([]ModelCard, error) {
+	cfg, err := c.resolve(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	var raw json.RawMessage
 
-	res, err := c.do(ctx, http.MethodGet, c.provider.modelsPath, nil, &raw, identity, opts...)
+	res, err := c.do(ctx, cfg, call{method: http.MethodGet, path: c.provider.modelsPath, out: &raw, decode: identity})
 	if err != nil {
 		return nil, err
 	}
@@ -411,26 +421,7 @@ type ModelCard struct {
 	ReleaseDate string `json:"release_date"`
 }
 
-func (c *Client) do(
-	ctx context.Context,
-	method, path string,
-	body, out any,
-	decode func([]byte) ([]byte, error),
-	opts ...RequestOption,
-) (*rawResponse, error) {
-	cfg := requestConfig{
-		attemptTimeout: c.attemptTimeout,
-		totalTimeout:   c.totalTimeout,
-		retry:          c.retry,
-		header:         c.header.Clone(),
-	}
-
-	for _, opt := range opts {
-		if err := opt(&cfg); err != nil {
-			return nil, err
-		}
-	}
-
+func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawResponse, error) {
 	if cfg.totalTimeout > 0 {
 		var cancel context.CancelFunc
 
@@ -440,35 +431,26 @@ func (c *Client) do(
 
 	var payload []byte
 
-	switch prepared := body.(type) {
-	case nil:
-	case json.RawMessage:
-		// Compacted rather than re-marshalled. json.Marshal HTML escapes, and a caller that
-		// prepared its own body is entitled to have it forwarded as written.
+	if req.payload != nil {
+		// Compacted rather than re-marshalled. json.Marshal HTML escapes, and a caller that prepared
+		// its own body is entitled to have it forwarded as written.
 		var flat bytes.Buffer
 
-		if err := json.Compact(&flat, prepared); err != nil {
+		if err := json.Compact(&flat, req.payload); err != nil {
 			return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error()}
 		}
 
 		payload = flat.Bytes()
-	default:
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return nil, unencodable(err)
-		}
-
-		payload = encoded
 	}
 
 	// Numbered so concurrent requests, and the attempts within one, can be told apart in the logs.
-	tag := fmt.Sprintf("#%d %s %s", c.requests.Add(1), method, path)
-	url := c.baseURL + path
+	tag := fmt.Sprintf("#%d %s %s", c.requests.Add(1), req.method, req.path)
+	url := c.baseURL + req.path
 
 	for attempt := 0; ; attempt++ {
 		retriesLeft := cfg.retry.MaxRetries - attempt
 
-		res, err := c.attempt(ctx, tag, attempt, method, url, payload, cfg)
+		res, err := c.attempt(ctx, tag, attempt, req.method, url, payload, cfg)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, interrupted(ctx, cfg.totalTimeout)
@@ -486,7 +468,7 @@ func (c *Client) do(
 		}
 
 		if res.status >= 200 && res.status < 300 {
-			return res, decodeInto(res, url, out, decode)
+			return res, decodeInto(res, url, req.out, req.decode)
 		}
 
 		apiErr := newAPIError(res.status, res.header, c.provider.requestIDHeader, res.body, c.clock.Now())
@@ -615,6 +597,14 @@ func (c *Client) setHeaders(req *http.Request, cfg requestConfig, attempt int, h
 		for _, value := range values {
 			req.Header.Add(name, value)
 		}
+	}
+
+	if cfg.images {
+		req.Header.Set(HeaderImages, "true")
+	}
+
+	if cfg.longContext {
+		req.Header.Set(HeaderLongContext, "true")
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)

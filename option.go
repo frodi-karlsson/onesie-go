@@ -19,8 +19,7 @@ const (
 
 	// HeaderImages turns on images and Box questions. SystemOne sends it on a request that needs it.
 	HeaderImages = "TypeSafe-Danger-Zone-Images"
-	// HeaderLongContext raises the context limits. Set Request.LongContext or pass WithLongContext
-	// rather than sending it by hand.
+	// HeaderLongContext raises the context limits. WithLongContext sets it, and WithHeader refuses it.
 	HeaderLongContext = "TypeSafe-Danger-Zone-Long-Context"
 )
 
@@ -187,10 +186,14 @@ func WithMaxResponseBytes(n int64) Option {
 	}
 }
 
-// WithHeader adds a header sent with every request. It cannot override the headers this client
-// sets itself, such as Authorization.
+// WithHeader adds a header sent with every request. It cannot override the headers this client sets
+// itself, and refuses HeaderLongContext, which WithLongContext sets.
 func WithHeader(name, value string) Option {
 	return func(c *Client) error {
+		if err := refuseLongContextHeader(name); err != nil {
+			return err
+		}
+
 		c.header.Set(name, value)
 
 		return nil
@@ -296,18 +299,34 @@ func WithRequestRetry(p RetryPolicy) RequestOption {
 }
 
 // WithRequestHeader adds a header to one call. It cannot override the headers this client sets
-// itself, such as Authorization.
+// itself, and refuses HeaderLongContext, which WithLongContext sets.
 func WithRequestHeader(name, value string) RequestOption {
 	return func(rc *requestConfig) error {
+		if err := refuseLongContextHeader(name); err != nil {
+			return err
+		}
+
 		rc.header.Set(name, value)
 
 		return nil
 	}
 }
 
-// WithLongContext raises the context limits for one call, through HeaderLongContext.
+// WithLongContext raises the context limits for one call.
 func WithLongContext() RequestOption {
-	return WithRequestHeader(HeaderLongContext, "true")
+	return func(rc *requestConfig) error {
+		rc.longContext = true
+
+		return nil
+	}
+}
+
+func refuseLongContextHeader(name string) error {
+	if http.CanonicalHeaderKey(name) != http.CanonicalHeaderKey(HeaderLongContext) {
+		return nil
+	}
+
+	return &ValidationError{Message: "the " + HeaderLongContext + " header is set by WithLongContext, not by hand"}
 }
 
 // RequestOption overrides client settings for one call.
@@ -318,6 +337,18 @@ type requestConfig struct {
 	totalTimeout   time.Duration
 	retry          RetryPolicy
 	header         http.Header
+	longContext    bool
+	images         bool
+}
+
+func applyOptions(cfg requestConfig, opts []RequestOption) (requestConfig, error) {
+	for _, opt := range opts {
+		if err := opt(&cfg); err != nil {
+			return requestConfig{}, err
+		}
+	}
+
+	return cfg, nil
 }
 
 func orEnv(value string, lookup func(string) (string, bool), name string) string {
