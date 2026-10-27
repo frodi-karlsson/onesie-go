@@ -156,6 +156,21 @@ func TestAssetsToImages(t *testing.T) {
 				`"images":["data:image/png;base64,AQ=="]}`,
 		},
 		{
+			name: "should read a format by its exact name and the last of repeated ones",
+			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"jpg","format":"png","Format":"jpg","data_base64":"AQ=="}}}`,
+			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
+		},
+		{
+			name: "should read the last of repeated assets whole",
+			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"jpg","data_base64":"Ag=="},"r1":{"format":"png","data_base64":"AQ=="}}}`,
+			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
+		},
+		{
+			name: "should read data by its exact name",
+			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"png","data_base64":"AQ==","Data_Base64":"Ag=="}}}`,
+			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
+		},
+		{
 			name:    "should refuse a body with both assets and images",
 			body:    `{"state":"r1","questions":{},"images":["data:image/png;base64,AQ=="],"assets":{` + r1 + `}}`,
 			wantErr: "onesie: a body for clef carries assets or images, not both",

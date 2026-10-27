@@ -257,6 +257,10 @@ func TestValidateQuestions(t *testing.T) {
 			wantErr:   `onesie: choice question "pick" has 256 options, and at most 255 are allowed`,
 		},
 		{
+			name:      "should count a repeated option name once, as the body keeps one",
+			questions: onesie.Questions{{ID: "pick", Question: onesie.Choice{Criteria: append(options(onesie.MaxChoiceOptions), onesie.NamedCriterion{Name: "option 0"})}}},
+		},
+		{
 			name:      "should accept a score at the levels limit",
 			questions: onesie.Questions{{ID: "rate", Question: onesie.Score{Criteria: levels(onesie.MaxScoreLevels)}}},
 		},

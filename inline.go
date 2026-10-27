@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -104,16 +105,13 @@ func dataURLsOf(members []member) (map[string]string, error) {
 			continue
 		}
 
-		var assets map[string]struct {
-			Format any `json:"format"`
-			Data   any `json:"data_base64"`
-		}
-		if err := json.Unmarshal(m.value, &assets); err != nil {
-			return nil, &ValidationError{Message: "assets must be an object of images"}
+		assets, err := readAssets(m.value)
+		if err != nil {
+			return nil, validationOr(err, "assets must be an object of images")
 		}
 
-		for ref, asset := range assets {
-			url, err := dataURLOf(ref, asset.Format, asset.Data)
+		for _, ref := range slices.Sorted(maps.Keys(assets)) {
+			url, err := dataURLOf(ref, assets[ref])
 			if err != nil {
 				return nil, err
 			}
@@ -125,31 +123,31 @@ func dataURLsOf(members []member) (map[string]string, error) {
 	return urls, nil
 }
 
-func dataURLOf(ref string, format, data any) (string, error) {
-	formatText := textOf(format)
-	if fault := checkFormat(ref, formatText); fault != nil {
+func validationOr(err error, message string) error {
+	var validation *ValidationError
+	if errors.As(err, &validation) {
+		return err
+	}
+
+	return &ValidationError{Message: message}
+}
+
+func dataURLOf(ref string, asset rawAsset) (string, error) {
+	if fault := asset.fault(ref); fault != nil {
 		return "", fault
 	}
 
-	encoded, isText := data.(string)
-	if !isText {
-		return "", &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}
+	encoded, err := textOf(asset.data)
+	if err != nil {
+		return "", validationOr(err, fmt.Sprintf("asset '%s' needs data_base64 as a string", ref))
 	}
 
 	mime := "image/png"
-	if wireFormat(formatText) == "jpg" {
+	if wireFormat(asset.format) == "jpg" {
 		mime = "image/jpeg"
 	}
 
 	return "data:" + mime + ";base64," + encoded, nil
-}
-
-func textOf(value any) string {
-	if text, isText := value.(string); isText {
-		return text
-	}
-
-	return ""
 }
 
 func partsFrom(urls map[string]string) (map[string]jsontext.Value, error) {

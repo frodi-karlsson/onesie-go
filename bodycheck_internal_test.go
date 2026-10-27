@@ -36,6 +36,25 @@ func TestCheckBodyImages(t *testing.T) {
 			wantErr: "image 'img' has format '', and an image must be png or jpg",
 		},
 		{
+			name:    "should read the last of repeated formats, as a send does",
+			body:    `{"state":"img","questions":{},"assets":{"img":{"format":"png","format":1,"data_base64":"AQ=="}}}`,
+			wantErr: "image 'img' has format '', and an image must be png or jpg",
+		},
+		{
+			name: "should accept a last format that is good after one that is not",
+			body: `{"state":"img","questions":{},"assets":{"img":{"format":1,"format":"png","data_base64":"AQ=="}}}`,
+		},
+		{
+			name:    "should read the last of repeated data, as a send does",
+			body:    `{"state":"img","questions":{},"assets":{"img":{"format":"png","data_base64":"AQ==","data_base64":1}}}`,
+			wantErr: "asset 'img' needs data_base64 as a string",
+		},
+		{
+			name:    "should read the last of repeated assets whole",
+			body:    `{"state":"img","questions":{},"assets":{"img":` + asset + `,"img":{"format":"png"}}}`,
+			wantErr: "asset 'img' needs data_base64 as a string",
+		},
+		{
 			name:    "should refuse an asset named only in a name",
 			body:    `{"state":{"img":"x"},"questions":{},"assets":{"img":` + asset + `}}`,
 			wantErr: "asset 'img' is not referenced in the state or the questions, and the API refuses that",

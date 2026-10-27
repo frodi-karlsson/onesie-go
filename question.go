@@ -140,11 +140,21 @@ func (q Choice) MarshalJSON() ([]byte, error) {
 }
 
 func (q Choice) validate(name string) error {
-	if len(q.Criteria) > MaxChoiceOptions {
-		return tooManyOptions(name, len(q.Criteria))
+	if count := distinctNames(q.Criteria); count > MaxChoiceOptions {
+		return tooManyOptions(name, count)
 	}
 
 	return nil
+}
+
+func distinctNames(criteria Criteria) int {
+	// The criteria are written as a JSON object, so a repeated name is one option on the wire.
+	names := make(map[string]struct{}, len(criteria))
+	for _, named := range criteria {
+		names[named.Name] = struct{}{}
+	}
+
+	return len(names)
 }
 
 // Criteria is an ordered set of choice options, kept as a slice so a body keeps its written order.

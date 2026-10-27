@@ -85,6 +85,11 @@ func TestProviderPrepareRaw(t *testing.T) {
 			body:    `{"state":"s","questions":{"pick":{"type":"choice","criteria":` + manyOptions(256) + `}}}`,
 			wantErr: `onesie: choice question "pick" has 256 options, and at most 255 are allowed`,
 		},
+		{
+			name: "should count a repeated raw option name once",
+			body: `{"model":"m","questions":{"pick":{"type":"choice","criteria":` + manyOptions(255)[:len(manyOptions(255))-1] + `,"option 0":"y"}}}}`,
+			want: `{"model":"m","questions":{"pick":{"type":"choice","criteria":` + manyOptions(255)[:len(manyOptions(255))-1] + `,"option 0":"y"}}}}`,
+		},
 		{name: "should refuse a failing option", body: `{}`, opts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(0)}, wantErr: "onesie: attempt timeout must be positive"},
 	}
 

@@ -31,14 +31,13 @@ func scanBodyImages(members []member) error {
 	)
 
 	for _, m := range members {
-		// A bytes.Buffer, which jsontext parses in place, so no image is copied.
 		dec := jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)
 
 		var err error
 
 		switch m.name {
 		case "assets":
-			faults, err = assetFaults(dec)
+			faults, err = assetFaults(m.value)
 		case "state":
 			err = collectTexts(dec, &texts)
 		case "questions":
@@ -65,7 +64,23 @@ func scanBodyImages(members []member) error {
 	return nil
 }
 
-func assetFaults(dec *jsontext.Decoder) (map[string]*ValidationError, error) {
+func assetFaults(value jsontext.Value) (map[string]*ValidationError, error) {
+	assets, err := readAssets(value)
+	if err != nil {
+		return nil, err
+	}
+
+	faults := make(map[string]*ValidationError, len(assets))
+	for ref, asset := range assets {
+		faults[ref] = asset.fault(ref)
+	}
+
+	return faults, nil
+}
+
+func readAssets(value jsontext.Value) (map[string]rawAsset, error) {
+	// A bytes.Buffer, which jsontext parses in place, so no image is copied.
+	dec := jsontext.NewDecoder(bytes.NewBuffer(value), rawOptions()...)
 	if dec.PeekKind() != '{' {
 		return nil, &ValidationError{Message: "assets must be an object of images"}
 	}
@@ -74,7 +89,7 @@ func assetFaults(dec *jsontext.Decoder) (map[string]*ValidationError, error) {
 		return nil, err
 	}
 
-	faults := map[string]*ValidationError{}
+	assets := map[string]rawAsset{}
 
 	for dec.PeekKind() != '}' {
 		name, err := dec.ReadToken()
@@ -84,71 +99,88 @@ func assetFaults(dec *jsontext.Decoder) (map[string]*ValidationError, error) {
 
 		ref := name.String()
 
-		fault, err := assetFault(dec, ref)
+		asset, err := readAsset(dec, value)
 		if err != nil {
 			return nil, err
 		}
 
-		faults[ref] = fault
+		assets[ref] = asset
 	}
 
 	_, err := dec.ReadToken()
 
-	return faults, err
+	return assets, err
 }
 
-func assetFault(dec *jsontext.Decoder, ref string) (*ValidationError, error) {
+func readAsset(dec *jsontext.Decoder, value []byte) (rawAsset, error) {
 	if dec.PeekKind() != '{' {
-		return nil, &ValidationError{Message: "assets must be an object of images"}
+		return rawAsset{}, &ValidationError{Message: "assets must be an object of images"}
 	}
 
 	if _, err := dec.ReadToken(); err != nil {
-		return nil, err
+		return rawAsset{}, err
 	}
 
-	format, hasData := "", false
+	var asset rawAsset
 
 	for dec.PeekKind() != '}' {
 		name, err := dec.ReadToken()
 		if err != nil {
-			return nil, err
+			return rawAsset{}, err
 		}
 
-		switch name.String() {
+		field, isText, start := name.String(), dec.PeekKind() == '"', dec.InputOffset()
+
+		if err = dec.SkipValue(); err != nil {
+			return rawAsset{}, err
+		}
+
+		// Matched exactly, and the last of a repeated name wins, as the API reads a body.
+		switch raw := valueAt(value, start, dec.InputOffset()); field {
 		case "format":
-			if dec.PeekKind() == '"' {
-				value, readErr := dec.ReadToken()
-				if readErr != nil {
-					return nil, readErr
-				}
-
-				format = value.String()
-
-				continue
+			asset.format = ""
+			if isText {
+				asset.format, err = textOf(raw)
 			}
 		case "data_base64":
-			hasData = dec.PeekKind() == '"'
+			asset.data = nil
+			if isText {
+				asset.data = raw
+			}
 		}
 
-		// Skipped rather than read, so no image is copied.
-		if err := dec.SkipValue(); err != nil {
-			return nil, err
+		if err != nil {
+			return rawAsset{}, err
 		}
 	}
 
-	if _, err := dec.ReadToken(); err != nil {
-		return nil, err
+	_, err := dec.ReadToken()
+
+	return asset, err
+}
+
+type rawAsset struct {
+	format string
+	data   jsontext.Value
+}
+
+func (a rawAsset) fault(ref string) *ValidationError {
+	if fault := checkFormat(ref, a.format); fault != nil {
+		return fault
 	}
 
-	if fault := checkFormat(ref, format); fault != nil {
-		return fault, nil
+	if a.data == nil {
+		return &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}
 	}
 
-	if !hasData {
-		return &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}, nil
-	}
+	return nil
+}
 
-	return nil, nil
+func textOf(raw jsontext.Value) (string, error) {
+	var text string
+	err := json.Unmarshal(raw, &text)
+
+	return text, err
 }
 
 func questionTexts(dec *jsontext.Decoder, texts *[]string) error {
