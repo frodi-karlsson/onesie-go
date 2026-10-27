@@ -567,11 +567,11 @@ func TestNewAPIError(t *testing.T) {
 		{name: "should read typesafe's unknown model", file: "typesafe-unknown-model.json", status: 400, via: typesafe, sentinel: ErrUnknownModel},
 		{name: "should read typesafe's context limit", file: "typesafe-context-too-long.json", status: 400, via: typesafe, sentinel: ErrContextTooLong},
 		{name: "should read typesafe's box refusal", file: "typesafe-box-not-served.json", status: 400, via: typesafe, needs: boxed, sentinel: ErrNotServed},
-		{name: "should read typesafe's count refusal", file: "typesafe-question-limit.json", status: 400, via: typesafe, sentinel: ErrQuestionLimit},
+		{name: "should read typesafe's count refusal", file: "typesafe-question-limit.json", status: 422, via: typesafe, sentinel: ErrQuestionLimit},
 		{name: "should read openrouter's unknown model", file: "openrouter-unknown-model.json", status: 400, via: openrouter, sentinel: ErrUnknownModel},
 		{name: "should read openrouter's context limit", file: "openrouter-context-too-long.json", status: 400, via: openrouter, sentinel: ErrContextTooLong},
 		{name: "should read openrouter's box refusal", file: "openrouter-box-not-served.json", status: 400, via: openrouter, needs: boxed, sentinel: ErrNotServed},
-		{name: "should read openrouter's count refusal", file: "openrouter-question-limit.json", status: 400, via: openrouter, sentinel: ErrQuestionLimit},
+		{name: "should read openrouter's count refusal", file: "openrouter-question-limit.json", status: 422, via: openrouter, sentinel: ErrQuestionLimit},
 		{name: "should read berget's unknown model", file: "berget-unknown-model.json", status: 404, via: Berget().route(bergetModel), sentinel: ErrUnknownModel},
 		{name: "should read levanto's unknown model", file: "levanto-unknown-model.json", status: 422, via: Levanto().route(levantoModel), sentinel: ErrUnknownModel},
 		{name: "should read the gateway's unknown model", file: "gateway-unknown-model.json", status: 404, via: gateway, sentinel: ErrUnknownModel},
@@ -619,7 +619,7 @@ func TestNewAPIError(t *testing.T) {
 		{name: "should not read levanto's wording as an unknown model on typesafe", file: "levanto-unknown-model.json", status: 422, via: typesafe, not: ErrUnknownModel},
 		{name: "should not read an invalid request as a box refusal without a box", file: "typesafe-box-not-served.json", status: 400, via: typesafe, not: ErrNotServed},
 		{name: "should not read an unknown model from a server error", file: "typesafe-unknown-model.json", status: 500, via: typesafe, not: ErrUnknownModel},
-		{name: "should not read typesafe's count wording on berget", file: "typesafe-question-limit.json", status: 400, via: Berget().route(bergetModel), not: ErrQuestionLimit},
+		{name: "should not read typesafe's count wording on berget", file: "typesafe-question-limit.json", status: 422, via: Berget().route(bergetModel), not: ErrQuestionLimit},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -667,6 +667,33 @@ func TestNewAPIError(t *testing.T) {
 			got := newAPIError(typesafe, Needs{}, 302, http.Header{"Location": {tc.location}}, nil, time.Now())
 			if got.Error() != tc.want {
 				t.Errorf("error = %q, want %q", got.Error(), tc.want)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		via    route
+		status int
+		body   string
+		want   bool
+	}{
+		{name: "should read typesafe's count wording", via: typesafe, status: 400, body: `{"detail":"Too many score levels. Must have at most 10 levels."}`, want: true},
+		{name: "should read a question list that is too short", via: typesafe, status: 422, body: `{"detail":[{"type":"too_short","loc":["body","questions","rate","score","criteria"],"msg":"List should have at least 2 items"}]}`, want: true},
+		{name: "should read a count refusal past another entry", via: typesafe, status: 422, body: `{"detail":[{"type":"missing","loc":["body","state"],"msg":"Field required"},{"type":"too_long","loc":["body","questions","pick","choice","criteria"],"msg":"Dictionary should have at most 255 items"}]}`, want: true},
+		{name: "should not read a length outside the questions", via: typesafe, status: 422, body: `{"detail":[{"type":"too_long","loc":["body","state"],"msg":"String should have at most 10 characters"}]}`},
+		{name: "should not read a count refusal from a server error", via: typesafe, status: 500, body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`},
+		{name: "should not read a structured count refusal on berget", via: Berget().route(bergetModel), status: 422, body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`},
+		{
+			name: "should read the gateway's forwarded count refusal", via: gateway, status: 400, want: true,
+			body: `{"errors":[{"message":"Model execution failed (User Input Error): {\"detail\":[{\"type\":\"too_long\",\"loc\":[\"body\",\"questions\",\"rate\",\"score\",\"criteria\"],\"msg\":\"List should have at most 10 items\"}]}","code":7003}]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := newAPIError(tc.via, Needs{}, tc.status, http.Header{}, []byte(tc.body), time.Now()); errors.Is(got, ErrQuestionLimit) != tc.want {
+				t.Errorf("error = %v, ErrQuestionLimit = %v, want %v", got, !tc.want, tc.want)
 			}
 		})
 	}

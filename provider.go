@@ -76,12 +76,14 @@ func TypeSafe() Provider {
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
 		routeFor: oneRoute(route{
-			path:          systemOnePath,
-			takes:         takesEverything(),
-			imagesHeader:  true,
-			encode:        encodeAsIs,
-			decode:        identity,
-			classifyError: classifyBy(unknownModel("Unknown model"), contextTooLong, boxNotServed, questionLimit),
+			path:         systemOnePath,
+			takes:        takesEverything(),
+			imagesHeader: true,
+			encode:       encodeAsIs,
+			decode:       identity,
+			classifyError: classifyBy(
+				unknownModel("Unknown model"), contextTooLong, boxNotServed, countDetail(asSent), questionLimit,
+			),
 		}),
 	}
 }
@@ -105,7 +107,8 @@ func OpenRouter() Provider {
 			decode:        identity,
 			describeError: readOpenRouterMessage,
 			classifyError: classifyBy(
-				unknownModel("Unknown model"), unknownModel("does not exist"), contextTooLong, boxNotServed, questionLimit,
+				unknownModel("Unknown model"), unknownModel("does not exist"), contextTooLong, boxNotServed,
+				countDetail(forwardedBody), questionLimit,
 			),
 		}),
 	}
@@ -123,10 +126,32 @@ func readOpenRouterMessage(body any) string {
 	return readMessage(body)
 }
 
-func unwrapForwarded(text string) string {
+func forwardedBody(body any) any {
+	if fields, isObject := body.(map[string]any); isObject {
+		if nested, isNested := fields["error"].(map[string]any); isNested {
+			if text, isText := nested["message"].(string); isText {
+				if forwarded, ok := forwardedText(text); ok {
+					return decodeBody([]byte(forwarded))
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func forwardedText(text string) (string, bool) {
 	// OpenRouter forwards a TypeSafe error as the text HTTP 400: followed by TypeSafe's body.
 	if rest, ok := strings.CutPrefix(text, "HTTP "); ok && len(rest) > 5 && rest[3] == ':' {
-		if inner := readMessage(decodeBody([]byte(strings.TrimSpace(rest[4:])))); inner != "" {
+		return strings.TrimSpace(rest[4:]), true
+	}
+
+	return "", false
+}
+
+func unwrapForwarded(text string) string {
+	if forwarded, ok := forwardedText(text); ok {
+		if inner := readMessage(decodeBody([]byte(forwarded))); inner != "" {
 			return inner
 		}
 	}

@@ -32,7 +32,7 @@ func cloudflareRoute(model string) route {
 		describeError: readCloudflareMessage,
 		classifyError: classifyBy(
 			cloudflareAuth, unknownModel("Unknown model"), unknownModel("Model not found"),
-			contextTooLong, boxNotServed, questionLimit,
+			contextTooLong, boxNotServed, countDetail(gatewayForwarded), questionLimit,
 		),
 	}
 }
@@ -48,16 +48,7 @@ func readCloudflareMessage(body any) string {
 }
 
 func trimCloudflare(text string) string {
-	for {
-		trimmed := strings.TrimPrefix(strings.TrimPrefix(text, "AiError: "), "Ai: ")
-		if trimmed == text {
-			break
-		}
-
-		text = trimmed
-	}
-
-	text = strings.TrimPrefix(text, "Model execution failed (User Input Error): ")
+	text = withoutCloudflarePrefixes(text)
 
 	// AI Gateway forwards TypeSafe's own error body as the rest of the message.
 	if strings.HasPrefix(text, "{") {
@@ -67,6 +58,28 @@ func trimCloudflare(text string) string {
 	}
 
 	return text
+}
+
+func withoutCloudflarePrefixes(text string) string {
+	for {
+		trimmed := strings.TrimPrefix(strings.TrimPrefix(text, "AiError: "), "Ai: ")
+		if trimmed == text {
+			break
+		}
+
+		text = trimmed
+	}
+
+	return strings.TrimPrefix(text, "Model execution failed (User Input Error): ")
+}
+
+func gatewayForwarded(body any) any {
+	fields, isObject := body.(map[string]any)
+	if !isObject {
+		return nil
+	}
+
+	return decodeBody([]byte(withoutCloudflarePrefixes(firstError(fields))))
 }
 
 func clefWireID(model string) (string, bool) {

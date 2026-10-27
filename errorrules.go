@@ -2,6 +2,7 @@ package onesie
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -71,6 +72,42 @@ func questionLimit(status int, _ any, message string, _ Needs) error {
 	}
 
 	return nil
+}
+
+func countDetail(sent func(body any) any) errorRule {
+	return func(status int, body any, _ string, _ Needs) error {
+		if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+			return nil
+		}
+
+		fields, isObject := sent(body).(map[string]any)
+		if !isObject {
+			return nil
+		}
+
+		entries, isList := fields["detail"].([]any)
+		if !isList || !slices.ContainsFunc(entries, countEntry) {
+			return nil
+		}
+
+		return ErrQuestionLimit
+	}
+}
+
+func countEntry(entry any) bool {
+	fields, isObject := entry.(map[string]any)
+	if !isObject {
+		return false
+	}
+
+	kind := fields["type"]
+	loc, isList := fields["loc"].([]any)
+
+	return (kind == "too_long" || kind == "too_short") && isList && len(loc) >= 2 && loc[0] == "body" && loc[1] == "questions"
+}
+
+func asSent(body any) any {
+	return body
 }
 
 func containsAny(text string, phrases ...string) bool {
