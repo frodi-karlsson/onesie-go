@@ -1,31 +1,17 @@
 package onesie
 
 import (
-	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
 
 const (
-	// DefaultBaseURL is the API root used when none is configured.
-	DefaultBaseURL = "https://api.typesafe.ai"
-	// DefaultModel is the model a TypeSafe or OpenRouter request carries when it names none.
-	DefaultModel = "jev-latest"
-	// BergetDefaultModel is the model a Berget request carries when it names none. It is Berget's
-	// alias for its default System One model.
-	BergetDefaultModel = "systemone"
-	// LevantoDefaultModel is the model a Levanto request carries when it names none. It is Levanto's
-	// alias for its newest Sage model.
-	LevantoDefaultModel = "sage-latest"
-	// CloudflareDefaultModel is the model a Cloudflare request carries when it names none: TypeSafe's
-	// Jev through AI Gateway.
-	CloudflareDefaultModel = "typesafe/jev"
-	// DefaultAttemptTimeout bounds one HTTP attempt, not the whole call.
+	// DefaultAttemptTimeout bounds one HTTP attempt of a request without images, not the whole call.
 	DefaultAttemptTimeout = 10 * time.Second
+	// AssetAttemptTimeout bounds one HTTP attempt of a request that carries images.
+	AssetAttemptTimeout = 60 * time.Second
 	// DefaultMaxResponseBytes caps how much of a response body is read.
 	DefaultMaxResponseBytes = 8 << 20
 	// DefaultMaxRetryAfter is the longest server requested retry delay the client waits out.
@@ -33,23 +19,39 @@ const (
 	// DefaultRetries is the number of retries after the first attempt.
 	DefaultRetries = 2
 
-	// EnvAPIKey names the environment variable holding the API key.
-	EnvAPIKey = "TYPESAFE_API_KEY"
-	// EnvBaseURL names the environment variable overriding the API root.
-	EnvBaseURL = "TYPESAFE_BASE_URL"
-	// EnvDefaultModel names the environment variable overriding the default model.
-	EnvDefaultModel = "TYPESAFE_DEFAULT_MODEL"
 	// HeaderImages turns on images and Box questions. SystemOne sends it on a request that needs it.
 	HeaderImages = "TypeSafe-Danger-Zone-Images"
-	// HeaderLongContext raises the context limits. Set Request.LongContext or pass WithLongContext
-	// rather than sending it by hand.
+	// HeaderLongContext raises the context limits. WithLongContext sets it, and WithHeader refuses it.
 	HeaderLongContext = "TypeSafe-Danger-Zone-Long-Context"
 )
 
-// WithAPIKey sets the API key, taking precedence over the environment.
+// WithAPIKey sets the API key, so the environment is not read for one. Of WithAPIKey and
+// WithAPIKeyFunc, the last one passed wins.
 func WithAPIKey(key string) Option {
+	return WithAPIKeyFunc(func() (string, error) { return key, nil })
+}
+
+// WithAPIKeyFunc supplies the API key, called once by New after every other check passes. Its error
+// is returned as it is, and the environment is not read for the key.
+func WithAPIKeyFunc(key func() (string, error)) Option {
 	return func(c *Client) error {
-		c.apiKey = key
+		if key == nil {
+			return &ValidationError{Message: "API key func must not be nil"}
+		}
+
+		c.keyFunc = key
+
+		return nil
+	}
+}
+
+// WithAccountID sets the account for a provider that has accounts, ahead of its account variable.
+// A blank id is ignored.
+func WithAccountID(id string) Option {
+	return func(c *Client) error {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			c.accountID = trimmed
+		}
 
 		return nil
 	}
@@ -58,8 +60,8 @@ func WithAPIKey(key string) Option {
 // WithProvider sets the host the client talks to. The default is TypeSafe.
 func WithProvider(p Provider) Option {
 	return func(c *Client) error {
-		if p.routeFor == nil {
-			return &ValidationError{Message: "provider must come from TypeSafe, OpenRouter, Berget, Levanto, Cloudflare or ProviderNamed"}
+		if err := p.check(); err != nil {
+			return err
 		}
 
 		c.provider = p
@@ -72,6 +74,16 @@ func WithProvider(p Provider) Option {
 func WithBaseURL(raw string) Option {
 	return func(c *Client) error {
 		c.baseURL = raw
+
+		return nil
+	}
+}
+
+// WithInsecureHTTP lets New take a plain http base URL to a host other than this machine, which
+// sends the API key unencrypted.
+func WithInsecureHTTP() Option {
+	return func(c *Client) error {
+		c.insecureHTTP = true
 
 		return nil
 	}
@@ -128,14 +140,18 @@ func WithLogger(l *slog.Logger) Option {
 // WithRetry replaces the retry policy.
 func WithRetry(p RetryPolicy) Option {
 	return func(c *Client) error {
+		if err := p.validate(); err != nil {
+			return err
+		}
+
 		c.retry = p
 
 		return nil
 	}
 }
 
-// WithAttemptTimeout bounds one HTTP attempt. Retries each get a fresh budget, so a call can
-// outlast this by the retry count. Use WithTotalTimeout or the context to bound the whole call.
+// WithAttemptTimeout bounds every HTTP attempt, with images or without. Retries each get a fresh
+// budget, so bound the whole call with WithTotalTimeout or the context.
 func WithAttemptTimeout(d time.Duration) Option {
 	return func(c *Client) error {
 		if d <= 0 {
@@ -176,18 +192,21 @@ func WithMaxResponseBytes(n int64) Option {
 	}
 }
 
-// WithHeader adds a header sent with every request. It cannot override the headers this client
-// sets itself, such as Authorization.
+// WithHeader adds a header sent with every request. It cannot override the headers this client sets
+// itself, and refuses HeaderLongContext, which WithLongContext sets.
 func WithHeader(name, value string) Option {
 	return func(c *Client) error {
+		if err := refuseLongContextHeader(name); err != nil {
+			return err
+		}
+
 		c.header.Set(name, value)
 
 		return nil
 	}
 }
 
-// WithEnv replaces the environment lookup. It exists so configuration tests need no process
-// mutation, because t.Setenv cannot be combined with t.Parallel.
+// WithEnv replaces the environment lookup, which is os.LookupEnv by default.
 func WithEnv(lookup func(string) (string, bool)) Option {
 	return func(c *Client) error {
 		if lookup == nil {
@@ -200,7 +219,7 @@ func WithEnv(lookup func(string) (string, bool)) Option {
 	}
 }
 
-// WithClock replaces the time source. It exists so retry tests are deterministic and instant.
+// WithClock replaces the time source, which is the system clock by default.
 func WithClock(clock Clock) Option {
 	return func(c *Client) error {
 		if clock == nil {
@@ -213,8 +232,8 @@ func WithClock(clock Clock) Option {
 	}
 }
 
-// WithRandom replaces the jitter source, which must return a value from 0 up to but excluding 1.
-// It exists so backoff tests can assert exact delays.
+// WithRandom replaces the jitter source, which is math/rand/v2's Float64 by default. It must return
+// a value from 0 up to but excluding 1.
 func WithRandom(random func() float64) Option {
 	return func(c *Client) error {
 		if random == nil {
@@ -285,18 +304,34 @@ func WithRequestRetry(p RetryPolicy) RequestOption {
 }
 
 // WithRequestHeader adds a header to one call. It cannot override the headers this client sets
-// itself, such as Authorization.
+// itself, and refuses HeaderLongContext, which WithLongContext sets.
 func WithRequestHeader(name, value string) RequestOption {
 	return func(rc *requestConfig) error {
+		if err := refuseLongContextHeader(name); err != nil {
+			return err
+		}
+
 		rc.header.Set(name, value)
 
 		return nil
 	}
 }
 
-// WithLongContext raises the context limits for one call, through HeaderLongContext.
+// WithLongContext raises the context limits for one call.
 func WithLongContext() RequestOption {
-	return WithRequestHeader(HeaderLongContext, "true")
+	return func(rc *requestConfig) error {
+		rc.longContext = true
+
+		return nil
+	}
+}
+
+func refuseLongContextHeader(name string) error {
+	if http.CanonicalHeaderKey(name) != http.CanonicalHeaderKey(HeaderLongContext) {
+		return nil
+	}
+
+	return &ValidationError{Message: "the " + HeaderLongContext + " header is set by WithLongContext, not by hand"}
 }
 
 // RequestOption overrides client settings for one call.
@@ -307,56 +342,18 @@ type requestConfig struct {
 	totalTimeout   time.Duration
 	retry          RetryPolicy
 	header         http.Header
+	longContext    bool
+	images         bool
 }
 
-// ValidateBaseURL rejects anything that is not an absolute http or https URL, saying why. The
-// message echoes the URL as given, without any userinfo, or names no URL when it cannot tell.
-func ValidateBaseURL(raw string) error {
-	subject, hadAt := baseURLSubject(raw)
-
-	parsed, err := url.Parse(raw)
-
-	var malformed *url.Error
-
-	switch {
-	case err != nil && hadAt:
-		return &ValidationError{Message: subject + " does not parse"}
-	case errors.As(err, &malformed):
-		return &ValidationError{Message: subject + " does not parse: " + malformed.Err.Error()}
-	case parsed.Scheme != "http" && parsed.Scheme != "https":
-		return &ValidationError{Message: subject + " is not an http or https URL"}
-	case parsed.Host == "":
-		return &ValidationError{Message: fmt.Sprintf(
-			"%s names no host. Write it as %s://HOST", subject, parsed.Scheme)}
-	default:
-		return nil
-	}
-}
-
-func baseURLSubject(raw string) (string, bool) {
-	at := strings.LastIndex(raw, "@")
-	if at < 0 {
-		return "base URL " + raw, false
+func applyOptions(cfg requestConfig, opts []RequestOption) (requestConfig, error) {
+	for _, opt := range opts {
+		if err := opt(&cfg); err != nil {
+			return requestConfig{}, err
+		}
 	}
 
-	scheme, authority, found := strings.Cut(raw, "://")
-	if !found || strings.Contains(scheme, "@") {
-		return "the base URL", true
-	}
-
-	// The echo is kept only when the last @ sits in the authority, so no part of the userinfo can
-	// be left in the host, the path, the query or the fragment.
-	end := strings.IndexAny(authority, "/?#")
-	if end < 0 {
-		end = len(authority)
-	}
-
-	inAuthority := strings.LastIndex(authority[:end], "@")
-	if inAuthority < 0 || len(scheme)+len("://")+inAuthority != at {
-		return "the base URL", true
-	}
-
-	return "base URL " + scheme + "://" + authority[inAuthority+1:], true
+	return cfg, nil
 }
 
 func orEnv(value string, lookup func(string) (string, bool), name string) string {

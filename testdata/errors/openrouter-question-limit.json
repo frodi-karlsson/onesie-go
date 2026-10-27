@@ -1,0 +1,1 @@
+{"error":{"message":"HTTP 422: {\"detail\":[{\"type\":\"too_long\",\"loc\":[\"body\",\"questions\",\"rate\",\"score\",\"criteria\"],\"msg\":\"List should have at most 10 items after validation, not 11\"}]}"}}

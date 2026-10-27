@@ -1,0 +1,1 @@
+{"detail":[{"loc":["body","model"],"msg":"unknown model 'jev-latest'; GET /v1/models lists the accepted names (levanto-sage-v1.4, sage-latest)","type":"value_error"}]}

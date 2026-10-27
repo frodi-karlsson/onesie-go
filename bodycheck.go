@@ -2,20 +2,20 @@ package onesie
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 )
 
-func checkBodyImages(body []byte) error {
-	return validationOnly(scanBodyImages(body))
+func checkBodyImages(members []member) error {
+	return validationOnly(scanBodyImages(members))
 }
 
 func validationOnly(err error) error {
-	// A body that does not parse is forwarded, so the server reports it as it does today.
+	// A body the scan cannot read is forwarded, so the server reports it.
 	var validation *ValidationError
 	if errors.As(err, &validation) {
 		return err
@@ -24,32 +24,24 @@ func validationOnly(err error) error {
 	return nil
 }
 
-func scanBodyImages(body []byte) error {
-	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions...)
-	if _, err := dec.ReadToken(); err != nil {
-		return err
-	}
-
+func scanBodyImages(members []member) error {
 	var (
 		faults map[string]*ValidationError
 		texts  []string
 	)
 
-	for dec.PeekKind() != '}' {
-		name, err := dec.ReadToken()
-		if err != nil {
-			return err
-		}
+	for _, m := range members {
+		dec := jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)
 
-		switch name.String() {
+		var err error
+
+		switch m.name {
 		case "assets":
-			faults, err = assetFaults(dec)
+			faults, err = assetFaults(m.value)
 		case "state":
 			err = collectTexts(dec, &texts)
 		case "questions":
 			err = questionTexts(dec, &texts)
-		default:
-			err = dec.SkipValue()
 		}
 
 		if err != nil {
@@ -59,11 +51,8 @@ func scanBodyImages(body []byte) error {
 
 	refs := slices.Sorted(maps.Keys(faults))
 
-	for _, ref := range refs {
-		if !slices.ContainsFunc(texts, func(text string) bool { return strings.Contains(text, ref) }) {
-			return &ValidationError{Message: fmt.Sprintf(
-				"asset '%s' is not referenced in the state or the questions, and the API refuses that", ref)}
-		}
+	if missing := unreferenced(texts, refs); len(missing) > 0 {
+		return notReferenced(missing[0])
 	}
 
 	for _, ref := range refs {
@@ -75,7 +64,23 @@ func scanBodyImages(body []byte) error {
 	return nil
 }
 
-func assetFaults(dec *jsontext.Decoder) (map[string]*ValidationError, error) {
+func assetFaults(value jsontext.Value) (map[string]*ValidationError, error) {
+	assets, err := readAssets(value)
+	if err != nil {
+		return nil, err
+	}
+
+	faults := make(map[string]*ValidationError, len(assets))
+	for ref, asset := range assets {
+		faults[ref] = asset.fault(ref)
+	}
+
+	return faults, nil
+}
+
+func readAssets(value jsontext.Value) (map[string]rawAsset, error) {
+	// A bytes.Buffer, which jsontext parses in place, so no image is copied.
+	dec := jsontext.NewDecoder(bytes.NewBuffer(value), rawOptions()...)
 	if dec.PeekKind() != '{' {
 		return nil, &ValidationError{Message: "assets must be an object of images"}
 	}
@@ -84,7 +89,7 @@ func assetFaults(dec *jsontext.Decoder) (map[string]*ValidationError, error) {
 		return nil, err
 	}
 
-	faults := map[string]*ValidationError{}
+	assets := map[string]rawAsset{}
 
 	for dec.PeekKind() != '}' {
 		name, err := dec.ReadToken()
@@ -94,72 +99,88 @@ func assetFaults(dec *jsontext.Decoder) (map[string]*ValidationError, error) {
 
 		ref := name.String()
 
-		fault, err := assetFault(dec, ref)
+		asset, err := readAsset(dec, value)
 		if err != nil {
 			return nil, err
 		}
 
-		faults[ref] = fault
+		assets[ref] = asset
 	}
 
 	_, err := dec.ReadToken()
 
-	return faults, err
+	return assets, err
 }
 
-func assetFault(dec *jsontext.Decoder, ref string) (*ValidationError, error) {
+func readAsset(dec *jsontext.Decoder, value []byte) (rawAsset, error) {
 	if dec.PeekKind() != '{' {
-		return nil, &ValidationError{Message: "assets must be an object of images"}
+		return rawAsset{}, &ValidationError{Message: "assets must be an object of images"}
 	}
 
 	if _, err := dec.ReadToken(); err != nil {
-		return nil, err
+		return rawAsset{}, err
 	}
 
-	format, hasData := "", false
+	var asset rawAsset
 
 	for dec.PeekKind() != '}' {
 		name, err := dec.ReadToken()
 		if err != nil {
-			return nil, err
+			return rawAsset{}, err
 		}
 
-		switch name.String() {
+		field, isText, start := name.String(), dec.PeekKind() == '"', dec.InputOffset()
+
+		if err = dec.SkipValue(); err != nil {
+			return rawAsset{}, err
+		}
+
+		// Matched exactly, and the last of a repeated name wins, as the API reads a body.
+		switch raw := valueAt(value, start, dec.InputOffset()); field {
 		case "format":
-			if dec.PeekKind() == '"' {
-				value, readErr := dec.ReadToken()
-				if readErr != nil {
-					return nil, readErr
-				}
-
-				format = value.String()
-
-				continue
+			asset.format = ""
+			if isText {
+				asset.format, err = textOf(raw)
 			}
 		case "data_base64":
-			hasData = dec.PeekKind() == '"'
+			asset.data = nil
+			if isText {
+				asset.data = raw
+			}
 		}
 
-		// Skipped rather than read, so no image is copied.
-		if err := dec.SkipValue(); err != nil {
-			return nil, err
+		if err != nil {
+			return rawAsset{}, err
 		}
 	}
 
-	if _, err := dec.ReadToken(); err != nil {
-		return nil, err
+	_, err := dec.ReadToken()
+
+	return asset, err
+}
+
+type rawAsset struct {
+	format string
+	data   jsontext.Value
+}
+
+func (a rawAsset) fault(ref string) *ValidationError {
+	if fault := checkFormat(ref, a.format); fault != nil {
+		return fault
 	}
 
-	if wire := wireFormat(format); wire != "png" && wire != "jpg" {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' has format '%s', and an image must be png or jpg", ref, format)}, nil
+	if a.data == nil {
+		return &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}
 	}
 
-	if !hasData {
-		return &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}, nil
-	}
+	return nil
+}
 
-	return nil, nil
+func textOf(raw jsontext.Value) (string, error) {
+	var text string
+	err := json.Unmarshal(raw, &text)
+
+	return text, err
 }
 
 func questionTexts(dec *jsontext.Decoder, texts *[]string) error {
@@ -266,4 +287,47 @@ func collectTexts(dec *jsontext.Decoder, texts *[]string) error {
 	default:
 		return dec.SkipValue()
 	}
+}
+
+func checkQuestionCounts(members []member) error {
+	for _, m := range members {
+		if m.name != "questions" {
+			continue
+		}
+
+		var questions map[string]struct {
+			Type     string          `json:"type"`
+			Criteria json.RawMessage `json:"criteria"`
+		}
+
+		// A body whose questions do not decode is forwarded, so the server reports it.
+		if json.Unmarshal(m.value, &questions) != nil {
+			continue
+		}
+
+		for _, id := range slices.Sorted(maps.Keys(questions)) {
+			if err := checkCount(id, questions[id].Type, questions[id].Criteria); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func checkCount(id, kind string, criteria json.RawMessage) error {
+	switch kind {
+	case "choice":
+		var options map[string]json.RawMessage
+		if json.Unmarshal(criteria, &options) == nil && len(options) > MaxChoiceOptions {
+			return tooManyOptions(id, len(options))
+		}
+	case "score":
+		var levels []json.RawMessage
+		if json.Unmarshal(criteria, &levels) == nil && len(levels) > MaxScoreLevels {
+			return tooManyLevels(id, len(levels))
+		}
+	}
+
+	return nil
 }

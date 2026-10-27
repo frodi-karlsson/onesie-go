@@ -164,12 +164,6 @@ func TestClientSystemOne(t *testing.T) {
 			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
-			name:    "should refuse long context asked for by a client header",
-			req:     ask("wrapped"),
-			opts:    []Option{WithHeader(HeaderLongContext, "true")},
-			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
-		},
-		{
 			name:    "should report a failing request option rather than refuse",
 			req:     ask("wrapped"),
 			reqOpts: []RequestOption{WithRequestAttemptTimeout(0), WithLongContext()},
@@ -212,20 +206,6 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
-	t.Run("should send a long context header that is not true", func(t *testing.T) {
-		t.Parallel()
-
-		client, rec := newFakeClient(t, http.StatusOK, `{"result":`+plainAnswer+`}`, WithHeader(HeaderLongContext, "false"))
-
-		if _, err := client.SystemOne(t.Context(), ask("wrapped")); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if sent := rec.only(t); sent.longContext != "false" {
-			t.Errorf("long context header = %q, want false", sent.longContext)
-		}
-	})
-
 	unusable := []struct {
 		name     string
 		response string
@@ -248,6 +228,23 @@ func TestClientSystemOne(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should report a question the response did not answer", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newFakeClient(t, http.StatusOK, `{"model":"p","answers":{},"usage":{"input_tokens":4,"output_tokens":1}}`)
+
+		_, err := client.SystemOne(t.Context(), ask(""))
+
+		var unusable *ResponseError
+		if !errors.As(err, &unusable) || err.Error() != "onesie: 200 response could not be used: no answer for question 'q'" {
+			t.Fatalf("error = %v, want the missing answer named", err)
+		}
+
+		if unusable.Usage == nil || unusable.Usage.InputTokens != 4 {
+			t.Errorf("usage = %+v, want the 4 input tokens billed", unusable.Usage)
+		}
+	})
 
 	t.Run("should not decode an error response", func(t *testing.T) {
 		t.Parallel()
@@ -349,12 +346,6 @@ func TestClientSystemOneRaw(t *testing.T) {
 			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},
 		{
-			name:    "should refuse long context asked for by a client header",
-			body:    `{"model":"wrapped",` + questions + `}`,
-			opts:    []Option{WithHeader(HeaderLongContext, "true")},
-			wantErr: "onesie: the fake provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
-		},
-		{
 			name:    "should report a failing request option rather than refuse",
 			body:    `{"model":"wrapped",` + questions + `}`,
 			reqOpts: []RequestOption{WithRequestAttemptTimeout(0), WithLongContext()},
@@ -452,37 +443,39 @@ func newFakeClient(t *testing.T, status int, response string, opts ...Option) (*
 }
 
 func fakeProvider() Provider {
-	keep := func(body []byte) ([]byte, []RequestOption, error) { return body, nil, nil }
-
 	return Provider{
-		Name:         "fake",
-		BaseURL:      "http://fake.invalid",
-		defaultModel: "plain",
-		modelsPath:   "/models",
-		decodeModels: decodeTypeSafeModels,
+		name:           "fake",
+		defaultBaseURL: "http://fake.invalid",
+		defaultModel:   "plain",
+		modelsPath:     "/models",
+		decodeModels:   decodeTypeSafeModels,
 		routeFor: func(model string) route {
 			switch model {
 			case "wrapped":
 				return route{
-					path:   "/wrapped",
-					takes:  capabilities{images: true},
-					images: keep,
-					encode: func(body []byte) ([]byte, error) {
+					path:  "/wrapped",
+					takes: capabilities{images: true},
+					encode: func(b jsonBody) ([]byte, error) {
+						body, err := b.bytes()
+						if err != nil {
+							return nil, err
+						}
+
 						return []byte(`{"input":` + string(body) + `}`), nil
 					},
 					decode: unwrapResult,
 				}
 			case "bare":
-				return route{path: "/bare", encode: identity, decode: identity}
+				return route{path: "/bare", encode: encodeAsIs, decode: identity}
 			case "broken":
 				return route{
 					path:   "/broken",
 					takes:  takesEverything(),
-					encode: func([]byte) ([]byte, error) { return nil, errors.New("encode failed") },
+					encode: func(jsonBody) ([]byte, error) { return nil, errors.New("encode failed") },
 					decode: identity,
 				}
 			default:
-				return route{path: "/plain", takes: takesEverything(), images: keep, encode: identity, decode: identity}
+				return route{path: "/plain", takes: takesEverything(), encode: encodeAsIs, decode: identity}
 			}
 		},
 	}

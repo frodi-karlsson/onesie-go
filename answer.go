@@ -12,12 +12,6 @@ import (
 	"strings"
 )
 
-const (
-	answerKinds = "noul, choice, score or box"
-	emptyString = "an empty string"
-	emptyObject = "an empty object"
-)
-
 // Result is one response from the evaluation endpoint.
 type Result struct {
 	Model     string            `json:"model"`
@@ -109,7 +103,7 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	for _, name := range slices.Sorted(maps.Keys(wire.Answers)) {
 		decoded, err := decodeAnswer(wire.Answers[name])
 		if err != nil {
-			return &answerDecodeError{usage: wire.Usage, err: namingAnswer(name, err)}
+			return namingAnswer(name, err)
 		}
 
 		r.Answers[name] = decoded
@@ -118,85 +112,73 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type answerDecodeError struct {
-	usage Usage
-	err   error
-}
-
 func describeShape(err error) error {
 	var mistyped *json.UnmarshalTypeError
 	if !errors.As(err, &mistyped) {
 		return err
 	}
 
-	return &ResultShapeError{
-		Field: strings.TrimPrefix(mistyped.Field, "."),
-		Want:  wantedKind(mistyped.Type),
-		Got:   foundKind(mistyped.Value),
+	return &resultShapeError{
+		field: strings.TrimPrefix(mistyped.Field, "."),
+		fault: faultWrongKind,
+		want:  wantedKind(mistyped.Type),
+		got:   foundKind(mistyped.Value),
 		cause: err,
 	}
 }
 
-func wantedKind(wanted reflect.Type) string {
+func wantedKind(wanted reflect.Type) jsonKind {
 	for wanted != nil && wanted.Kind() == reflect.Pointer {
 		wanted = wanted.Elem()
 	}
 
 	if wanted == nil {
-		return ""
+		return kindNothing
 	}
 
 	switch wanted.Kind() {
 	case reflect.Float32, reflect.Float64, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return "a number"
+		return kindNumber
 	case reflect.String:
-		return "a string"
+		return kindString
 	case reflect.Bool:
-		return "true or false"
+		return kindBoolean
 	case reflect.Slice, reflect.Array:
-		return "an array"
+		return kindArray
 	default:
-		return "an object"
+		return kindObject
 	}
 }
 
-func foundKind(value string) string {
+func foundKind(value string) jsonKind {
 	kind, _, _ := strings.Cut(value, " ")
 
 	switch kind {
 	case "string":
-		return "a string"
+		return kindString
 	case "number":
-		return "a number"
+		return kindNumber
 	case "bool":
-		return "a boolean"
+		return kindBoolean
 	case "array":
-		return "an array"
+		return kindArray
 	case "object":
-		return "an object"
+		return kindObject
 	default:
-		return kind
+		return kindNothing
 	}
 }
 
 func namingAnswer(name string, err error) error {
-	var shape *ResultShapeError
+	var shape *resultShapeError
 	if !errors.As(err, &shape) {
 		return fmt.Errorf("answer '%s': %w", printable(name), err)
 	}
 
-	shape.Answer = name
+	shape.answer = name
 
 	return shape
-}
-
-func (e *answerDecodeError) Error() string {
-	return e.err.Error()
-}
-
-func (e *answerDecodeError) Unwrap() error {
-	return e.err
 }
 
 func (r *Result) answer(name string) (Answer, error) {
@@ -216,8 +198,8 @@ type Usage struct {
 }
 
 func decodeAnswer(raw json.RawMessage) (Answer, error) {
-	if kind := rawKind(raw); kind != "an object" {
-		return nil, &ResultShapeError{Want: "an object", Got: kind}
+	if kind := rawKind(raw); kind != kindObject {
+		return nil, &resultShapeError{want: kindObject, got: kind}
 	}
 
 	var probe struct {
@@ -229,7 +211,7 @@ func decodeAnswer(raw json.RawMessage) (Answer, error) {
 	}
 
 	if probe.Type == nil {
-		return nil, missingField("type", "a string")
+		return nil, missingField("type", kindString)
 	}
 
 	switch *probe.Type {
@@ -242,31 +224,31 @@ func decodeAnswer(raw json.RawMessage) (Answer, error) {
 	case "box":
 		return decodeBox(raw)
 	case "":
-		return nil, &ResultShapeError{Field: "type", Want: "a string", Got: emptyString}
+		return nil, &resultShapeError{field: "type", fault: faultEmpty, want: kindString}
 	default:
-		return nil, &ResultShapeError{Field: "type", Want: answerKinds, Got: *probe.Type}
+		return nil, &resultShapeError{field: "type", fault: faultUnknownType, gotType: *probe.Type}
 	}
 }
 
-func rawKind(raw json.RawMessage) string {
+func rawKind(raw json.RawMessage) jsonKind {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
-		return "nothing"
+		return kindNothing
 	}
 
 	switch trimmed[0] {
 	case '{':
-		return "an object"
+		return kindObject
 	case '[':
-		return "an array"
+		return kindArray
 	case '"':
-		return "a string"
+		return kindString
 	case 'n':
-		return "null"
+		return kindNull
 	case 't', 'f':
-		return "a boolean"
+		return kindBoolean
 	default:
-		return "a number"
+		return kindNumber
 	}
 }
 
@@ -280,7 +262,7 @@ func decodeNoul(raw json.RawMessage) (*NoulAnswer, error) {
 	}
 
 	if wire.Noul == nil {
-		return nil, missingField("noul", "a number")
+		return nil, missingField("noul", kindNumber)
 	}
 
 	return &NoulAnswer{Noul: *wire.Noul}, nil
@@ -298,11 +280,11 @@ func decodeChoice(raw json.RawMessage) (*ChoiceAnswer, error) {
 	}
 
 	if wire.Choice == nil {
-		return nil, missingField("choice", "a string")
+		return nil, missingField("choice", kindString)
 	}
 
 	if *wire.Choice == "" {
-		return nil, &ResultShapeError{Field: "choice", Want: "a string", Got: emptyString}
+		return nil, &resultShapeError{field: "choice", fault: faultEmpty, want: kindString}
 	}
 
 	probabilities, err := requireProbabilities(wire.Probabilities)
@@ -326,7 +308,7 @@ func decodeScore(raw json.RawMessage) (*ScoreAnswer, error) {
 	}
 
 	if wire.Score == nil {
-		return nil, missingField("score", "a number")
+		return nil, missingField("score", kindNumber)
 	}
 
 	probabilities, err := requireProbabilities(wire.Probabilities)
@@ -355,7 +337,7 @@ func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
 	}
 
 	if wire.Box == nil {
-		return nil, missingField("box", "an object")
+		return nil, missingField("box", kindObject)
 	}
 
 	edges := []struct {
@@ -367,7 +349,7 @@ func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
 
 	for _, edge := range edges {
 		if edge.value == nil {
-			return nil, missingField("box."+edge.name, "a number")
+			return nil, missingField("box."+edge.name, kindNumber)
 		}
 	}
 
@@ -377,24 +359,24 @@ func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
 	}, nil
 }
 
-func missingField(field, want string) error {
-	return &ResultShapeError{Field: field, Want: want}
+func missingField(field string, want jsonKind) error {
+	return &resultShapeError{field: field, fault: faultMissing, want: want}
 }
 
 func requireProbabilities(wire map[string]*float64) (map[string]float64, error) {
 	if wire == nil {
-		return nil, missingField("probabilities", "an object")
+		return nil, missingField("probabilities", kindObject)
 	}
 
 	if len(wire) == 0 {
-		return nil, &ResultShapeError{Field: "probabilities", Want: "an object", Got: emptyObject}
+		return nil, &resultShapeError{field: "probabilities", fault: faultEmpty, want: kindObject}
 	}
 
 	probabilities := make(map[string]float64, len(wire))
 
 	for _, option := range slices.Sorted(maps.Keys(wire)) {
 		if wire[option] == nil {
-			return nil, missingField("probabilities."+option, "a number")
+			return nil, missingField("probabilities."+option, kindNumber)
 		}
 
 		probabilities[option] = *wire[option]

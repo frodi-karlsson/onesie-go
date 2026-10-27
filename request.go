@@ -1,6 +1,7 @@
 package onesie
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -40,7 +41,30 @@ func ValidateRequest(req Request) error {
 // ValidateImage rejects an image the API would reject, naming it in the message. It checks the
 // format, the file size and the sides, reading only the file's header.
 func ValidateImage(name string, img Image) error {
-	return checkImage(name, img)
+	if fault := checkFormat(name, img.Format); fault != nil {
+		return fault
+	}
+
+	format := wireFormat(img.Format)
+
+	if len(img.Data) > MaxImageBytes {
+		return &ValidationError{Message: fmt.Sprintf(
+			"image '%s' is %d bytes, and an image is at most %d. Resize it to at most %d pixels a side "+
+				"or save it as a smaller JPEG", name, len(img.Data), MaxImageBytes, MaxImageSide)}
+	}
+
+	config, err := configOf(format, img.Data)
+	if err != nil {
+		return err
+	}
+
+	if !sideFits(config.Width) || !sideFits(config.Height) {
+		return &ValidationError{Message: fmt.Sprintf(
+			"image '%s' is %d by %d pixels, and each side must be %d to %d. Resize it first",
+			name, config.Width, config.Height, MinImageSide, MaxImageSide)}
+	}
+
+	return nil
 }
 
 func checkBoxes(req Request) error {
@@ -88,37 +112,27 @@ func checkReferences(req Request) error {
 			total, maxAllReferencesBytes)}
 	}
 
-	unreferenced, err := UnreferencedAssets(req)
+	missing, err := UnreferencedAssets(req)
 	if err != nil {
 		return err
 	}
 
-	if len(unreferenced) > 0 {
-		return &ValidationError{Message: fmt.Sprintf(
-			"asset '%s' is not referenced in the state or the questions, and the API refuses that",
-			unreferenced[0])}
+	if len(missing) > 0 {
+		return notReferenced(missing[0])
 	}
 
 	return nil
 }
 
-// UnreferencedAssets lists, sorted, the references that appear in no string value of the request's
-// state or questions. Object keys do not count, since the API never replaces a reference there.
+// UnreferencedAssets lists, sorted, the references no string value of the state or questions names.
+// At each place in a text the longest reference starting there counts, so one inside a longer one does not.
 func UnreferencedAssets(req Request) ([]string, error) {
 	texts, err := stringValues(req)
 	if err != nil {
 		return nil, err
 	}
 
-	var unreferenced []string
-
-	for _, ref := range slices.Sorted(maps.Keys(req.Assets)) {
-		if !slices.ContainsFunc(texts, func(text string) bool { return strings.Contains(text, ref) }) {
-			unreferenced = append(unreferenced, ref)
-		}
-	}
-
-	return unreferenced, nil
+	return unreferenced(texts, slices.Sorted(maps.Keys(req.Assets))), nil
 }
 
 func stringValues(req Request) ([]string, error) {
@@ -129,7 +143,7 @@ func stringValues(req Request) ([]string, error) {
 		Questions Questions `json:"questions"`
 	}{State: req.State, Questions: req.Questions})
 	if err != nil {
-		return nil, fmt.Errorf("onesie: encoding request: %w", err)
+		return nil, unencodable(err)
 	}
 
 	var decoded struct {
@@ -137,7 +151,7 @@ func stringValues(req Request) ([]string, error) {
 		Questions map[string]map[string]any `json:"questions"`
 	}
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		return nil, fmt.Errorf("onesie: encoding request: %w", err)
+		return nil, unencodable(err)
 	}
 
 	var texts []string
@@ -151,6 +165,10 @@ func stringValues(req Request) ([]string, error) {
 	}
 
 	return texts, nil
+}
+
+func unencodable(err error) error {
+	return &ValidationError{Message: "the request cannot be encoded: " + err.Error()}
 }
 
 func collectStrings(value any, texts *[]string) {
@@ -168,33 +186,6 @@ func collectStrings(value any, texts *[]string) {
 	}
 }
 
-func checkImage(ref string, img Image) error {
-	format := wireFormat(img.Format)
-	if format != "png" && format != "jpg" {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' has format '%s', and an image must be png or jpg", ref, img.Format)}
-	}
-
-	if len(img.Data) > MaxImageBytes {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' is %d bytes, and an image is at most %d. Resize it to at most %d pixels a side "+
-				"or save it as a smaller JPEG", ref, len(img.Data), MaxImageBytes, MaxImageSide)}
-	}
-
-	config, err := configOf(format, img.Data)
-	if err != nil {
-		return err
-	}
-
-	if !sideFits(config.Width) || !sideFits(config.Height) {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' is %d by %d pixels, and each side must be %d to %d. Resize it first",
-			ref, config.Width, config.Height, MinImageSide, MaxImageSide)}
-	}
-
-	return nil
-}
-
 func sideFits(side int) bool {
 	return side >= MinImageSide && side <= MaxImageSide
 }
@@ -204,16 +195,35 @@ func checkBodySize(req Request) error {
 		return nil
 	}
 
-	body, err := MarshalBody(req)
+	size, err := bodySize(req)
 	if err != nil {
-		return fmt.Errorf("onesie: encoding request: %w", err)
+		return err
 	}
 
-	if len(body) > MaxBodyBytes {
+	if size > MaxBodyBytes {
 		return &ValidationError{Message: fmt.Sprintf(
 			"the request body is %d bytes, and the API takes at most %d. Send fewer or smaller images",
-			len(body), MaxBodyBytes)}
+			size, MaxBodyBytes)}
 	}
 
 	return nil
+}
+
+func bodySize(req Request) (int, error) {
+	hollow := make(Assets, len(req.Assets))
+	data := 0
+
+	for ref, img := range req.Assets {
+		hollow[ref] = Image{Format: img.Format}
+		data += base64.StdEncoding.EncodedLen(len(img.Data))
+	}
+
+	req.Assets = hollow
+
+	rest, err := MarshalBody(req)
+	if err != nil {
+		return 0, unencodable(err)
+	}
+
+	return len(rest) + data, nil
 }

@@ -10,9 +10,9 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -25,14 +25,15 @@ const (
 	retryCountHeader = "X-TypeSafe-Retry-Count"
 )
 
+var errTotalTimeout = errors.New("total timeout")
+
 // New builds a client. Resolution order is an explicit option, then the environment, then a
-// default. Blank and whitespace only values are ignored at every level.
+// default. Blank values are ignored at every level, except an explicit API key, which is refused.
 func New(opts ...Option) (*Client, error) {
 	c := &Client{
 		httpClient:       &http.Client{},
 		logger:           slog.New(slog.DiscardHandler),
 		retry:            DefaultRetryPolicy(),
-		attemptTimeout:   DefaultAttemptTimeout,
 		maxResponseBytes: DefaultMaxResponseBytes,
 		header:           http.Header{},
 		userAgent:        "onesie-lib",
@@ -50,32 +51,49 @@ func New(opts ...Option) (*Client, error) {
 	}
 
 	c.httpClient = withoutRedirects(c.httpClient)
-
-	c.apiKey = orEnv(c.apiKey, c.lookupEnv, c.provider.EnvAPIKey)
-	baseURL, accountErr := c.provider.baseURL(c.baseURL, c.lookupEnv)
-	c.baseURL = strings.TrimRight(baseURL, "/")
 	c.defaultModel = c.provider.ResolveModel(c.defaultModel, c.lookupEnv)
-
-	// Computed once here rather than behind a package level singleton, which AGENTS.md bans.
 	c.runtime = fmt.Sprintf("go/%s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 
-	if c.apiKey == "" {
-		return nil, &ValidationError{Message: "no API key. Set " + c.provider.EnvAPIKey}
-	}
-
-	if accountErr != nil {
-		return nil, accountErr
-	}
-
-	if err := ValidateBaseURL(baseURL); err != nil {
+	baseURL, source, err := c.provider.ResolveBaseURL(c.baseURL, c.accountID, c.lookupEnv)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := c.retry.validate(); err != nil {
+	if !c.insecureHTTP && InsecureBaseURL(baseURL) {
+		return nil, refuseInsecure(baseURL, source)
+	}
+
+	c.baseURL, c.baseURLSource = baseURL, source
+
+	key, err := c.resolveKey()
+	if err != nil {
 		return nil, err
 	}
+
+	c.apiKey = key
 
 	return c, nil
+}
+
+func (c *Client) resolveKey() (string, error) {
+	if c.keyFunc == nil {
+		if key := orEnv("", c.lookupEnv, c.provider.envAPIKey); key != "" {
+			return key, nil
+		}
+
+		return "", &ValidationError{Message: "no API key. Set " + c.provider.envAPIKey, kind: ErrNoAPIKey}
+	}
+
+	key, err := c.keyFunc()
+	if err != nil {
+		return "", err
+	}
+
+	if strings.TrimSpace(key) == "" {
+		return "", &ValidationError{Message: "the API key is empty", kind: ErrNoAPIKey}
+	}
+
+	return strings.TrimSpace(key), nil
 }
 
 func withoutRedirects(hc *http.Client) *http.Client {
@@ -93,7 +111,11 @@ func withoutRedirects(hc *http.Client) *http.Client {
 // passing only a Clock, random source or RetryStatus that is safe for concurrent use too.
 type Client struct {
 	apiKey           string
+	keyFunc          func() (string, error)
+	accountID        string
 	baseURL          string
+	baseURLSource    BaseURLSource
+	insecureHTTP     bool
 	defaultModel     string
 	userAgent        string
 	runtime          string
@@ -118,6 +140,21 @@ func (c *Client) BaseURL() string {
 	return c.baseURL
 }
 
+// BaseURLSource reports where the client's base URL came from.
+func (c *Client) BaseURLSource() BaseURLSource {
+	return c.baseURLSource
+}
+
+// Provider returns the provider this client talks to.
+func (c *Client) Provider() Provider {
+	return c.provider
+}
+
+// DefaultModel returns the model a request carries when it names none, after the environment is read.
+func (c *Client) DefaultModel() string {
+	return c.defaultModel
+}
+
 // SystemOneURL is the address a question for the default model is posted to, the base URL with
 // that model's API path added.
 func (c *Client) SystemOneURL() string {
@@ -129,8 +166,13 @@ func (c *Client) RetryPolicy() RetryPolicy {
 	return c.retry
 }
 
-// AttemptTimeout returns the per attempt deadline, not a budget for the whole call.
+// AttemptTimeout returns the per attempt deadline WithAttemptTimeout set, or DefaultAttemptTimeout
+// when none was. A request with images uses AssetAttemptTimeout unless an option sets one.
 func (c *Client) AttemptTimeout() time.Duration {
+	if c.attemptTimeout == 0 {
+		return DefaultAttemptTimeout
+	}
+
 	return c.attemptTimeout
 }
 
@@ -161,9 +203,17 @@ func (c *Client) checkKey(ctx context.Context, opts []RequestOption) error {
 
 		return err
 	case keyCheckByEndpoint:
+		cfg, err := c.resolve(opts)
+		if err != nil {
+			return err
+		}
+
 		var discarded json.RawMessage
 
-		_, err := c.do(ctx, http.MethodGet, check.path, nil, &discarded, identity, opts...)
+		_, err = c.do(ctx, cfg, call{
+			method: http.MethodGet, path: check.path, out: &discarded, decode: identity,
+			via: c.provider.route(c.defaultModel),
+		})
 
 		return err
 	default:
@@ -174,44 +224,45 @@ func (c *Client) checkKey(ctx context.Context, opts []RequestOption) error {
 // SystemOne answers named questions about a state. Every question is evaluated in parallel and in
 // isolation, so batching is cheaper than one call per question.
 func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOption) (*Result, error) {
+	cfg, err := c.resolve(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	req.Model = strings.TrimSpace(req.Model)
 	if req.Model == "" {
 		req.Model = c.defaultModel
 	}
 
-	if err := ValidateRequest(req); err != nil {
+	if err = ValidateRequest(req); err != nil {
 		return nil, err
 	}
 
-	via, body, extra, err := encodeRequest(c.provider, req, c.sendsLongContext(opts))
+	sent, err := encodeRequest(c.provider, req, cfg.longContext)
 	if err != nil {
 		return nil, err
 	}
 
-	// Cloned, so the caller's slice is never written through.
-	opts = append(slices.Clone(opts), extra...)
-	if req.LongContext {
-		opts = append(opts, WithLongContext())
-	}
-
+	cfg.longContext, cfg.images = sent.needs.longContext, sent.images
 	result := &Result{}
 
-	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(body), result, via.decode, opts...)
+	res, err := c.do(ctx, cfg, call{
+		method: http.MethodPost, path: sent.via.path, payload: sent.body, out: result, decode: sent.via.decode,
+		via: sent.via, needs: sent.needs.asNeeds(),
+	})
 	if err != nil {
-		return nil, err
+		return nil, withUsage(err, &result.Usage)
 	}
 
 	result.RequestID = res.header.Get(c.provider.requestIDHeader)
 	result.Header = res.header
 
-	// Answers is a plain map, so no type ties it to the questions asked. Each question is checked
-	// for an answer here.
 	for _, named := range req.Questions {
 		if _, ok := result.Answers[named.ID]; !ok {
 			return nil, &ResponseError{
 				Status: res.status,
 				Body:   res.body,
-				Err:    fmt.Errorf("no answer for question %q", named.ID),
+				Err:    &resultShapeError{answer: named.ID, fault: faultNoAnswer},
 				Usage:  &result.Usage,
 			}
 		}
@@ -220,8 +271,40 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 	return result, nil
 }
 
-// MarshalBody encodes a request exactly as SystemOne sends it. A printed body and a sent body come
-// from this one encoder, which is what makes a printed body safe to replay.
+func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
+	return applyOptions(requestConfig{
+		attemptTimeout: c.attemptTimeout,
+		totalTimeout:   c.totalTimeout,
+		retry:          c.retry,
+		header:         c.header.Clone(),
+	}, opts)
+}
+
+type call struct {
+	method  string
+	path    string
+	payload []byte
+	out     any
+	decode  func([]byte) ([]byte, error)
+	via     route
+	needs   Needs
+}
+
+func withUsage(err error, usage *Usage) error {
+	var (
+		unusable *ResponseError
+		shape    *resultShapeError
+	)
+
+	// An answer is decoded only after the usage, so a fault in one means the usage was read.
+	if errors.As(err, &unusable) && errors.As(err, &shape) && shape.answer != "" {
+		unusable.Usage = usage
+	}
+
+	return err
+}
+
+// MarshalBody encodes a request as a raw body SystemOneRaw accepts.
 func MarshalBody(req Request) ([]byte, error) {
 	return json.Marshal(struct {
 		State       any       `json:"state"`
@@ -232,19 +315,8 @@ func MarshalBody(req Request) ([]byte, error) {
 	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
 }
 
-// MarshalQuestionsBody encodes a request with no state, the body a question only print produces and
-// -f accepts. It is a second encoder because a null or empty state is legitimate.
-func MarshalQuestionsBody(req Request) ([]byte, error) {
-	return json.Marshal(struct {
-		Model       string    `json:"model"`
-		Questions   Questions `json:"questions"`
-		LongContext bool      `json:"long_context,omitempty"`
-	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext})
-}
-
-// Request is one evaluation. All questions see the same state and are answered independently.
-// Assets are the images the state and questions reference. LongContext raises the context limits
-// on a provider that has them.
+// Request is one evaluation, whose questions all see the same state and are answered independently.
+// Assets holds the images they reference, and LongContext raises the context limits.
 type Request struct {
 	State       any
 	Questions   Questions
@@ -253,25 +325,40 @@ type Request struct {
 	LongContext bool
 }
 
-// SystemOneRaw sends a prepared request body through the SystemOne retry loop and returns the
-// response body unchanged. The body goes through PrepareRawBody with the default model first.
+// SystemOneRaw prepares body as PrepareRaw does, sends it through the SystemOne retry loop and returns
+// the response body unchanged. A body PrepareRaw already prepared is sent the same.
 func (c *Client) SystemOneRaw(
 	ctx context.Context,
 	body json.RawMessage,
 	opts ...RequestOption,
 ) (json.RawMessage, error) {
-	via, prepared, sendOpts, err := c.prepareRaw(body, opts)
+	cfg, err := c.resolve(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(prepared), nil, identity, sendOpts...)
+	prepared, err := c.provider.prepare(body, c.defaultModel, cfg.longContext)
+	if err != nil {
+		return nil, err
+	}
+
+	sent, err := encodeBody(prepared.via, prepared.needs, withoutLongContext(prepared.body))
+	if err != nil {
+		return nil, err
+	}
+
+	cfg.longContext, cfg.images = sent.needs.longContext, sent.images
+
+	res, err := c.do(ctx, cfg, call{
+		method: http.MethodPost, path: sent.via.path, payload: sent.body, decode: identity,
+		via: sent.via, needs: sent.needs.asNeeds(),
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	// Decoded here, not in do, so a body that is empty or not JSON comes back as it is.
-	decoded, err := via.decode(res.body)
+	decoded, err := sent.via.decode(res.body)
 	if err != nil {
 		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
@@ -279,65 +366,24 @@ func (c *Client) SystemOneRaw(
 	return decoded, nil
 }
 
-func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, []byte, []RequestOption, error) {
-	trimmed, longContext, err := takeLongContext(PrepareRawBody(body, c.defaultModel, false))
-	if err != nil {
-		return route{}, nil, nil, err
-	}
-
-	scan := scanBody(trimmed)
-
-	model := scan.model
-	if model == "" {
-		model = c.defaultModel
-	}
-
-	via := c.provider.route(model)
-	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext}
-
-	if needs.images || needs.box {
-		if fault := checkBodyImages(trimmed); fault != nil {
-			return route{}, nil, nil, fault
-		}
-	}
-
-	needs.longContext = needs.longContext || c.sendsLongContext(opts)
-	if refusal := via.refuse(c.provider.Name, model, needs); refusal != nil {
-		return route{}, nil, nil, refusal
-	}
-
-	sent, extra, err := encodeBody(via, needs, trimmed)
-	if err != nil {
-		return route{}, nil, nil, err
-	}
-
-	// Cloned, so the caller's slice is never written through.
-	sendOpts := slices.Clone(opts)
-	if longContext {
-		sendOpts = append(sendOpts, WithLongContext())
-	}
-
-	return via, sent, append(sendOpts, extra...), nil
-}
-
-func (c *Client) sendsLongContext(opts []RequestOption) bool {
-	cfg := requestConfig{header: c.header.Clone()}
-
-	for _, opt := range opts {
-		if err := opt(&cfg); err != nil {
-			// Not a refusal. do applies the options again and reports the error, as it always has.
-			return false
-		}
-	}
-
-	return cfg.header.Get(HeaderLongContext) == "true"
+// PrepareRaw is Provider.PrepareRaw with the client's provider and default model.
+func (c *Client) PrepareRaw(body json.RawMessage, opts ...RequestOption) (json.RawMessage, error) {
+	return c.provider.PrepareRaw(body, c.defaultModel, opts...)
 }
 
 // ListModels reports the model names this account may send.
 func (c *Client) ListModels(ctx context.Context, opts ...RequestOption) ([]ModelCard, error) {
+	cfg, err := c.resolve(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	var raw json.RawMessage
 
-	res, err := c.do(ctx, http.MethodGet, c.provider.modelsPath, nil, &raw, identity, opts...)
+	res, err := c.do(ctx, cfg, call{
+		method: http.MethodGet, path: c.provider.modelsPath, out: &raw, decode: identity,
+		via: c.provider.route(c.defaultModel),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -357,67 +403,38 @@ type ModelCard struct {
 	ReleaseDate string `json:"release_date"`
 }
 
-func (c *Client) do(
-	ctx context.Context,
-	method, path string,
-	body, out any,
-	decode func([]byte) ([]byte, error),
-	opts ...RequestOption,
-) (*rawResponse, error) {
-	cfg := requestConfig{
-		attemptTimeout: c.attemptTimeout,
-		totalTimeout:   c.totalTimeout,
-		retry:          c.retry,
-		header:         c.header.Clone(),
-	}
-
-	for _, opt := range opts {
-		if err := opt(&cfg); err != nil {
-			return nil, err
-		}
-	}
+func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawResponse, error) {
+	cfg.attemptTimeout = attemptTimeoutFor(cfg.attemptTimeout, req.needs.Images)
 
 	if cfg.totalTimeout > 0 {
 		var cancel context.CancelFunc
 
-		ctx, cancel = context.WithTimeout(ctx, cfg.totalTimeout)
+		ctx, cancel = context.WithTimeoutCause(ctx, cfg.totalTimeout, errTotalTimeout)
 		defer cancel()
 	}
 
 	var payload []byte
 
-	switch prepared := body.(type) {
-	case nil:
-	case json.RawMessage:
-		// Compacted rather than re-marshalled. json.Marshal HTML escapes, and a caller that
-		// prepared its own body is entitled to have it forwarded as written.
-		var flat bytes.Buffer
-
-		if err := json.Compact(&flat, prepared); err != nil {
-			return nil, fmt.Errorf("onesie: encoding request: %w", err)
-		}
-
-		payload = flat.Bytes()
-	default:
-		encoded, err := json.Marshal(body)
+	if req.payload != nil {
+		compacted, err := compactBody(req.payload)
 		if err != nil {
-			return nil, fmt.Errorf("onesie: encoding request: %w", err)
+			return nil, err
 		}
 
-		payload = encoded
+		payload = compacted
 	}
 
 	// Numbered so concurrent requests, and the attempts within one, can be told apart in the logs.
-	tag := fmt.Sprintf("#%d %s %s", c.requests.Add(1), method, path)
-	url := c.baseURL + path
+	tag := fmt.Sprintf("#%d %s %s", c.requests.Add(1), req.method, withoutQuery(req.path))
+	target := c.baseURL + req.path
 
 	for attempt := 0; ; attempt++ {
 		retriesLeft := cfg.retry.MaxRetries - attempt
 
-		res, err := c.attempt(ctx, tag, attempt, method, url, payload, cfg)
+		res, err := c.attempt(ctx, tag, attempt, req.method, target, payload, cfg)
 		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, fmt.Errorf("onesie: %s: %w", tag, ctxErr)
+			if ctx.Err() != nil {
+				return nil, interrupted(ctx, cfg.totalTimeout)
 			}
 
 			if retriesLeft <= 0 || !retryableError(err, cfg.retry) {
@@ -432,10 +449,10 @@ func (c *Client) do(
 		}
 
 		if res.status >= 200 && res.status < 300 {
-			return res, decodeInto(res, url, out, decode)
+			return res, decodeInto(res, withoutQuery(target), req.out, req.decode)
 		}
 
-		apiErr := newAPIError(res.status, res.header, c.provider.requestIDHeader, res.body, c.clock.Now())
+		apiErr := newAPIError(req.via, req.needs, res.status, res.header, res.body, c.clock.Now())
 
 		if retriesLeft <= 0 || !cfg.retry.RetryStatus(res.status) {
 			return nil, apiErr
@@ -458,11 +475,34 @@ func (c *Client) do(
 	}
 }
 
+func compactBody(body []byte) ([]byte, error) {
+	// Compacted rather than re-marshalled. json.Marshal HTML escapes, and a caller that prepared its
+	// own body is entitled to have it forwarded as written.
+	var flat bytes.Buffer
+
+	if err := json.Compact(&flat, body); err != nil {
+		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error()}
+	}
+
+	return flat.Bytes(), nil
+}
+
+func attemptTimeoutFor(set time.Duration, images bool) time.Duration {
+	switch {
+	case set > 0:
+		return set
+	case images:
+		return AssetAttemptTimeout
+	default:
+		return DefaultAttemptTimeout
+	}
+}
+
 func (c *Client) attempt(
 	ctx context.Context,
 	tag string,
 	attempt int,
-	method, url string,
+	method, target string,
 	payload []byte,
 	cfg requestConfig,
 ) (*rawResponse, error) {
@@ -475,9 +515,9 @@ func (c *Client) attempt(
 		reader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequestWithContext(actx, method, url, reader)
+	req, err := http.NewRequestWithContext(actx, method, target, reader)
 	if err != nil {
-		return nil, fmt.Errorf("onesie: building request: %w", err)
+		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error()}
 	}
 
 	c.setHeaders(req, cfg, attempt, payload != nil)
@@ -485,7 +525,7 @@ func (c *Client) attempt(
 	if c.logger.Enabled(actx, slog.LevelDebug) {
 		c.logger.DebugContext(actx, "onesie request",
 			"tag", tag,
-			"url", url,
+			"url", withoutQuery(target),
 			"headers", redactedHeader(req.Header),
 			// Not redacted, matching the JavaScript SDK, so debug logging a request discloses its
 			// payload.
@@ -497,8 +537,8 @@ func (c *Client) attempt(
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		failure := classify(ctx, actx, err, cfg.attemptTimeout)
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started)})
+		failure := classify(ctx, actx, queryHidden(err), cfg)
+		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
 
 		return nil, failure
 	}
@@ -512,11 +552,11 @@ func (c *Client) attempt(
 	// Read fully under the attempt deadline, so a slow body cannot outlive the timeout.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
 	if err != nil {
-		failure := classify(ctx, actx, err, cfg.attemptTimeout)
+		failure := classify(ctx, actx, err, cfg)
 		// Observed like any other failed round trip. The request was sent and the server answered,
 		// so an observer that skipped it would under count attempts and would see a failure it
 		// never saw an attempt for.
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started)})
+		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
 
 		return nil, failure
 	}
@@ -526,7 +566,7 @@ func (c *Client) attempt(
 			Err: fmt.Errorf("response body exceeded %d bytes", c.maxResponseBytes),
 		}
 
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started)})
+		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
 
 		return nil, failure
 	}
@@ -542,17 +582,20 @@ func (c *Client) attempt(
 		Index:    attempt,
 		Status:   resp.StatusCode,
 		Duration: c.clock.Now().Sub(started),
+		Timeout:  cfg.attemptTimeout,
 	})
 
 	return &rawResponse{status: resp.StatusCode, header: resp.Header, body: data}, nil
 }
 
-// Attempt describes one HTTP round trip. An observer sees every attempt, retries included.
+// Attempt describes one HTTP round trip and the timeout it ran with. An observer sees every attempt,
+// retries included.
 type Attempt struct {
 	Index    int
 	Status   int
 	Err      error
 	Duration time.Duration
+	Timeout  time.Duration
 }
 
 func (c *Client) setHeaders(req *http.Request, cfg requestConfig, attempt int, hasBody bool) {
@@ -561,6 +604,14 @@ func (c *Client) setHeaders(req *http.Request, cfg requestConfig, attempt int, h
 		for _, value := range values {
 			req.Header.Add(name, value)
 		}
+	}
+
+	if cfg.images {
+		req.Header.Set(HeaderImages, "true")
+	}
+
+	if cfg.longContext {
+		req.Header.Set(HeaderLongContext, "true")
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -601,13 +652,30 @@ func (c *Client) backOff(
 	)
 
 	if err := c.clock.Sleep(ctx, delay); err != nil {
-		return fmt.Errorf("onesie: %s: %w", tag, err)
+		if ctx.Err() != nil {
+			return interrupted(ctx, cfg.totalTimeout)
+		}
+
+		return &ConnectionError{Err: err}
 	}
 
 	return nil
 }
 
-func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]byte, error)) error {
+func interrupted(ctx context.Context, total time.Duration) error {
+	err := ctx.Err()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return &ConnectionError{Err: err}
+	}
+
+	if !errors.Is(context.Cause(ctx), errTotalTimeout) {
+		total = 0
+	}
+
+	return &TimeoutError{ConnectionError: ConnectionError{Err: err}, Timeout: total}
+}
+
+func decodeInto(res *rawResponse, shown string, out any, decode func([]byte) ([]byte, error)) error {
 	if out == nil {
 		return nil
 	}
@@ -620,7 +688,7 @@ func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]by
 		return &ResponseError{
 			Status: res.status,
 			Body:   res.body,
-			Err:    fmt.Errorf("the response is not JSON, check the base URL %s", url),
+			Err:    fmt.Errorf("the response is not JSON, check the base URL %s", shown),
 		}
 	}
 
@@ -630,16 +698,7 @@ func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]by
 	}
 
 	if err = json.Unmarshal(body, out); err != nil {
-		return &ResponseError{Status: res.status, Body: res.body, Err: err, Usage: spentOn(err)}
-	}
-
-	return nil
-}
-
-func spentOn(err error) *Usage {
-	var refused *answerDecodeError
-	if errors.As(err, &refused) {
-		return &refused.usage
+		return &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
 
 	return nil
@@ -651,16 +710,31 @@ type rawResponse struct {
 	body   []byte
 }
 
-func classify(ctx, actx context.Context, err error, timeout time.Duration) error {
+func classify(ctx, actx context.Context, err error, cfg requestConfig) error {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return interrupted(ctx, cfg.totalTimeout)
 	}
 
 	if actx.Err() != nil {
-		return &TimeoutError{ConnectionError: ConnectionError{Err: err}, Timeout: timeout}
+		return &TimeoutError{ConnectionError: ConnectionError{Err: err}, Timeout: cfg.attemptTimeout}
 	}
 
 	return &ConnectionError{Err: err}
+}
+
+func queryHidden(err error) error {
+	var failed *url.Error
+	if errors.As(err, &failed) {
+		failed.URL = withoutQuery(failed.URL)
+	}
+
+	return err
+}
+
+func withoutQuery(target string) string {
+	before, _, _ := strings.Cut(target, "?")
+
+	return before
 }
 
 func retryableError(err error, policy RetryPolicy) bool {

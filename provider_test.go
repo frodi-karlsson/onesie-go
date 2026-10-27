@@ -36,8 +36,8 @@ func TestProviderNamed(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if provider.Name != tc.want {
-				t.Errorf("Name = %q, want %q", provider.Name, tc.want)
+			if provider.Name() != tc.want {
+				t.Errorf("Name = %q, want %q", provider.Name(), tc.want)
 			}
 		})
 	}
@@ -84,7 +84,6 @@ func TestProviderRefuse(t *testing.T) {
 		},
 		{name: "should take long context on levanto", provider: onesie.Levanto(), needs: onesie.Needs{LongContext: true}},
 		{name: "should read a blank model as the default", provider: onesie.Levanto(), model: "  ", needs: onesie.Needs{Box: true}, wantErr: noBox},
-		{name: "should take everything on a provider a caller built", provider: onesie.Provider{Name: "mine"}, needs: everything},
 		{name: "should take images on cloudflare", provider: onesie.Cloudflare(), needs: onesie.Needs{Images: true}},
 		{
 			name: "should refuse a box question on cloudflare", provider: onesie.Cloudflare(), model: "clef-flash",
@@ -126,7 +125,7 @@ func TestProviders(t *testing.T) {
 
 		var names []string
 		for _, provider := range onesie.Providers() {
-			names = append(names, provider.Name)
+			names = append(names, provider.Name())
 		}
 
 		if got := strings.Join(names, " "); got != "typesafe openrouter berget levanto cloudflare" {
@@ -138,9 +137,9 @@ func TestProviders(t *testing.T) {
 		t.Parallel()
 
 		for _, provider := range onesie.Providers() {
-			named, err := onesie.ProviderNamed(provider.Name)
-			if err != nil || named.Name != provider.Name {
-				t.Errorf("ProviderNamed(%s) = %v, %v", provider.Name, named.Name, err)
+			named, err := onesie.ProviderNamed(provider.Name())
+			if err != nil || named.Name() != provider.Name() {
+				t.Errorf("ProviderNamed(%s) = %v, %v", provider.Name(), named.Name(), err)
 			}
 		}
 	})
@@ -148,6 +147,14 @@ func TestProviders(t *testing.T) {
 
 func TestCapabilityError(t *testing.T) {
 	t.Parallel()
+
+	t.Run("should match ErrNotServed, as a server refusal does", func(t *testing.T) {
+		t.Parallel()
+
+		if err := onesie.Levanto().Refuse("", onesie.Needs{Images: true}); !errors.Is(err, onesie.ErrNotServed) {
+			t.Errorf("error = %v, want ErrNotServed", err)
+		}
+	})
 
 	t.Run("should carry the provider, the model, what is missing and who takes it", func(t *testing.T) {
 		t.Parallel()
@@ -177,7 +184,7 @@ func TestCapabilityError(t *testing.T) {
 
 		var refused *onesie.CapabilityError
 		if err := onesie.Cloudflare().Refuse(" ", onesie.Needs{LongContext: true}); !errors.As(err, &refused) ||
-			refused.Model != onesie.CloudflareDefaultModel {
+			refused.Model != onesie.Cloudflare().DefaultModel() {
 			t.Errorf("error = %+v, want the default model named", err)
 		}
 	})
@@ -205,7 +212,7 @@ func TestCapabilityError(t *testing.T) {
 		_, err = client.SystemOneRaw(t.Context(), []byte(`{"state":"s","questions":{"b":{"type":"box","instructions":"x"}}}`))
 
 		var refused *onesie.CapabilityError
-		if !errors.As(err, &refused) || refused.Model != onesie.LevantoDefaultModel || !refused.Missing.Box {
+		if !errors.As(err, &refused) || refused.Model != onesie.Levanto().DefaultModel() || !refused.Missing.Box {
 			t.Errorf("error = %v, want a CapabilityError for the box", err)
 		}
 	})
@@ -333,12 +340,12 @@ func TestProviderEncode(t *testing.T) {
 		t.Parallel()
 
 		typesafe, err := onesie.TypeSafe().Encode(text)
-		if err != nil || !strings.Contains(string(typesafe), `"model":"`+onesie.DefaultModel+`"`) {
+		if err != nil || !strings.Contains(string(typesafe), `"model":"`+onesie.TypeSafe().DefaultModel()+`"`) {
 			t.Errorf("typesafe = %s, %v, want the default model", typesafe, err)
 		}
 
 		cloudflare, err := onesie.Cloudflare().Encode(text)
-		if err != nil || !strings.Contains(string(cloudflare), `"model":"`+onesie.CloudflareDefaultModel+`"`) ||
+		if err != nil || !strings.Contains(string(cloudflare), `"model":"`+onesie.Cloudflare().DefaultModel()+`"`) ||
 			!strings.Contains(string(cloudflare), `"input":`) {
 			t.Errorf("cloudflare = %s, %v, want jev's envelope", cloudflare, err)
 		}
@@ -359,24 +366,6 @@ func TestProviderEncode(t *testing.T) {
 		body, err := onesie.TypeSafe().Encode(onesie.Request{State: "s", Questions: oneNoul(), LongContext: true})
 		if err != nil || strings.Contains(string(body), "long_context") {
 			t.Errorf("body = %s, %v, want no long_context", body, err)
-		}
-	})
-
-	t.Run("should return the marshalled body on a provider built outside the package", func(t *testing.T) {
-		t.Parallel()
-
-		body, err := onesie.Provider{Name: "mine"}.Encode(text)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		want, err := onesie.MarshalBody(text)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if string(body) != string(want) {
-			t.Errorf("body = %s, want %s", body, want)
 		}
 	})
 
@@ -405,4 +394,155 @@ func TestProviderEncode(t *testing.T) {
 			t.Errorf("body = %s, %v, want the image inlined", body, err)
 		}
 	})
+}
+
+func TestProvider(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		provider        onesie.Provider
+		wantName        string
+		envAPIKey       string
+		envBaseURL      string
+		envDefaultModel string
+		envAccountID    string
+		defaultModel    string
+		defaultBaseURL  string
+	}{
+		{
+			name: "should describe typesafe", provider: onesie.TypeSafe(), wantName: "typesafe",
+			envAPIKey: "TYPESAFE_API_KEY", envBaseURL: "TYPESAFE_BASE_URL", envDefaultModel: "TYPESAFE_DEFAULT_MODEL",
+			defaultModel: "jev-latest", defaultBaseURL: "https://api.typesafe.ai",
+		},
+		{
+			name: "should describe openrouter", provider: onesie.OpenRouter(), wantName: "openrouter",
+			envAPIKey: "OPENROUTER_API_KEY", defaultModel: "jev-latest", defaultBaseURL: "https://openrouter.ai/api",
+		},
+		{
+			name: "should describe berget", provider: onesie.Berget(), wantName: "berget",
+			envAPIKey: "BERGET_API_KEY", defaultModel: "systemone", defaultBaseURL: "https://api.berget.ai",
+		},
+		{
+			name: "should describe levanto", provider: onesie.Levanto(), wantName: "levanto",
+			envAPIKey: "LEVANTO_API_KEY", defaultModel: "sage-latest", defaultBaseURL: "https://sage.levanto.ai",
+		},
+		{
+			name: "should describe cloudflare, whose base URL depends on the account", provider: onesie.Cloudflare(),
+			wantName: "cloudflare", envAPIKey: "CLOUDFLARE_API_TOKEN", envAccountID: "CLOUDFLARE_ACCOUNT_ID",
+			defaultModel: "typesafe/jev",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			p := tc.provider
+			got := []string{p.Name(), p.EnvAPIKey(), p.EnvBaseURL(), p.EnvDefaultModel(), p.EnvAccountID(), p.DefaultModel(), p.DefaultBaseURL()}
+			want := []string{tc.wantName, tc.envAPIKey, tc.envBaseURL, tc.envDefaultModel, tc.envAccountID, tc.defaultModel, tc.defaultBaseURL}
+
+			if strings.Join(got, "|") != strings.Join(want, "|") {
+				t.Errorf("accessors = %q, want %q", got, want)
+			}
+		})
+	}
+
+	t.Run("should refuse a zero provider alike everywhere", func(t *testing.T) {
+		t.Parallel()
+
+		const want = "onesie: the provider is empty. Use ProviderNamed with typesafe, openrouter, berget, levanto or cloudflare"
+
+		var zero onesie.Provider
+
+		refuseErr := zero.Refuse("", onesie.Needs{})
+		_, encodeErr := zero.Encode(onesie.Request{State: "s", Questions: oneNoul()})
+		_, newErr := onesie.New(onesie.WithAPIKey("k"), onesie.WithProvider(zero))
+
+		for _, err := range []error{refuseErr, encodeErr, newErr} {
+			if !errors.Is(err, onesie.ErrValidation) || err.Error() != want {
+				t.Errorf("error = %v, want %q", err, want)
+			}
+		}
+	})
+}
+
+func TestProviderResolveBaseURL(t *testing.T) {
+	t.Parallel()
+
+	const account = "0123456789abcdef0123456789abcdef"
+
+	accountURL := "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai"
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		explicit string
+		account  string
+		env      map[string]string
+		want     string
+		source   onesie.BaseURLSource
+		wantErr  error
+	}{
+		{name: "should give the default", provider: onesie.TypeSafe(), want: "https://api.typesafe.ai", source: onesie.BaseURLFromDefault},
+		{
+			name: "should read the environment and trim its slash", provider: onesie.TypeSafe(),
+			env: map[string]string{"TYPESAFE_BASE_URL": "https://proxy.example/"}, want: "https://proxy.example", source: onesie.BaseURLFromEnv,
+		},
+		{
+			name: "should let the explicit URL win", provider: onesie.TypeSafe(), explicit: " https://explicit.example ",
+			env: map[string]string{"TYPESAFE_BASE_URL": "https://proxy.example"}, want: "https://explicit.example", source: onesie.BaseURLFromOption,
+		},
+		{name: "should build the URL from the account", provider: onesie.Cloudflare(), account: account, want: accountURL, source: onesie.BaseURLFromAccount},
+		{
+			name: "should build the URL from the account variable", provider: onesie.Cloudflare(),
+			env: map[string]string{"CLOUDFLARE_ACCOUNT_ID": account}, want: accountURL, source: onesie.BaseURLFromAccount,
+		},
+		{
+			name: "should take plain http, which only New refuses", provider: onesie.TypeSafe(), explicit: "http://proxy.example",
+			want: "http://proxy.example", source: onesie.BaseURLFromOption,
+		},
+		{name: "should refuse a missing account", provider: onesie.Cloudflare(), wantErr: onesie.ErrNoAccountID},
+		{name: "should refuse a zero provider", wantErr: onesie.ErrValidation},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, source, err := tc.provider.ResolveBaseURL(tc.explicit, tc.account, lookupFrom(tc.env))
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("error = %v, want %v", err, tc.wantErr)
+				}
+
+				return
+			}
+
+			if err != nil || got != tc.want || source != tc.source {
+				t.Errorf("ResolveBaseURL = %q, %v, %v, want %q from %v", got, source, err, tc.want, tc.source)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name     string
+		explicit string
+		env      map[string]string
+		source   onesie.BaseURLSource
+	}{
+		{name: "should name an explicit URL as the source of its refusal", explicit: "https://k@host", source: onesie.BaseURLFromOption},
+		{name: "should name the variable as the source of its refusal", env: map[string]string{"TYPESAFE_BASE_URL": "https://k@host"}, source: onesie.BaseURLFromEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := onesie.TypeSafe().ResolveBaseURL(tc.explicit, "", lookupFrom(tc.env))
+
+			var refused *onesie.BaseURLError
+			if !errors.As(err, &refused) || refused.Source != tc.source {
+				t.Fatalf("error = %v, want a BaseURLError from %v", err, tc.source)
+			}
+		})
+	}
 }

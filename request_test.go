@@ -199,6 +199,23 @@ func TestUnreferencedAssets(t *testing.T) {
 				Assets:    onesie.Assets{"image-q": img, "image-s": img},
 			},
 		},
+		{
+			name: "should take nested names each named on its own",
+			req: onesie.Request{
+				State:     "photo1 and photo10",
+				Questions: questions,
+				Assets:    onesie.Assets{"image-q": img, "photo1": img, "photo10": img},
+			},
+		},
+		{
+			name: "should list a name found only inside a longer one",
+			req: onesie.Request{
+				State:     "img2",
+				Questions: questions,
+				Assets:    onesie.Assets{"image-q": img, "img": img, "img2": img},
+			},
+			want: []string{"img"},
+		},
 	}
 
 	for _, tc := range tests {

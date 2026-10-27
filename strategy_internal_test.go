@@ -2,7 +2,7 @@ package onesie
 
 import "testing"
 
-func TestScanBody(t *testing.T) {
+func TestScanMembers(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -34,8 +34,8 @@ func TestScanBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := scanBody([]byte(tc.body)); got != tc.want {
-				t.Errorf("scanBody = %+v, want %+v", got, tc.want)
+			if got := scanMembers(parseBody([]byte(tc.body)).members); got != tc.want {
+				t.Errorf("scanMembers = %+v, want %+v", got, tc.want)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -11,154 +12,89 @@ import (
 	"strings"
 )
 
-var rawOptions = []jsontext.Options{jsontext.AllowDuplicateNames(true), jsontext.PreserveRawStrings(true)}
-
-func inlineParts(body []byte) ([]byte, []RequestOption, error) {
-	members, err := readMembers(body)
-	if err != nil {
-		return nil, nil, err
-	}
-
+func inlineParts(members []member) ([]member, error) {
 	urls, err := dataURLsOf(members)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	parts, err := partsFrom(urls)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	rewriter := &inliner{refs: slices.Sorted(maps.Keys(urls)), used: map[string]bool{}, render: partsRenderer(parts)}
+	rewriter := &inliner{
+		matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}, render: partsRenderer(parts),
+	}
 
-	rewritten, err := rewriter.rewrite(members, nil)
+	rewritten, err := rewriter.rewrite(members)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	if len(rewritten) > MaxBodyBytes {
-		return nil, nil, &ValidationError{Message: fmt.Sprintf(
+	size, err := encodedSize(rewritten)
+	if err != nil {
+		return nil, err
+	}
+
+	if size > MaxBodyBytes {
+		return nil, &ValidationError{Message: fmt.Sprintf(
 			"the request body is %d bytes once each image is placed where it is named, and the API takes "+
 				"at most %d. This provider takes an image once per place it is named, so name each image once",
-			len(rewritten), MaxBodyBytes)}
+			size, MaxBodyBytes)}
 	}
 
-	return rewritten, nil, nil
+	return rewritten, nil
 }
 
-func assetsToImages(body []byte) ([]byte, []RequestOption, error) {
-	members, err := readMembers(body)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if slices.ContainsFunc(members, func(m member) bool { return m.name == "images" }) {
-		return nil, nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
+func assetsToImages(members []member) ([]member, error) {
+	if slices.ContainsFunc(members, named("images")) {
+		return nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
 	}
 
 	urls, err := dataURLsOf(members)
 	if err != nil {
-		return nil, nil, err
-	}
-
-	rewriter := &inliner{refs: slices.Sorted(maps.Keys(urls)), used: map[string]bool{}}
-	rewriter.render = rewriter.labels
-
-	rewritten, err := rewriter.rewrite(members, func(enc *jsontext.Encoder) error {
-		if writeErr := enc.WriteToken(jsontext.String("images")); writeErr != nil {
-			return writeErr
-		}
-
-		ordered := make([]string, 0, len(rewriter.order))
-		for _, ref := range rewriter.order {
-			ordered = append(ordered, urls[ref])
-		}
-
-		images, marshalErr := json.Marshal(ordered)
-		if marshalErr != nil {
-			return marshalErr
-		}
-
-		return enc.WriteValue(images)
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return rewritten, nil, nil
-}
-
-func (r *inliner) rewrite(members []member, last func(*jsontext.Encoder) error) ([]byte, error) {
-	var out bytes.Buffer
-
-	enc := jsontext.NewEncoder(&out, rawOptions...)
-	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
 		return nil, err
 	}
+
+	rewriter := &inliner{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}}
+	rewriter.render = rewriter.labels
+
+	rewritten, err := rewriter.rewrite(members)
+	if err != nil {
+		return nil, err
+	}
+
+	ordered := make([]string, 0, len(rewriter.order))
+	for _, ref := range rewriter.order {
+		ordered = append(ordered, urls[ref])
+	}
+
+	images, err := json.Marshal(ordered)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(rewritten, member{name: "images", value: images}), nil
+}
+
+func (r *inliner) rewrite(members []member) ([]member, error) {
+	rewritten := make([]member, 0, len(members))
 
 	for _, m := range members {
 		if m.name == "assets" {
 			continue
 		}
 
-		if err := enc.WriteToken(jsontext.String(m.name)); err != nil {
-			return nil, err
-		}
-
-		if err := r.member(enc, m); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := r.checkUsed(); err != nil {
-		return nil, err
-	}
-
-	if last != nil {
-		if err := last(enc); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := enc.WriteToken(jsontext.EndObject); err != nil {
-		return nil, err
-	}
-
-	// The encoder ends a top level value with a newline, which a request body does not need.
-	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
-}
-
-func readMembers(body []byte) ([]member, error) {
-	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions...)
-
-	if _, err := dec.ReadToken(); err != nil {
-		return nil, fmt.Errorf("onesie: reading the request body: %w", err)
-	}
-
-	var members []member
-
-	for dec.PeekKind() != '}' {
-		name, err := dec.ReadToken()
+		value, err := r.member(m)
 		if err != nil {
-			return nil, fmt.Errorf("onesie: reading the request body: %w", err)
+			return nil, err
 		}
 
-		key := name.String()
-
-		value, err := dec.ReadValue()
-		if err != nil {
-			return nil, fmt.Errorf("onesie: reading the request body: %w", err)
-		}
-
-		members = append(members, member{name: key, value: slices.Clone(value)})
+		rewritten = append(rewritten, member{name: m.name, value: value})
 	}
 
-	return members, nil
-}
-
-type member struct {
-	name  string
-	value jsontext.Value
+	return rewritten, nil
 }
 
 func dataURLsOf(members []member) (map[string]string, error) {
@@ -169,16 +105,13 @@ func dataURLsOf(members []member) (map[string]string, error) {
 			continue
 		}
 
-		var assets map[string]struct {
-			Format any `json:"format"`
-			Data   any `json:"data_base64"`
-		}
-		if err := json.Unmarshal(m.value, &assets); err != nil {
-			return nil, &ValidationError{Message: "assets must be an object of images"}
+		assets, err := readAssets(m.value)
+		if err != nil {
+			return nil, validationOr(err, "assets must be an object of images")
 		}
 
-		for ref, asset := range assets {
-			url, err := dataURLOf(ref, asset.Format, asset.Data)
+		for _, ref := range slices.Sorted(maps.Keys(assets)) {
+			url, err := dataURLOf(ref, assets[ref])
 			if err != nil {
 				return nil, err
 			}
@@ -190,17 +123,28 @@ func dataURLsOf(members []member) (map[string]string, error) {
 	return urls, nil
 }
 
-func dataURLOf(ref string, format, data any) (string, error) {
-	formatText, isText := format.(string)
-
-	mime := map[string]string{"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}[strings.ToLower(formatText)]
-	if !isText || mime == "" {
-		return "", &ValidationError{Message: fmt.Sprintf("asset '%s' needs a format, png or jpg", ref)}
+func validationOr(err error, message string) error {
+	var validation *ValidationError
+	if errors.As(err, &validation) {
+		return err
 	}
 
-	encoded, isText := data.(string)
-	if !isText {
-		return "", &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}
+	return &ValidationError{Message: message}
+}
+
+func dataURLOf(ref string, asset rawAsset) (string, error) {
+	if fault := asset.fault(ref); fault != nil {
+		return "", fault
+	}
+
+	encoded, err := textOf(asset.data)
+	if err != nil {
+		return "", validationOr(err, fmt.Sprintf("asset '%s' needs data_base64 as a string", ref))
+	}
+
+	mime := "image/png"
+	if wireFormat(asset.format) == "jpg" {
+		mime = "image/jpeg"
 	}
 
 	return "data:" + mime + ";base64," + encoded, nil
@@ -230,15 +174,25 @@ type imageURL struct {
 	URL string `json:"url"`
 }
 
-func (r *inliner) member(enc *jsontext.Encoder, m member) error {
-	switch m.name {
-	case "state":
-		return r.value(enc, jsontext.NewDecoder(bytes.NewReader(m.value), rawOptions...))
-	case "questions":
-		return r.questions(enc, jsontext.NewDecoder(bytes.NewReader(m.value), rawOptions...))
-	default:
-		return enc.WriteValue(m.value)
+func (r *inliner) member(m member) (jsontext.Value, error) {
+	if m.name != "state" && m.name != "questions" {
+		return m.value, nil
 	}
+
+	write := r.value
+	if m.name == "questions" {
+		write = r.questions
+	}
+
+	var out bytes.Buffer
+
+	enc := jsontext.NewEncoder(&out, rawOptions()...)
+	if err := write(enc, jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)); err != nil {
+		return nil, err
+	}
+
+	// The encoder ends a top level value with a newline, which a member does not need.
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
 }
 
 func (r *inliner) questions(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
@@ -370,7 +324,7 @@ func (r *inliner) split(text string) []piece {
 	start := 0
 
 	for i := 0; i < len(text); {
-		ref := r.longestAt(text[i:])
+		ref := r.matcher.longestAt(text[i:])
 		if ref == "" {
 			i++
 
@@ -397,18 +351,6 @@ func (r *inliner) split(text string) []piece {
 	}
 
 	return pieces
-}
-
-func (r *inliner) longestAt(text string) string {
-	longest := ""
-
-	for _, ref := range r.refs {
-		if len(ref) > len(longest) && strings.HasPrefix(text, ref) {
-			longest = ref
-		}
-	}
-
-	return longest
 }
 
 func partsRenderer(parts map[string]jsontext.Value) func(*jsontext.Encoder, []piece) error {
@@ -455,22 +397,11 @@ func (r *inliner) labels(enc *jsontext.Encoder, pieces []piece) error {
 	return enc.WriteToken(jsontext.String(text.String()))
 }
 
-func (r *inliner) checkUsed() error {
-	for _, ref := range r.refs {
-		if !r.used[ref] {
-			return &ValidationError{Message: fmt.Sprintf(
-				"asset '%s' is not referenced in the state or the questions, and the API refuses that", ref)}
-		}
-	}
-
-	return nil
-}
-
 type inliner struct {
-	refs   []string
-	used   map[string]bool
-	order  []string
-	render func(*jsontext.Encoder, []piece) error
+	matcher assetMatcher
+	used    map[string]bool
+	order   []string
+	render  func(*jsontext.Encoder, []piece) error
 }
 
 type piece struct {

@@ -67,14 +67,9 @@ func TestInlineParts(t *testing.T) {
 				"\"d\":1,\"d\":2,\"p\":" + a + "},\"questions\":{\"q\":{\"type\":\"noul\",\"instructions\":" + b + "}}}",
 		},
 		{
-			name:    "should refuse an asset nothing references",
-			body:    `{"state":"img-a","questions":{},` + assets + `}`,
-			wantErr: "asset 'img-ab' is not referenced",
-		},
-		{
 			name:    "should refuse an asset whose format is not png or jpg",
 			body:    `{"state":"img-a","questions":{},"assets":{"img-a":{"format":"gif","data_base64":"AQ=="}}}`,
-			wantErr: "asset 'img-a' needs a format, png or jpg",
+			wantErr: "image 'img-a' has format 'gif', and an image must be png or jpg",
 		},
 		{
 			name:    "should refuse an asset whose data is not a string",
@@ -98,7 +93,7 @@ func TestInlineParts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, opts, err := inlineParts([]byte(tc.body))
+			got, err := inlineParts(parseBody([]byte(tc.body)).members)
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want a validation error containing %q", err, tc.wantErr)
@@ -111,12 +106,9 @@ func TestInlineParts(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if len(opts) != 0 {
-				t.Errorf("options = %d, want none", len(opts))
-			}
-
-			if string(got) != tc.want {
-				t.Errorf("body\ngot  %s\nwant %s", got, tc.want)
+			out, writeErr := writeMembers(got)
+			if writeErr != nil || string(out) != tc.want {
+				t.Errorf("body\ngot  %s\nwant %s", out, tc.want)
 			}
 		})
 	}
@@ -164,10 +156,19 @@ func TestAssetsToImages(t *testing.T) {
 				`"images":["data:image/png;base64,AQ=="]}`,
 		},
 		{
-			name: "should refuse a name found only inside a longer one",
-			body: `{"state":"img2","questions":{},"assets":{"img":{"format":"png","data_base64":"AQ=="},` +
-				`"img2":{"format":"png","data_base64":"Ag=="}}}`,
-			wantErr: "onesie: asset 'img' is not referenced in the state or the questions, and the API refuses that",
+			name: "should read a format by its exact name and the last of repeated ones",
+			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"jpg","format":"png","Format":"jpg","data_base64":"AQ=="}}}`,
+			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
+		},
+		{
+			name: "should read the last of repeated assets whole",
+			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"jpg","data_base64":"Ag=="},"r1":{"format":"png","data_base64":"AQ=="}}}`,
+			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
+		},
+		{
+			name: "should read data by its exact name",
+			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"png","data_base64":"AQ==","Data_Base64":"Ag=="}}}`,
+			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
 		},
 		{
 			name:    "should refuse a body with both assets and images",
@@ -180,7 +181,7 @@ func TestAssetsToImages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, opts, err := assetsToImages([]byte(tc.body))
+			got, err := assetsToImages(parseBody([]byte(tc.body)).members)
 			if tc.wantErr != "" {
 				if err == nil || err.Error() != tc.wantErr {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
@@ -189,12 +190,13 @@ func TestAssetsToImages(t *testing.T) {
 				return
 			}
 
-			if err != nil || opts != nil {
-				t.Fatalf("unexpected error or options: %v, %v", err, opts)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if string(got) != tc.want {
-				t.Errorf("assetsToImages =\n%s\nwant\n%s", got, tc.want)
+			out, writeErr := writeMembers(got)
+			if writeErr != nil || string(out) != tc.want {
+				t.Errorf("body\ngot  %s\nwant %s", out, tc.want)
 			}
 		})
 	}

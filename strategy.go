@@ -11,12 +11,16 @@ import (
 // Refuse returns the error a request with these needs gets from this provider for model, or nil.
 // An empty model means the provider's built in default.
 func (p Provider) Refuse(model string, needs Needs) error {
+	if err := p.check(); err != nil {
+		return err
+	}
+
 	model = strings.TrimSpace(model)
 	if model == "" {
 		model = p.defaultModel
 	}
 
-	return p.route(model).refuse(p.Name, model, capabilities{
+	return p.route(model).refuse(p.name, model, capabilities{
 		images:      needs.Images,
 		box:         needs.Box,
 		longContext: needs.LongContext,
@@ -33,12 +37,16 @@ type Needs struct {
 // Encode refuses a request this provider's route does not take, then returns the body SystemOne
 // sends, without the headers it adds. A blank model is the built in default. It does not validate.
 func (p Provider) Encode(req Request) ([]byte, error) {
-	_, body, _, err := encodeRequest(p, req, false)
+	if err := p.check(); err != nil {
+		return nil, err
+	}
 
-	return body, err
+	sent, err := encodeRequest(p, req, false)
+
+	return sent.body, err
 }
 
-func encodeRequest(p Provider, req Request, headerLongContext bool) (route, []byte, []RequestOption, error) {
+func encodeRequest(p Provider, req Request, longContext bool) (encoded, error) {
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
 		model = p.defaultModel
@@ -46,48 +54,46 @@ func encodeRequest(p Provider, req Request, headerLongContext bool) (route, []by
 
 	via := p.route(model)
 	needs := requestNeeds(req)
-	needs.longContext = needs.longContext || headerLongContext
+	needs.longContext = needs.longContext || longContext
 
-	if err := via.refuse(p.Name, model, needs); err != nil {
-		return route{}, nil, nil, err
+	if err := via.refuse(p.name, model, needs); err != nil {
+		return encoded{}, err
 	}
 
 	// Long context travels as a header, so the body never carries it.
 	body, err := MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
 	if err != nil {
-		return route{}, nil, nil, err
+		return encoded{}, unencodable(err)
 	}
 
-	sent, extra, err := encodeBody(via, needs, body)
-	if err != nil {
-		return route{}, nil, nil, err
-	}
-
-	return via, sent, extra, nil
+	return encodeBody(via, needs, parseBody(body))
 }
 
-func encodeBody(via route, needs capabilities, body []byte) ([]byte, []RequestOption, error) {
-	var extra []RequestOption
+type encoded struct {
+	via    route
+	body   []byte
+	needs  capabilities
+	images bool
+}
 
-	if needs.images || needs.box {
-		sent, added, err := via.images(body)
+func encodeBody(via route, needs capabilities, b jsonBody) (encoded, error) {
+	withImages := needs.images || needs.box
+
+	if withImages && via.images != nil {
+		members, err := via.images(b.members)
 		if err != nil {
-			return nil, nil, err
+			return encoded{}, err
 		}
 
-		body, extra = sent, added
+		b = b.with(members)
 	}
 
-	encoded, err := via.encode(body)
+	sent, err := via.encode(b)
 	if err != nil {
-		return nil, nil, err
+		return encoded{}, err
 	}
 
-	return encoded, extra, nil
-}
-
-func assetsMap(body []byte) ([]byte, []RequestOption, error) {
-	return body, []RequestOption{WithRequestHeader(HeaderImages, "true")}, nil
+	return encoded{via: via, body: sent, needs: needs, images: withImages && via.imagesHeader}, nil
 }
 
 func requestNeeds(req Request) capabilities {
@@ -102,39 +108,17 @@ func requestNeeds(req Request) capabilities {
 	}
 }
 
-func scanBody(body []byte) bodyScan {
+func scanMembers(members []member) bodyScan {
 	var scan bodyScan
 
-	// A bytes.Buffer, which jsontext parses in place, so no image is copied.
-	dec := jsontext.NewDecoder(bytes.NewBuffer(body), rawOptions...)
-	if dec.PeekKind() != '{' {
-		return scan
-	}
-
-	if _, err := dec.ReadToken(); err != nil {
-		return scan
-	}
-
-	for dec.PeekKind() != '}' {
-		name, err := dec.ReadToken()
-		if err != nil {
-			return scan
-		}
-
-		key := name.String()
-
-		value, err := dec.ReadValue()
-		if err != nil {
-			return scan
-		}
-
-		switch key {
+	for _, m := range members {
+		switch m.name {
 		case "model":
-			scan.model = modelName(value)
+			scan.model = modelName(m.value)
 		case "assets":
-			scan.assets = scan.assets || nonEmptyAssets(value)
+			scan.assets = scan.assets || nonEmptyAssets(m.value)
 		case "questions":
-			scan.box = scan.box || hasBoxQuestion(value)
+			scan.box = scan.box || hasBoxQuestion(m.value)
 		}
 	}
 
@@ -161,7 +145,7 @@ func nonEmptyAssets(value jsontext.Value) bool {
 	case 'n':
 		return false
 	case '{':
-		dec := jsontext.NewDecoder(bytes.NewBuffer(value), rawOptions...)
+		dec := jsontext.NewDecoder(bytes.NewBuffer(value), rawOptions()...)
 		if _, err := dec.ReadToken(); err != nil {
 			return true
 		}

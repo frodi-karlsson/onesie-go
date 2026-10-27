@@ -1,11 +1,13 @@
 package onesie_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -44,7 +46,7 @@ func TestClientSystemOneURL(t *testing.T) {
 	}{
 		{
 			name: "should add the API path to each provider's default base URL",
-			want: onesie.DefaultBaseURL + "/v1/systemone",
+			want: onesie.TypeSafe().DefaultBaseURL() + "/v1/systemone",
 		},
 		{
 			name:    "should add the API path to a base URL whose path already ends in /v1",
@@ -111,7 +113,7 @@ func TestNew(t *testing.T) {
 			{
 				name: "should refuse a missing account",
 				env:  map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
-				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, or pass the base URL " +
+				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, pass WithAccountID, or pass the base URL " +
 					"https://api.cloudflare.com/client/v4/accounts/<account_id>/ai",
 			},
 			{
@@ -132,9 +134,40 @@ func TestNew(t *testing.T) {
 				wantURL: "https://proxy.example/ai/run",
 			},
 			{
-				name:    "should report the key before the account",
-				env:     map[string]string{},
-				wantErr: "onesie: no API key. Set CLOUDFLARE_API_TOKEN",
+				name: "should report the account before the key",
+				env:  map[string]string{},
+				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, pass WithAccountID, or pass the base URL " +
+					"https://api.cloudflare.com/client/v4/accounts/<account_id>/ai",
+			},
+			{
+				name:    "should build the base url from WithAccountID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
+				opts:    []onesie.Option{onesie.WithAccountID(account)},
+				wantURL: "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run",
+			},
+			{
+				name:    "should let WithAccountID win over CLOUDFLARE_ACCOUNT_ID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t", "CLOUDFLARE_ACCOUNT_ID": "nope"},
+				opts:    []onesie.Option{onesie.WithAccountID(account)},
+				wantURL: "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run",
+			},
+			{
+				name:    "should let WithBaseURL win over WithAccountID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
+				opts:    []onesie.Option{onesie.WithAccountID(account), onesie.WithBaseURL("https://proxy.example/ai")},
+				wantURL: "https://proxy.example/ai/run",
+			},
+			{
+				name:    "should ignore a blank WithAccountID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t", "CLOUDFLARE_ACCOUNT_ID": account},
+				opts:    []onesie.Option{onesie.WithAccountID("  ")},
+				wantURL: "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run",
+			},
+			{
+				name:    "should refuse a malformed WithAccountID, naming the account id",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
+				opts:    []onesie.Option{onesie.WithAccountID("nope")},
+				wantErr: "onesie: the account id must be 32 hexadecimal characters",
 			},
 		}
 
@@ -164,6 +197,115 @@ func TestNew(t *testing.T) {
 		}
 	})
 
+	t.Run("should resolve the key and the account", func(t *testing.T) {
+		t.Parallel()
+
+		const account = "0123456789abcdef0123456789abcdef"
+
+		t.Run("should refuse an account on a provider without accounts", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKey("k"), onesie.WithAccountID(account))
+			if !errors.Is(err, onesie.ErrValidation) || err.Error() != "onesie: the typesafe provider takes no account id" {
+				t.Fatalf("error = %v, want the account refused", err)
+			}
+		})
+
+		t.Run("should take the account whichever order the options come in", func(t *testing.T) {
+			t.Parallel()
+
+			client, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAccountID(account),
+				onesie.WithAPIKey("k"), onesie.WithProvider(onesie.Cloudflare()))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if !strings.Contains(client.BaseURL(), account) {
+				t.Errorf("BaseURL = %s, want the account", client.BaseURL())
+			}
+		})
+
+		t.Run("should match ErrNoAccountID for a missing account", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKey("k"), onesie.WithProvider(onesie.Cloudflare()))
+			if !errors.Is(err, onesie.ErrNoAccountID) || !errors.Is(err, onesie.ErrValidation) {
+				t.Fatalf("error = %v, want ErrNoAccountID", err)
+			}
+		})
+
+		t.Run("should call the key func only after the base url passes", func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			key := func() (string, error) {
+				calls++
+
+				return "k", nil
+			}
+
+			_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKeyFunc(key), onesie.WithBaseURL("not a url"))
+			if !errors.Is(err, onesie.ErrValidation) || calls != 0 {
+				t.Fatalf("error = %v after %d calls, want a base url refusal and no call", err, calls)
+			}
+		})
+
+		t.Run("should return the key func's error as it is", func(t *testing.T) {
+			t.Parallel()
+
+			locked := errors.New("the keychain is locked")
+
+			_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKeyFunc(func() (string, error) { return "", locked }))
+			if !errors.Is(err, locked) || err.Error() != "the keychain is locked" {
+				t.Fatalf("error = %v, want the func's own error", err)
+			}
+		})
+
+		t.Run("should refuse a nil key func", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := onesie.New(onesie.WithAPIKeyFunc(nil))
+			if !errors.Is(err, onesie.ErrValidation) || err.Error() != "onesie: API key func must not be nil" {
+				t.Fatalf("error = %v, want the nil func refused", err)
+			}
+		})
+
+		for _, opt := range []onesie.Option{
+			onesie.WithAPIKey(" "),
+			onesie.WithAPIKeyFunc(func() (string, error) { return "", nil }),
+		} {
+			t.Run("should refuse an explicit empty key and not read the environment", func(t *testing.T) {
+				t.Parallel()
+
+				_, err := onesie.New(onesie.WithEnv(lookupFrom(map[string]string{"TYPESAFE_API_KEY": "sk-env"})), opt)
+				if !errors.Is(err, onesie.ErrNoAPIKey) || err.Error() != "onesie: the API key is empty" {
+					t.Fatalf("error = %v, want the empty key refused", err)
+				}
+			})
+		}
+
+		t.Run("should let the last key option win", func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+
+			client, err := onesie.New(onesie.WithEnv(lookupFrom(nil)),
+				onesie.WithAPIKeyFunc(func() (string, error) { return "sk-func", nil }), onesie.WithAPIKey("sk-last"),
+				onesie.WithBaseURL("https://api.example"), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := transport.last().Header.Get("Authorization"); got != "Bearer sk-last" {
+				t.Errorf("Authorization = %q, want the last key", got)
+			}
+		})
+	})
+
 	mockEnv := func(values map[string]string) func(string) (string, bool) {
 		return func(name string) (string, bool) {
 			value, ok := values[name]
@@ -180,17 +322,21 @@ func TestNew(t *testing.T) {
 			t.Fatalf("expected an error, got none")
 		}
 
-		for _, want := range []string{onesie.EnvAPIKey, "no API key"} {
+		for _, want := range []string{onesie.TypeSafe().EnvAPIKey(), "no API key"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error = %q, want it to name %q", err.Error(), want)
 			}
+		}
+
+		if !errors.Is(err, onesie.ErrNoAPIKey) || err.Error() != "onesie: no API key. Set TYPESAFE_API_KEY" {
+			t.Errorf("error = %v, want ErrNoAPIKey naming the variable", err)
 		}
 	})
 
 	t.Run("should read the api key from the environment", func(t *testing.T) {
 		t.Parallel()
 
-		client, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-from-env"})))
+		client, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.TypeSafe().EnvAPIKey(): "sk-from-env"})))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -224,8 +370,8 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvAPIKey:       "sk-from-env",
-				onesie.EnvDefaultModel: "onesie-from-env",
+				onesie.TypeSafe().EnvAPIKey():       "sk-from-env",
+				onesie.TypeSafe().EnvDefaultModel(): "onesie-from-env",
 			})),
 			onesie.WithAPIKey("sk-explicit"),
 			onesie.WithBaseURL(server.URL),
@@ -248,8 +394,8 @@ func TestNew(t *testing.T) {
 		t.Parallel()
 
 		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{
-			onesie.EnvAPIKey:  "   ",
-			onesie.EnvBaseURL: "   ",
+			onesie.TypeSafe().EnvAPIKey():  "   ",
+			onesie.TypeSafe().EnvBaseURL(): "   ",
 		})))
 
 		if err == nil {
@@ -271,7 +417,7 @@ func TestNew(t *testing.T) {
 		}
 	})
 
-	t.Run("should echo a refused base url as it was given", func(t *testing.T) {
+	t.Run("should show the scheme and host of a refused base url", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := onesie.New(
@@ -280,8 +426,59 @@ func TestNew(t *testing.T) {
 			onesie.WithBaseURL("https:///"),
 		)
 
-		if err == nil || err.Error() != "onesie: base URL https:/// names no host. Write it as https://HOST" {
-			t.Errorf("error = %v, want the base url echoed with its trailing slash", err)
+		if err == nil || err.Error() != "onesie: base URL https:// names no host" {
+			t.Errorf("error = %v, want the scheme and the empty host shown", err)
+		}
+	})
+
+	t.Run("should refuse a plain http base url to another host", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name   string
+			opts   []onesie.Option
+			env    map[string]string
+			source onesie.BaseURLSource
+		}{
+			{name: "should name an option as the source", opts: []onesie.Option{onesie.WithBaseURL("http://proxy.example")}, source: onesie.BaseURLFromOption},
+			{name: "should name the variable as the source", env: map[string]string{"TYPESAFE_BASE_URL": "http://proxy.example"}, source: onesie.BaseURLFromEnv},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := onesie.New(append([]onesie.Option{onesie.WithEnv(lookupFrom(tc.env)), onesie.WithAPIKey("k")}, tc.opts...)...)
+
+				var refused *onesie.BaseURLError
+				if !errors.As(err, &refused) || !errors.Is(err, onesie.ErrInsecureBaseURL) || !errors.Is(err, onesie.ErrValidation) {
+					t.Fatalf("error = %v, want an insecure BaseURLError", err)
+				}
+
+				const want = "onesie: base URL http://proxy.example is plain http to a host other than this machine"
+				if err.Error() != want || refused.Source != tc.source {
+					t.Errorf("error = %q from %v, want %q from %v", err.Error(), refused.Source, want, tc.source)
+				}
+			})
+		}
+	})
+
+	t.Run("should take a plain http base url with WithInsecureHTTP", func(t *testing.T) {
+		t.Parallel()
+
+		client, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKey("k"),
+			onesie.WithBaseURL("http://proxy.example"), onesie.WithInsecureHTTP())
+		if err != nil || client.BaseURL() != "http://proxy.example" {
+			t.Fatalf("New = %v, %v, want the plain http URL taken", client, err)
+		}
+	})
+
+	t.Run("should refuse a bad base url before a missing key", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithBaseURL("http://proxy.example"))
+		if !errors.Is(err, onesie.ErrInsecureBaseURL) || errors.Is(err, onesie.ErrNoAPIKey) {
+			t.Fatalf("error = %v, want the base url refused first", err)
 		}
 	})
 
@@ -311,8 +508,8 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvAPIKey:     "sk-typesafe",
-				"OPENROUTER_API_KEY": "sk-or-test",
+				onesie.TypeSafe().EnvAPIKey(): "sk-typesafe",
+				"OPENROUTER_API_KEY":          "sk-or-test",
 			})),
 			onesie.WithProvider(onesie.OpenRouter()),
 			onesie.WithHTTPClient(&http.Client{Transport: transport}),
@@ -337,8 +534,8 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvBaseURL:      "https://typesafe.example",
-				onesie.EnvDefaultModel: "onesie-1.2.0",
+				onesie.TypeSafe().EnvBaseURL():      "https://typesafe.example",
+				onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0",
 			})),
 			onesie.WithAPIKey("sk-or-test"),
 			onesie.WithProvider(onesie.OpenRouter()),
@@ -357,7 +554,7 @@ func TestNew(t *testing.T) {
 			t.Errorf("url = %s, want the OpenRouter default", got)
 		}
 
-		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.DefaultModel+`"`) {
+		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.TypeSafe().DefaultModel()+`"`) {
 			t.Errorf("body = %s, want the default model", transport.lastBody())
 		}
 	})
@@ -365,7 +562,7 @@ func TestNew(t *testing.T) {
 	t.Run("should name OPENROUTER_API_KEY in the no key error under openrouter", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-typesafe"})),
+		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.TypeSafe().EnvAPIKey(): "sk-typesafe"})),
 			onesie.WithProvider(onesie.OpenRouter()))
 		if err == nil {
 			t.Fatalf("expected an error, got none")
@@ -383,10 +580,10 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvAPIKey:       "sk-typesafe",
-				onesie.EnvBaseURL:      "https://typesafe.example",
-				onesie.EnvDefaultModel: "onesie-1.2.0",
-				"BERGET_API_KEY":       "sk_ber_test",
+				onesie.TypeSafe().EnvAPIKey():       "sk-typesafe",
+				onesie.TypeSafe().EnvBaseURL():      "https://typesafe.example",
+				onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0",
+				"BERGET_API_KEY":                    "sk_ber_test",
 			})),
 			onesie.WithProvider(onesie.Berget()),
 			onesie.WithHTTPClient(&http.Client{Transport: transport}),
@@ -408,7 +605,7 @@ func TestNew(t *testing.T) {
 			t.Errorf("url = %s, want the Berget default", got)
 		}
 
-		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.BergetDefaultModel+`"`) {
+		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.Berget().DefaultModel()+`"`) {
 			t.Errorf("body = %s, want the Berget default model", transport.lastBody())
 		}
 	})
@@ -416,7 +613,7 @@ func TestNew(t *testing.T) {
 	t.Run("should name BERGET_API_KEY in the no key error under berget", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-typesafe"})),
+		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.TypeSafe().EnvAPIKey(): "sk-typesafe"})),
 			onesie.WithProvider(onesie.Berget()))
 		if err == nil {
 			t.Fatalf("expected an error, got none")
@@ -434,10 +631,10 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvAPIKey:       "sk-typesafe",
-				onesie.EnvBaseURL:      "https://typesafe.example",
-				onesie.EnvDefaultModel: "onesie-1.2.0",
-				"LEVANTO_API_KEY":      "lv_live_test",
+				onesie.TypeSafe().EnvAPIKey():       "sk-typesafe",
+				onesie.TypeSafe().EnvBaseURL():      "https://typesafe.example",
+				onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0",
+				"LEVANTO_API_KEY":                   "lv_live_test",
 			})),
 			onesie.WithProvider(onesie.Levanto()),
 			onesie.WithHTTPClient(&http.Client{Transport: transport}),
@@ -459,7 +656,7 @@ func TestNew(t *testing.T) {
 			t.Errorf("url = %s, want the Levanto default", got)
 		}
 
-		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.LevantoDefaultModel+`"`) {
+		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.Levanto().DefaultModel()+`"`) {
 			t.Errorf("body = %s, want the Levanto default model", transport.lastBody())
 		}
 	})
@@ -467,7 +664,7 @@ func TestNew(t *testing.T) {
 	t.Run("should name LEVANTO_API_KEY in the no key error under levanto", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-typesafe"})),
+		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.TypeSafe().EnvAPIKey(): "sk-typesafe"})),
 			onesie.WithProvider(onesie.Levanto()))
 		if err == nil {
 			t.Fatalf("expected an error, got none")
@@ -564,12 +761,7 @@ func TestClientSystemOne(t *testing.T) {
 					t.Errorf("errors = %q and %q, want both to start %q", want.Error(), got.Error(), prefix)
 				}
 
-				var shape *onesie.ResultShapeError
-				if !errors.As(err, &shape) || shape.Answer != "q" {
-					t.Errorf("error = %v, want a ResultShapeError naming q", err)
-				}
-
-				if got.Status != want.Status || string(got.Body) != response || got.Message != "" {
+				if got.Status != want.Status || string(got.Body) != response {
 					t.Errorf("error = %+v, want it shaped like %+v holding %s", got, want, response)
 				}
 
@@ -1333,6 +1525,11 @@ func TestClientSystemOne(t *testing.T) {
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("error got %v, want context.Canceled", err)
 			}
+
+			var connection *onesie.ConnectionError
+			if !errors.As(err, &connection) || err.Error() != "onesie: connection error: context canceled" {
+				t.Errorf("error = %v, want a ConnectionError for the cancellation", err)
+			}
 		})
 
 		t.Run("should report a timeout as a connection error", func(t *testing.T) {
@@ -1423,6 +1620,11 @@ func TestClientSystemOne(t *testing.T) {
 
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Errorf("error got %v, want context.DeadlineExceeded", err)
+			}
+
+			var timeout *onesie.TimeoutError
+			if !errors.As(err, &timeout) || timeout.Timeout != 30*time.Millisecond || !errors.Is(err, onesie.ErrTimeout) {
+				t.Errorf("error = %v, want a TimeoutError naming the 30ms total", err)
 			}
 		})
 	})
@@ -1628,7 +1830,7 @@ func TestClientSystemOne(t *testing.T) {
 	})
 
 	for _, provider := range []onesie.Provider{onesie.Levanto(), onesie.Berget()} {
-		t.Run("should refuse images and a box on "+provider.Name+" before any request", func(t *testing.T) {
+		t.Run("should refuse images and a box on "+provider.Name()+" before any request", func(t *testing.T) {
 			t.Parallel()
 
 			transport := &recordingTransport{body: shortAnswer}
@@ -1689,7 +1891,7 @@ func TestClientSystemOne(t *testing.T) {
 	})
 
 	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Levanto(), onesie.Berget()} {
-		t.Run("should send long context as the header and never the key on "+provider.Name, func(t *testing.T) {
+		t.Run("should send long context as the header and never the key on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
 			transport := &recordingTransport{body: shortAnswer}
@@ -1732,28 +1934,65 @@ func TestClientSystemOne(t *testing.T) {
 			t.Errorf("%s = %q on the second call, want it absent", onesie.HeaderLongContext, got)
 		}
 	})
-
-	t.Run("should send one long context header beside a client wide one", func(t *testing.T) {
-		t.Parallel()
-
-		transport := &recordingTransport{body: shortAnswer}
-		client, _ := newTestClient(t, "https://api.example",
-			onesie.WithHeader(onesie.HeaderLongContext, "true"),
-			onesie.WithHTTPClient(&http.Client{Transport: transport}))
-
-		if _, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()},
-			onesie.WithLongContext()); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if got := transport.last().Header.Values(onesie.HeaderLongContext); len(got) != 1 {
-			t.Errorf("%s = %v, want one value", onesie.HeaderLongContext, got)
-		}
-	})
 }
 
 func TestClientListModels(t *testing.T) {
 	t.Parallel()
+
+	t.Run("should show the URL without its query when the listing is not JSON", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "<!DOCTYPE html><html></html>")
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.OpenRouter()))
+
+		_, err := client.ListModels(t.Context())
+		if !errors.Is(err, onesie.ErrResponse) || !strings.Contains(err.Error(), server.URL+"/v1/models") ||
+			strings.Contains(err.Error(), "?") {
+			t.Errorf("error = %v, want it to name %s/v1/models without a query", err, server.URL)
+		}
+	})
+
+	t.Run("should show the URL without its query when the connection fails", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.NotFoundHandler())
+		server.Close()
+
+		noRetry := onesie.DefaultRetryPolicy()
+		noRetry.MaxRetries = 0
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.OpenRouter()), onesie.WithRetry(noRetry))
+
+		_, err := client.ListModels(t.Context())
+		if !errors.Is(err, onesie.ErrConnection) || !strings.Contains(err.Error(), server.URL+"/v1/models") ||
+			strings.Contains(err.Error(), "?") {
+			t.Errorf("error = %v, want it to name %s/v1/models without a query", err, server.URL)
+		}
+	})
+
+	t.Run("should log the URL without its query", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		}))
+		defer server.Close()
+
+		var logged bytes.Buffer
+
+		logger := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.OpenRouter()), onesie.WithLogger(logger))
+
+		_, _ = client.ListModels(t.Context())
+
+		if !strings.Contains(logged.String(), "url="+server.URL+"/v1/models ") || strings.Contains(logged.String(), "output_modalities") {
+			t.Errorf("log = %s, want the URL without its query", logged.String())
+		}
+	})
 
 	t.Run("should name the base url when the listing is not JSON", func(t *testing.T) {
 		t.Parallel()
@@ -1853,7 +2092,7 @@ func TestClientListModels(t *testing.T) {
 				t.Fatalf("%s client: error = %v, want an APIError with status 302", name, err)
 			}
 
-			want := "onesie: 302 redirect to " + target.URL + "/v1/models, which onesie does not follow, " +
+			want := "onesie: 302 redirect to " + target.URL + ", which onesie does not follow, " +
 				"since the request carries the API key. Point the base URL at where the API is"
 			if err.Error() != want {
 				t.Errorf("%s client: error = %q, want %q", name, err.Error(), want)
@@ -2085,7 +2324,7 @@ func TestClientVerifyKey(t *testing.T) {
 				}
 			}
 
-			if body != "" && !strings.Contains(body, `"model":"`+onesie.BergetDefaultModel+`"`) {
+			if body != "" && !strings.Contains(body, `"model":"`+onesie.Berget().DefaultModel()+`"`) {
 				t.Errorf("question body = %s, want the default model", body)
 			}
 
@@ -2213,6 +2452,63 @@ func TestWithAttemptObserver(t *testing.T) {
 		})
 	}
 
+	for _, tc := range []struct {
+		name    string
+		opts    []onesie.Option
+		cancels bool
+	}{
+		{name: "should observe a cancelled call as the ConnectionError it returns", cancels: true},
+		{name: "should observe a call past its total timeout as the TimeoutError it returns", opts: []onesie.Option{onesie.WithTotalTimeout(50 * time.Millisecond)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			release := make(chan struct{})
+
+			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				if tc.cancels {
+					cancel()
+				}
+
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			defer server.Close()
+			defer close(release)
+
+			var (
+				mu       sync.Mutex
+				observed []error
+			)
+
+			opts := append([]onesie.Option{onesie.WithAttemptObserver(func(a onesie.Attempt) {
+				mu.Lock()
+				defer mu.Unlock()
+
+				observed = append(observed, a.Err)
+			})}, tc.opts...)
+			client, _ := newTestClient(t, server.URL, opts...)
+
+			_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if len(observed) != 1 || observed[0] == nil || err == nil {
+				t.Fatalf("observed = %v, error = %v, want one observed failure", observed, err)
+			}
+
+			if fmt.Sprintf("%T %v", observed[0], observed[0]) != fmt.Sprintf("%T %v", err, err) {
+				t.Errorf("observed %T %v, want the returned %T %v", observed[0], observed[0], err, err)
+			}
+		})
+	}
+
 	t.Run("should observe an attempt whose body could not be read", func(t *testing.T) {
 		t.Parallel()
 
@@ -2277,6 +2573,103 @@ func TestWithAttemptObserver(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("should report the timeout each attempt ran with", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		plain := onesie.Request{State: "s", Questions: oneNoul()}
+		withImage := onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}}
+
+		rawWithImage, err := onesie.MarshalBody(withImage)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		tests := []struct {
+			name    string
+			opts    []onesie.Option
+			reqOpts []onesie.RequestOption
+			req     *onesie.Request
+			raw     json.RawMessage
+			want    time.Duration
+		}{
+			{name: "should use the default for a request without images", req: &plain, want: onesie.DefaultAttemptTimeout},
+			{name: "should use the asset timeout for a request with images", req: &withImage, want: onesie.AssetAttemptTimeout},
+			{name: "should use the asset timeout for a raw body with images", raw: rawWithImage, want: onesie.AssetAttemptTimeout},
+			{
+				name: "should use the default for a raw body with empty assets",
+				raw:  json.RawMessage(`{"state":"s","questions":{},"assets":{}}`), want: onesie.DefaultAttemptTimeout,
+			},
+			{
+				name: "should let WithAttemptTimeout set both", opts: []onesie.Option{onesie.WithAttemptTimeout(5 * time.Second)},
+				req: &withImage, want: 5 * time.Second,
+			},
+			{
+				name: "should let WithRequestAttemptTimeout set both", reqOpts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(3 * time.Second)},
+				req: &withImage, want: 3 * time.Second,
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				var seen atomic.Int64
+
+				transport := &recordingTransport{body: shortAnswer}
+				opts := append([]onesie.Option{
+					onesie.WithHTTPClient(&http.Client{Transport: transport}),
+					onesie.WithAttemptObserver(func(a onesie.Attempt) { seen.Store(int64(a.Timeout)) }),
+				}, tc.opts...)
+				client, _ := newTestClient(t, "https://api.example", opts...)
+
+				var err error
+				if tc.req != nil {
+					_, err = client.SystemOne(t.Context(), *tc.req, tc.reqOpts...)
+				} else {
+					_, err = client.SystemOneRaw(t.Context(), tc.raw, tc.reqOpts...)
+				}
+
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if got := time.Duration(seen.Load()); got != tc.want {
+					t.Errorf("Attempt.Timeout = %v, want %v", got, tc.want)
+				}
+			})
+		}
+	})
+}
+
+func TestClientAttemptTimeout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []onesie.Option
+		want time.Duration
+	}{
+		{name: "should report the default when no option set one", want: onesie.DefaultAttemptTimeout},
+		{name: "should report the option's timeout", opts: []onesie.Option{onesie.WithAttemptTimeout(time.Second)}, want: time.Second},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, _ := newTestClient(t, "https://api.example", tc.opts...)
+
+			if got := client.AttemptTimeout(); got != tc.want {
+				t.Errorf("AttemptTimeout() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func noRetries() onesie.RetryPolicy {
@@ -2498,7 +2891,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Berget(), onesie.Levanto()} {
 		for _, body := range []string{"", "<!DOCTYPE html><html></html>"} {
-			t.Run("should return a 200 body it cannot read unchanged on "+provider.Name+": "+body, func(t *testing.T) {
+			t.Run("should return a 200 body it cannot read unchanged on "+provider.Name()+": "+body, func(t *testing.T) {
 				t.Parallel()
 
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -2578,7 +2971,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 	})
 
 	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Levanto(), onesie.Berget()} {
-		t.Run("should send a raw text body as it is on "+provider.Name, func(t *testing.T) {
+		t.Run("should send a raw text body as it is on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
 			transport := &recordingTransport{body: shortAnswer}
@@ -2597,7 +2990,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 	}
 
 	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter()} {
-		t.Run("should send a raw body's long_context as the header on "+provider.Name, func(t *testing.T) {
+		t.Run("should send a raw body's long_context as the header on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
 			transport := &recordingTransport{body: shortAnswer}
@@ -2636,12 +3029,43 @@ func TestClientSystemOneRaw(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			want := string(onesie.PrepareRawBody(json.RawMessage(tc.body), "custom", false))
-			if got := transport.lastBody(); got != tc.want || got != want {
-				t.Errorf("body = %s, want %s, as PrepareRawBody prints it", got, tc.want)
+			prepared, err := client.PrepareRaw(json.RawMessage(tc.body))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := transport.lastBody(); got != tc.want || got != string(prepared) {
+				t.Errorf("body = %s, want %s, as PrepareRaw prints it", got, tc.want)
 			}
 		})
 	}
+
+	t.Run("should send a prepared body as it sends the body itself", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+		body := json.RawMessage(`{"model":"","state":"s","model":"m","long_context":true}`)
+
+		if _, err := client.SystemOneRaw(t.Context(), body); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		direct := transport.lastBody()
+
+		prepared, err := client.PrepareRaw(body)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := client.SystemOneRaw(t.Context(), prepared); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if transport.lastBody() != direct || direct != `{"state":"s","model":"m"}` {
+			t.Errorf("sent %s then %s, want both {\"state\":\"s\",\"model\":\"m\"}", direct, transport.lastBody())
+		}
+	})
 
 	t.Run("should not write long context through the caller's options", func(t *testing.T) {
 		t.Parallel()
@@ -2705,14 +3129,14 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 			for _, err := range []error{rawErr, typedErr} {
 				if !errors.Is(err, onesie.ErrValidation) {
-					t.Fatalf("%s: error = %v, want ErrValidation", provider.Name, err)
+					t.Fatalf("%s: error = %v, want ErrValidation", provider.Name(), err)
 				}
 
 				messages = append(messages, err.Error())
 			}
 
 			if len(transport.requests) != 0 {
-				t.Errorf("%s: requests = %d, want none", provider.Name, len(transport.requests))
+				t.Errorf("%s: requests = %d, want none", provider.Name(), len(transport.requests))
 			}
 		}
 
@@ -2726,12 +3150,40 @@ func TestClientSystemOneRaw(t *testing.T) {
 	for _, bad := range []struct {
 		name, body, want string
 	}{
+		{name: "a body that is not JSON", body: `{"state":1,`, want: "onesie: the request body is not JSON: "},
+		{name: "a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", want: "onesie: the request body is not valid UTF-8"},
+	} {
+		for _, provider := range onesie.Providers() {
+			t.Run("should refuse "+bad.name+" on "+provider.Name()+" before any request", func(t *testing.T) {
+				t.Parallel()
+
+				transport := &recordingTransport{body: shortAnswer}
+				client, _ := newTestClient(t, "https://api.example",
+					onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+				_, err := client.SystemOneRaw(t.Context(), json.RawMessage(bad.body))
+
+				var validation *onesie.ValidationError
+				if !errors.As(err, &validation) || !errors.Is(err, onesie.ErrValidation) || !strings.HasPrefix(err.Error(), bad.want) {
+					t.Fatalf("error = %v, want a ValidationError starting %q", err, bad.want)
+				}
+
+				if len(transport.requests) != 0 {
+					t.Errorf("requests = %d, want none", len(transport.requests))
+				}
+			})
+		}
+	}
+
+	for _, bad := range []struct {
+		name, body, want string
+	}{
 		{name: "a bad format", body: `{"state":"r","questions":{},"assets":{"r":{"format":"gif","data_base64":"AQ=="}}}`, want: "has format 'gif'"},
 		{name: "data that is not a string", body: `{"state":"r","questions":{},"assets":{"r":{"format":"png","data_base64":1}}}`, want: "needs data_base64 as a string"},
 		{name: "assets that are not an object", body: `{"state":"r","questions":{},"assets":[1]}`, want: "assets must be an object of images"},
 	} {
 		for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter()} {
-			t.Run("should refuse "+bad.name+" in a raw body on "+provider.Name+" before any request", func(t *testing.T) {
+			t.Run("should refuse "+bad.name+" in a raw body on "+provider.Name()+" before any request", func(t *testing.T) {
 				t.Parallel()
 
 				transport := &recordingTransport{body: shortAnswer}
@@ -2748,6 +3200,80 @@ func TestClientSystemOneRaw(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestClientProvider(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should return the provider the client talks to", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "https://api.example", onesie.WithProvider(onesie.Levanto()))
+
+		if got := client.Provider().Name(); got != "levanto" {
+			t.Errorf("Provider().Name() = %q, want levanto", got)
+		}
+	})
+}
+
+func TestClientDefaultModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []onesie.Option
+		env  map[string]string
+		want string
+	}{
+		{name: "should return the provider's default", want: "jev-latest"},
+		{name: "should return the option's model", opts: []onesie.Option{onesie.WithDefaultModel("m")}, want: "m"},
+		{name: "should return the environment's model", env: map[string]string{"TYPESAFE_DEFAULT_MODEL": "e"}, want: "e"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := append([]onesie.Option{onesie.WithAPIKey("k"), onesie.WithEnv(lookupFrom(tc.env))}, tc.opts...)
+
+			client, err := onesie.New(opts...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := client.DefaultModel(); got != tc.want {
+				t.Errorf("DefaultModel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClientBaseURLSource(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []onesie.Option
+		want onesie.BaseURLSource
+	}{
+		{name: "should report the default", want: onesie.BaseURLFromDefault},
+		{name: "should report an option", opts: []onesie.Option{onesie.WithBaseURL("https://proxy.example")}, want: onesie.BaseURLFromOption},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, err := onesie.New(append([]onesie.Option{onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKey("k")}, tc.opts...)...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := client.BaseURLSource(); got != tc.want {
+				t.Errorf("BaseURLSource() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -2903,99 +3429,6 @@ func TestMarshalBody(t *testing.T) {
 	}
 }
 
-func TestMarshalQuestionsBody(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		req  onesie.Request
-		want string
-	}{
-		{
-			name: "should write long_context when it is on",
-			req: onesie.Request{
-				Model: "m", LongContext: true,
-				Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "q"}}},
-			},
-			want: `{"model":"m","questions":{"q":{"type":"noul","instructions":"q"}},"long_context":true}`,
-		},
-		{
-			name: "should omit the state entirely",
-			req: onesie.Request{
-				State: "ignored",
-				Model: "onesie-1.13.0",
-				Questions: onesie.Questions{
-					{ID: "urgent", Question: onesie.Noul{Instructions: "q"}},
-				},
-			},
-			want: `{"model":"onesie-1.13.0","questions":` +
-				`{"urgent":{"type":"noul","instructions":"q"}}}`,
-		},
-		{
-			name: "should keep the questions in slice order",
-			req: onesie.Request{
-				Model: "m",
-				Questions: onesie.Questions{
-					{ID: "zebra", Question: onesie.Noul{Instructions: "z"}},
-					{ID: "alpha", Question: onesie.Noul{Instructions: "a"}},
-				},
-			},
-			want: `{"model":"m","questions":` +
-				`{"zebra":{"type":"noul","instructions":"z"},` +
-				`"alpha":{"type":"noul","instructions":"a"}}}`,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, err := onesie.MarshalQuestionsBody(tc.req)
-			if err != nil {
-				t.Fatalf("MarshalQuestionsBody: %v", err)
-			}
-
-			if string(got) != tc.want {
-				t.Errorf("MarshalQuestionsBody = %s, want %s", got, tc.want)
-			}
-		})
-	}
-
-	t.Run("should agree with MarshalBody on every field but the state", func(t *testing.T) {
-		t.Parallel()
-
-		req := onesie.Request{
-			State: "s",
-			Model: "onesie-1.13.0",
-			Questions: onesie.Questions{
-				{ID: "urgent", Question: onesie.Noul{Instructions: "q"}},
-			},
-		}
-
-		full, err := onesie.MarshalBody(req)
-		if err != nil {
-			t.Fatalf("MarshalBody: %v", err)
-		}
-
-		const prefix = `{"state":"s",`
-
-		if !strings.HasPrefix(string(full), prefix) {
-			t.Fatalf("MarshalBody = %s, want it to open with %s", full, prefix)
-		}
-
-		want := "{" + string(full)[len(prefix):]
-
-		got, err := onesie.MarshalQuestionsBody(req)
-		if err != nil {
-			t.Fatalf("MarshalQuestionsBody: %v", err)
-		}
-
-		if string(got) != want {
-			t.Errorf("MarshalQuestionsBody = %s, want %s", got, want)
-		}
-	})
-}
-
 func TestProviderResolveModel(t *testing.T) {
 	t.Parallel()
 
@@ -3008,17 +3441,17 @@ func TestProviderResolveModel(t *testing.T) {
 		{
 			name:  "should prefer an explicit model",
 			model: "onesie-1.9.9",
-			env:   map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"},
+			env:   map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"},
 			want:  "onesie-1.9.9",
 		},
 		{
 			name: "should fall back to the environment",
-			env:  map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"},
+			env:  map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"},
 			want: "onesie-1.2.0",
 		},
 		{
 			name: "should fall back to the built in default",
-			want: onesie.DefaultModel,
+			want: onesie.TypeSafe().DefaultModel(),
 		},
 		{
 			name:  "should trim an explicit model",
@@ -3028,17 +3461,17 @@ func TestProviderResolveModel(t *testing.T) {
 		{
 			name:  "should treat a whitespace only model as absent",
 			model: "   ",
-			want:  onesie.DefaultModel,
+			want:  onesie.TypeSafe().DefaultModel(),
 		},
 		{
 			name:  "should treat a tab only model as absent",
 			model: "\t",
-			want:  onesie.DefaultModel,
+			want:  onesie.TypeSafe().DefaultModel(),
 		},
 		{
 			name:  "should fall back to the environment for a whitespace only model",
 			model: "   ",
-			env:   map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"},
+			env:   map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"},
 			want:  "onesie-1.2.0",
 		},
 	}
@@ -3056,7 +3489,7 @@ func TestProviderResolveModel(t *testing.T) {
 	t.Run("should default to systemone and ignore TYPESAFE_DEFAULT_MODEL under berget", func(t *testing.T) {
 		t.Parallel()
 
-		env := lookupFrom(map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"})
+		env := lookupFrom(map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"})
 		if got := onesie.Berget().ResolveModel("", env); got != "systemone" {
 			t.Errorf("ResolveModel = %s, want systemone", got)
 		}
@@ -3069,7 +3502,7 @@ func TestProviderResolveModel(t *testing.T) {
 	t.Run("should default to sage-latest and ignore TYPESAFE_DEFAULT_MODEL under levanto", func(t *testing.T) {
 		t.Parallel()
 
-		env := lookupFrom(map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"})
+		env := lookupFrom(map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"})
 		if got := onesie.Levanto().ResolveModel("", env); got != "sage-latest" {
 			t.Errorf("ResolveModel = %s, want sage-latest", got)
 		}
@@ -3082,9 +3515,9 @@ func TestProviderResolveModel(t *testing.T) {
 	t.Run("should ignore TYPESAFE_DEFAULT_MODEL under openrouter", func(t *testing.T) {
 		t.Parallel()
 
-		env := lookupFrom(map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"})
-		if got := onesie.OpenRouter().ResolveModel("", env); got != onesie.DefaultModel {
-			t.Errorf("ResolveModel = %s, want %s", got, onesie.DefaultModel)
+		env := lookupFrom(map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"})
+		if got := onesie.OpenRouter().ResolveModel("", env); got != onesie.TypeSafe().DefaultModel() {
+			t.Errorf("ResolveModel = %s, want %s", got, onesie.TypeSafe().DefaultModel())
 		}
 	})
 

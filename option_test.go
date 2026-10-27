@@ -2,81 +2,63 @@ package onesie_test
 
 import (
 	"errors"
-	"strings"
+	"net/http"
 	"testing"
 
 	"github.com/frodi-karlsson/onesie-go"
 )
 
-func TestValidateBaseURL(t *testing.T) {
+const longContextRefused = "onesie: the TypeSafe-Danger-Zone-Long-Context header is set by WithLongContext, not by hand"
+
+func TestWithHeader(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{onesie.HeaderLongContext, "typesafe-danger-zone-long-context"} {
+		t.Run("should refuse the long context header spelled "+name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := onesie.New(onesie.WithAPIKey("k"), onesie.WithHeader(name, "true"))
+			if !errors.Is(err, onesie.ErrValidation) || err.Error() != longContextRefused {
+				t.Fatalf("error = %v, want %q", err, longContextRefused)
+			}
+		})
+	}
+}
+
+func TestWithRequestHeader(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should refuse the long context header before any request", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()},
+			onesie.WithRequestHeader("TYPESAFE-DANGER-ZONE-LONG-CONTEXT", "true"))
+		if !errors.Is(err, onesie.ErrValidation) || err.Error() != longContextRefused {
+			t.Fatalf("error = %v, want %q", err, longContextRefused)
+		}
+
+		if len(transport.requests) != 0 {
+			t.Errorf("requests = %d, want none", len(transport.requests))
+		}
+	})
+}
+
+func TestWithLongContext(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		raw     string
-		wantErr string
+		name string
+		req  onesie.Request
+		opts []onesie.RequestOption
 	}{
-		{name: "should accept an https URL", raw: "https://api.example"},
-		{name: "should accept an http URL with a port and a path", raw: "http://localhost:8080/proxy"},
+		{name: "should send the header once for the option", req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()}},
 		{
-			name:    "should refuse another scheme",
-			raw:     "ftp://api.example",
-			wantErr: "onesie: base URL ftp://api.example is not an http or https URL",
-		},
-		{
-			name:    "should refuse a URL with no scheme",
-			raw:     "api.example",
-			wantErr: "onesie: base URL api.example is not an http or https URL",
-		},
-		{
-			name:    "should refuse a URL that names no host",
-			raw:     "https://",
-			wantErr: "onesie: base URL https:// names no host. Write it as https://HOST",
-		},
-		{
-			name:    "should refuse a URL that names no host before its path, echoing it as given",
-			raw:     "http:///v1/",
-			wantErr: "onesie: base URL http:///v1/ names no host. Write it as http://HOST",
-		},
-		{
-			name:    "should refuse a URL that does not parse, with the reason",
-			raw:     "https://api.example:port",
-			wantErr: `onesie: base URL https://api.example:port does not parse: invalid port ":port" after host`,
-		},
-		{
-			name:    "should leave the userinfo out of the echo",
-			raw:     "ftp://user:secret@api.example",
-			wantErr: "onesie: base URL ftp://api.example is not an http or https URL",
-		},
-		{
-			name:    "should leave the reason out when it could hold part of the userinfo",
-			raw:     "https://user:secret@api.example:port",
-			wantErr: "onesie: base URL https://api.example:port does not parse",
-		},
-		{
-			name:    "should echo no URL when the last @ comes after the authority",
-			raw:     "https://user:sec/ret@api.example",
-			wantErr: "onesie: the base URL does not parse",
-		},
-		{
-			name:    "should echo no URL for an @ in the query",
-			raw:     "ftp://host/p?q=a@b",
-			wantErr: "onesie: the base URL is not an http or https URL",
-		},
-		{
-			name:    "should echo no URL for userinfo ahead of the scheme",
-			raw:     "user:secret@https://host",
-			wantErr: "onesie: the base URL is not an http or https URL",
-		},
-		{
-			name:    "should echo no URL for an @ in the scheme",
-			raw:     "user@x://user:secret@host",
-			wantErr: "onesie: the base URL does not parse",
-		},
-		{
-			name:    "should echo no URL for userinfo with no scheme",
-			raw:     "user:secret@api.example",
-			wantErr: "onesie: the base URL is not an http or https URL",
+			name: "should send the header once when the request and the option both ask",
+			req:  onesie.Request{State: "s", Questions: oneNoul(), LongContext: true},
+			opts: []onesie.RequestOption{onesie.WithLongContext(), onesie.WithLongContext()},
 		},
 	}
 
@@ -84,22 +66,32 @@ func TestValidateBaseURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := onesie.ValidateBaseURL(tc.raw)
-			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
 
-				return
+			if _, err := client.SystemOne(t.Context(), tc.req, tc.opts...); err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if !errors.Is(err, onesie.ErrValidation) || err.Error() != tc.wantErr {
-				t.Fatalf("error = %v, want %q", err, tc.wantErr)
-			}
-
-			if strings.Contains(err.Error(), "user") || strings.Contains(err.Error(), "sec") {
-				t.Errorf("error = %q, want no userinfo", err.Error())
+			if got := transport.last().Header.Values(onesie.HeaderLongContext); len(got) != 1 || got[0] != "true" {
+				t.Errorf("%s = %v, want one true", onesie.HeaderLongContext, got)
 			}
 		})
 	}
+}
+
+func TestWithRetry(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should refuse an invalid policy in the option itself", func(t *testing.T) {
+		t.Parallel()
+
+		policy := onesie.DefaultRetryPolicy()
+		policy.BackoffJitter = 2
+
+		err := onesie.WithRetry(policy)(&onesie.Client{})
+		if !errors.Is(err, onesie.ErrValidation) || err.Error() != "onesie: retry BackoffJitter must be between 0 and 1" {
+			t.Fatalf("error = %v, want the policy refused", err)
+		}
+	})
 }
