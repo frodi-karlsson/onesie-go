@@ -46,7 +46,16 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{name: "should keep a body's own long context without the option", body: `{"model":"m","long_context":true}`, want: `{"model":"m","long_context":true}`},
 		{name: "should refuse a long context that is not true or false", body: `{"model":"m","long_context":"yes"}`, wantErr: "onesie: long_context must be true or false"},
 		{name: "should leave an array as it is", body: `[1]`, model: "jev-latest", want: `[1]`},
-		{name: "should leave a body that is not JSON as it is", body: `{"state":`, want: `{"state":`},
+		{
+			name: "should refuse a body that is not JSON", body: `{"state":1,`,
+			wantErr: "onesie: the request body is not JSON: unexpected end of JSON input",
+		},
+		{name: "should refuse a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", wantErr: "onesie: the request body is not valid UTF-8"},
+		{
+			name: "should refuse what the provider refuses while encoding", provider: onesie.Cloudflare(),
+			body:    `{"model":"clef","state":"r","questions":{},` + asset + `,"images":[]}`,
+			wantErr: "onesie: a body for clef carries assets or images, not both",
+		},
 		{
 			name: "should refuse images the provider does not take", provider: onesie.Levanto(),
 			body:    `{"state":"r","questions":{},` + asset + `}`,

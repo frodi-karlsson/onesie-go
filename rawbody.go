@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // PrepareRaw returns body as SystemOneRaw sees it before provider encoding, refusing what a send
@@ -25,10 +26,22 @@ func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...
 		return nil, err
 	}
 
+	if _, err = encodeBody(prepared.via, prepared.needs, withoutLongContext(prepared.body)); err != nil {
+		return nil, err
+	}
+
 	return prepared.body.bytes()
 }
 
 func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (preparedBody, error) {
+	if _, err := compactBody(raw); err != nil {
+		return preparedBody{}, err
+	}
+
+	if !utf8.Valid(raw) {
+		return preparedBody{}, &ValidationError{Message: "the request body is not valid UTF-8"}
+	}
+
 	model := orDefault(strings.TrimSpace(defaultModel), p.defaultModel)
 	b := fillModel(lastWins(parseBody(raw)), model)
 

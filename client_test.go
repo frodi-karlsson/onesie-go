@@ -3036,6 +3036,34 @@ func TestClientSystemOneRaw(t *testing.T) {
 	for _, bad := range []struct {
 		name, body, want string
 	}{
+		{name: "a body that is not JSON", body: `{"state":1,`, want: "onesie: the request body is not JSON: "},
+		{name: "a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", want: "onesie: the request body is not valid UTF-8"},
+	} {
+		for _, provider := range onesie.Providers() {
+			t.Run("should refuse "+bad.name+" on "+provider.Name()+" before any request", func(t *testing.T) {
+				t.Parallel()
+
+				transport := &recordingTransport{body: shortAnswer}
+				client, _ := newTestClient(t, "https://api.example",
+					onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+				_, err := client.SystemOneRaw(t.Context(), json.RawMessage(bad.body))
+
+				var validation *onesie.ValidationError
+				if !errors.As(err, &validation) || !errors.Is(err, onesie.ErrValidation) || !strings.HasPrefix(err.Error(), bad.want) {
+					t.Fatalf("error = %v, want a ValidationError starting %q", err, bad.want)
+				}
+
+				if len(transport.requests) != 0 {
+					t.Errorf("requests = %d, want none", len(transport.requests))
+				}
+			})
+		}
+	}
+
+	for _, bad := range []struct {
+		name, body, want string
+	}{
 		{name: "a bad format", body: `{"state":"r","questions":{},"assets":{"r":{"format":"gif","data_base64":"AQ=="}}}`, want: "has format 'gif'"},
 		{name: "data that is not a string", body: `{"state":"r","questions":{},"assets":{"r":{"format":"png","data_base64":1}}}`, want: "needs data_base64 as a string"},
 		{name: "assets that are not an object", body: `{"state":"r","questions":{},"assets":[1]}`, want: "assets must be an object of images"},

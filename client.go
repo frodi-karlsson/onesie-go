@@ -415,15 +415,12 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 	var payload []byte
 
 	if req.payload != nil {
-		// Compacted rather than re-marshalled. json.Marshal HTML escapes, and a caller that prepared
-		// its own body is entitled to have it forwarded as written.
-		var flat bytes.Buffer
-
-		if err := json.Compact(&flat, req.payload); err != nil {
-			return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error()}
+		compacted, err := compactBody(req.payload)
+		if err != nil {
+			return nil, err
 		}
 
-		payload = flat.Bytes()
+		payload = compacted
 	}
 
 	// Numbered so concurrent requests, and the attempts within one, can be told apart in the logs.
@@ -475,6 +472,18 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 			return nil, waitErr
 		}
 	}
+}
+
+func compactBody(body []byte) ([]byte, error) {
+	// Compacted rather than re-marshalled. json.Marshal HTML escapes, and a caller that prepared its
+	// own body is entitled to have it forwarded as written.
+	var flat bytes.Buffer
+
+	if err := json.Compact(&flat, body); err != nil {
+		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error()}
+	}
+
+	return flat.Bytes(), nil
 }
 
 func attemptTimeoutFor(set time.Duration, images bool) time.Duration {
