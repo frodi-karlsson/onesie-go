@@ -238,6 +238,34 @@ func TestNewAPIError(t *testing.T) {
 			sentinel: ErrBadRequest,
 			message:  "onesie: 400 AiError: something",
 		},
+		{
+			name:     "should read an empty JSON string as the status text",
+			status:   400,
+			body:     `""`,
+			sentinel: ErrBadRequest,
+			message:  "onesie: 400 Bad Request",
+		},
+		{
+			name:     "should cut a JSON string message to its first line",
+			status:   502,
+			body:     `"upstream reset\nsecond line"`,
+			sentinel: ErrServer,
+			message:  "onesie: 502 upstream reset",
+		},
+		{
+			name:     "should leave out an HTML page sent as a JSON string",
+			status:   502,
+			body:     `"<!DOCTYPE html><html><body>oops</body></html>"`,
+			sentinel: ErrServer,
+			message:  "onesie: 502 Bad Gateway",
+		},
+		{
+			name:     "should read a JSON null body as a body that is not JSON",
+			status:   500,
+			body:     `null`,
+			sentinel: ErrServer,
+			message:  "onesie: 500 Internal Server Error, with a response body that is not JSON: null",
+		},
 	}
 
 	for _, tc := range tests {
@@ -335,14 +363,14 @@ func TestNewAPIError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := NewAPIError(tc.status, "onesie: mock status")
+			err := NewAPIError(tc.status, "mock status")
 
 			if err.Status != tc.status {
 				t.Errorf("status got %d, want %d", err.Status, tc.status)
 			}
 
-			if err.Error() != "onesie: mock status" {
-				t.Errorf("message got %q", err.Error())
+			if err.Error() != "onesie: mock status" || err.Reason() != "mock status" {
+				t.Errorf("message got %q and %q", err.Error(), err.Reason())
 			}
 
 			if !errors.Is(err, tc.sentinel) {
@@ -360,18 +388,19 @@ func TestNewAPIError(t *testing.T) {
 		body string
 		json bool
 	}{
-		{name: "should keep a JSON body and say it parsed", body: `{"error":"bad"}`, json: true},
-		{name: "should keep a JSON string body and say it parsed", body: `"bad"`, json: true},
-		{name: "should keep a text body and say it did not parse", body: "bad gateway"},
-		{name: "should keep no body and say it did not parse"},
+		{name: "should keep a JSON body as parsed", body: `{"error":"bad"}`, json: true},
+		{name: "should keep a JSON string body as parsed", body: `"bad"`, json: true},
+		{name: "should hold no parsed body for text", body: "bad gateway"},
+		{name: "should hold no parsed body for a JSON null", body: "null"},
+		{name: "should hold no parsed body for an empty body"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			err := newAPIError(502, http.Header{}, "X-TypeSafe-Request-Id", []byte(tc.body), time.Now())
 
-			if string(err.RawBody) != tc.body || err.BodyJSON != tc.json {
-				t.Errorf("RawBody = %q, BodyJSON = %v, want %q and %v", err.RawBody, err.BodyJSON, tc.body, tc.json)
+			if string(err.RawBody) != tc.body || (err.Body != nil) != tc.json {
+				t.Errorf("RawBody = %q, Body = %v, want %q and parsed %v", err.RawBody, err.Body, tc.body, tc.json)
 			}
 		})
 	}
@@ -574,28 +603,90 @@ func TestTruncate(t *testing.T) {
 	})
 }
 
+func TestReason(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  interface {
+			error
+			Reason() string
+		}
+		want string
+	}{
+		{name: "should give a ValidationError's message", err: &ValidationError{Message: "bad"}, want: "bad"},
+		{name: "should give an APIError's status and message", err: NewAPIError(503, "503 down"), want: "503 down"},
+		{
+			name: "should give a RetryAfterError its own reason",
+			err:  &RetryAfterError{APIError: APIError{Status: 429}, RetryAfter: 2 * time.Minute, Cap: time.Minute},
+			want: "status 429, the server asked to retry after 2m0s, above the 1m0s cap",
+		},
+		{
+			name: "should give a ResponseError's fault",
+			err:  &ResponseError{Status: 200, Err: errors.New("empty response body")},
+			want: "200 response could not be used: empty response body",
+		},
+		{name: "should give a ConnectionError's cause", err: &ConnectionError{Err: errors.New("dial failed")}, want: "connection error: dial failed"},
+		{
+			name: "should give a TimeoutError its own reason",
+			err:  &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}, Timeout: time.Second},
+			want: "request timed out after 1s",
+		},
+		{
+			name: "should say only that a deadline fired when the timeout is unknown",
+			err:  &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}},
+			want: "request timed out",
+		},
+		{name: "should give an AnswerError's reason", err: &AnswerError{Name: "a", Missing: true}, want: `no answer named "a"`},
+		{
+			name: "should give a CapabilityError its message",
+			err:  newCapabilityError("levanto", "m", Needs{Images: true}, nil),
+			want: "the levanto provider takes no images",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.err.Reason(); got != tc.want {
+				t.Errorf("Reason = %q, want %q", got, tc.want)
+			}
+
+			if got := tc.err.Error(); got != "onesie: "+tc.want {
+				t.Errorf("Error = %q, want the reason with the prefix", got)
+			}
+		})
+	}
+}
+
 func TestResultShapeError(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
-		err  *ResultShapeError
+		err  *resultShapeError
 		want string
 	}{
 		{
 			name: "should report a body that is not an object",
-			err:  &ResultShapeError{Want: "an object", Got: "a string"},
+			err:  &resultShapeError{want: kindObject, got: kindString},
 			want: "the response is not a System One result, since it is a string",
 		},
 		{
 			name: "should report a missing top level field",
-			err:  &ResultShapeError{Field: "model", Want: "a string"},
+			err:  &resultShapeError{field: "model", fault: faultMissing, want: kindString},
 			want: "the response is not a System One result, since it has no model, or it is null",
 		},
 		{
 			name: "should report a missing answer field",
-			err:  &ResultShapeError{Answer: "x", Field: "score", Want: "a number"},
+			err:  &resultShapeError{answer: "x", field: "score", fault: faultMissing, want: kindNumber},
 			want: "answer 'x' has no score, or it is null",
+		},
+		{
+			name: "should report a question the response did not answer",
+			err:  &resultShapeError{answer: "q", fault: faultNoAnswer},
+			want: "no answer for question 'q'",
 		},
 	}
 
@@ -608,4 +699,17 @@ func TestResultShapeError(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should have no cause for a missing field", func(t *testing.T) {
+		t.Parallel()
+
+		var result Result
+
+		err := result.UnmarshalJSON([]byte(`{"answers":{"x":{"type":"noul"}}}`))
+
+		var shape *resultShapeError
+		if !errors.As(err, &shape) || shape.Unwrap() != nil {
+			t.Errorf("error = %v, want a resultShapeError with no cause", err)
+		}
+	})
 }

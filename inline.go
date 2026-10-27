@@ -132,7 +132,7 @@ func readMembers(body []byte) ([]member, error) {
 	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions...)
 
 	if _, err := dec.ReadToken(); err != nil {
-		return nil, fmt.Errorf("onesie: reading the request body: %w", err)
+		return nil, unreadableBody(err)
 	}
 
 	var members []member
@@ -140,20 +140,24 @@ func readMembers(body []byte) ([]member, error) {
 	for dec.PeekKind() != '}' {
 		name, err := dec.ReadToken()
 		if err != nil {
-			return nil, fmt.Errorf("onesie: reading the request body: %w", err)
+			return nil, unreadableBody(err)
 		}
 
 		key := name.String()
 
 		value, err := dec.ReadValue()
 		if err != nil {
-			return nil, fmt.Errorf("onesie: reading the request body: %w", err)
+			return nil, unreadableBody(err)
 		}
 
 		members = append(members, member{name: key, value: slices.Clone(value)})
 	}
 
 	return members, nil
+}
+
+func unreadableBody(err error) error {
+	return &ValidationError{Message: "the request body cannot be read: " + err.Error()}
 }
 
 type member struct {

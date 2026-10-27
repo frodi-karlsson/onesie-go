@@ -564,12 +564,7 @@ func TestClientSystemOne(t *testing.T) {
 					t.Errorf("errors = %q and %q, want both to start %q", want.Error(), got.Error(), prefix)
 				}
 
-				var shape *onesie.ResultShapeError
-				if !errors.As(err, &shape) || shape.Answer != "q" {
-					t.Errorf("error = %v, want a ResultShapeError naming q", err)
-				}
-
-				if got.Status != want.Status || string(got.Body) != response || got.Message != "" {
+				if got.Status != want.Status || string(got.Body) != response {
 					t.Errorf("error = %+v, want it shaped like %+v holding %s", got, want, response)
 				}
 
@@ -1333,6 +1328,11 @@ func TestClientSystemOne(t *testing.T) {
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("error got %v, want context.Canceled", err)
 			}
+
+			var connection *onesie.ConnectionError
+			if !errors.As(err, &connection) || err.Error() != "onesie: connection error: context canceled" {
+				t.Errorf("error = %v, want a ConnectionError for the cancellation", err)
+			}
 		})
 
 		t.Run("should report a timeout as a connection error", func(t *testing.T) {
@@ -1423,6 +1423,11 @@ func TestClientSystemOne(t *testing.T) {
 
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Errorf("error got %v, want context.DeadlineExceeded", err)
+			}
+
+			var timeout *onesie.TimeoutError
+			if !errors.As(err, &timeout) || timeout.Timeout != 30*time.Millisecond || !errors.Is(err, onesie.ErrTimeout) {
+				t.Errorf("error = %v, want a TimeoutError naming the 30ms total", err)
 			}
 		})
 	})

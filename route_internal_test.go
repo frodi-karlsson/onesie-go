@@ -249,6 +249,23 @@ func TestClientSystemOne(t *testing.T) {
 		})
 	}
 
+	t.Run("should report a question the response did not answer", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newFakeClient(t, http.StatusOK, `{"model":"p","answers":{},"usage":{"input_tokens":4,"output_tokens":1}}`)
+
+		_, err := client.SystemOne(t.Context(), ask(""))
+
+		var unusable *ResponseError
+		if !errors.As(err, &unusable) || err.Error() != "onesie: 200 response could not be used: no answer for question 'q'" {
+			t.Fatalf("error = %v, want the missing answer named", err)
+		}
+
+		if unusable.Usage == nil || unusable.Usage.InputTokens != 4 {
+			t.Errorf("usage = %+v, want the 4 input tokens billed", unusable.Usage)
+		}
+	})
+
 	t.Run("should not decode an error response", func(t *testing.T) {
 		t.Parallel()
 

@@ -25,6 +25,8 @@ const (
 	retryCountHeader = "X-TypeSafe-Retry-Count"
 )
 
+var errTotalTimeout = errors.New("total timeout")
+
 // New builds a client. Resolution order is an explicit option, then the environment, then a
 // default. Blank and whitespace only values are ignored at every level.
 func New(opts ...Option) (*Client, error) {
@@ -198,26 +200,38 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 
 	res, err := c.do(ctx, http.MethodPost, via.path, json.RawMessage(body), result, via.decode, opts...)
 	if err != nil {
-		return nil, err
+		return nil, withUsage(err, &result.Usage)
 	}
 
 	result.RequestID = res.header.Get(c.provider.requestIDHeader)
 	result.Header = res.header
 
-	// Answers is a plain map, so no type ties it to the questions asked. Each question is checked
-	// for an answer here.
 	for _, named := range req.Questions {
 		if _, ok := result.Answers[named.ID]; !ok {
 			return nil, &ResponseError{
 				Status: res.status,
 				Body:   res.body,
-				Err:    fmt.Errorf("no answer for question %q", named.ID),
+				Err:    &resultShapeError{answer: named.ID, fault: faultNoAnswer},
 				Usage:  &result.Usage,
 			}
 		}
 	}
 
 	return result, nil
+}
+
+func withUsage(err error, usage *Usage) error {
+	var (
+		unusable *ResponseError
+		shape    *resultShapeError
+	)
+
+	// An answer is decoded only after the usage, so a fault in one means the usage was read.
+	if errors.As(err, &unusable) && errors.As(err, &shape) && shape.answer != "" {
+		unusable.Usage = usage
+	}
+
+	return err
 }
 
 // MarshalBody encodes a request exactly as SystemOne sends it. A printed body and a sent body come
@@ -380,7 +394,7 @@ func (c *Client) do(
 	if cfg.totalTimeout > 0 {
 		var cancel context.CancelFunc
 
-		ctx, cancel = context.WithTimeout(ctx, cfg.totalTimeout)
+		ctx, cancel = context.WithTimeoutCause(ctx, cfg.totalTimeout, errTotalTimeout)
 		defer cancel()
 	}
 
@@ -394,14 +408,14 @@ func (c *Client) do(
 		var flat bytes.Buffer
 
 		if err := json.Compact(&flat, prepared); err != nil {
-			return nil, fmt.Errorf("onesie: encoding request: %w", err)
+			return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error()}
 		}
 
 		payload = flat.Bytes()
 	default:
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return nil, fmt.Errorf("onesie: encoding request: %w", err)
+			return nil, unencodable(err)
 		}
 
 		payload = encoded
@@ -416,8 +430,8 @@ func (c *Client) do(
 
 		res, err := c.attempt(ctx, tag, attempt, method, url, payload, cfg)
 		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, fmt.Errorf("onesie: %s: %w", tag, ctxErr)
+			if ctx.Err() != nil {
+				return nil, interrupted(ctx, cfg.totalTimeout)
 			}
 
 			if retriesLeft <= 0 || !retryableError(err, cfg.retry) {
@@ -477,7 +491,7 @@ func (c *Client) attempt(
 
 	req, err := http.NewRequestWithContext(actx, method, url, reader)
 	if err != nil {
-		return nil, fmt.Errorf("onesie: building request: %w", err)
+		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error()}
 	}
 
 	c.setHeaders(req, cfg, attempt, payload != nil)
@@ -601,10 +615,27 @@ func (c *Client) backOff(
 	)
 
 	if err := c.clock.Sleep(ctx, delay); err != nil {
-		return fmt.Errorf("onesie: %s: %w", tag, err)
+		if ctx.Err() != nil {
+			return interrupted(ctx, cfg.totalTimeout)
+		}
+
+		return &ConnectionError{Err: err}
 	}
 
 	return nil
+}
+
+func interrupted(ctx context.Context, total time.Duration) error {
+	err := ctx.Err()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return &ConnectionError{Err: err}
+	}
+
+	if !errors.Is(context.Cause(ctx), errTotalTimeout) {
+		total = 0
+	}
+
+	return &TimeoutError{ConnectionError: ConnectionError{Err: err}, Timeout: total}
 }
 
 func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]byte, error)) error {
@@ -630,16 +661,7 @@ func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]by
 	}
 
 	if err = json.Unmarshal(body, out); err != nil {
-		return &ResponseError{Status: res.status, Body: res.body, Err: err, Usage: spentOn(err)}
-	}
-
-	return nil
-}
-
-func spentOn(err error) *Usage {
-	var refused *answerDecodeError
-	if errors.As(err, &refused) {
-		return &refused.usage
+		return &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
 
 	return nil

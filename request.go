@@ -129,7 +129,7 @@ func stringValues(req Request) ([]string, error) {
 		Questions Questions `json:"questions"`
 	}{State: req.State, Questions: req.Questions})
 	if err != nil {
-		return nil, fmt.Errorf("onesie: encoding request: %w", err)
+		return nil, unencodable(err)
 	}
 
 	var decoded struct {
@@ -137,7 +137,7 @@ func stringValues(req Request) ([]string, error) {
 		Questions map[string]map[string]any `json:"questions"`
 	}
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		return nil, fmt.Errorf("onesie: encoding request: %w", err)
+		return nil, unencodable(err)
 	}
 
 	var texts []string
@@ -151,6 +151,10 @@ func stringValues(req Request) ([]string, error) {
 	}
 
 	return texts, nil
+}
+
+func unencodable(err error) error {
+	return &ValidationError{Message: "the request cannot be encoded: " + err.Error()}
 }
 
 func collectStrings(value any, texts *[]string) {
@@ -206,7 +210,7 @@ func checkBodySize(req Request) error {
 
 	body, err := MarshalBody(req)
 	if err != nil {
-		return fmt.Errorf("onesie: encoding request: %w", err)
+		return unencodable(err)
 	}
 
 	if len(body) > MaxBodyBytes {
