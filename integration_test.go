@@ -3,6 +3,7 @@
 package onesie_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -925,6 +926,7 @@ func TestLiveErrors(t *testing.T) {
 			client   func(*testing.T) *onesie.Client
 			req      func(*testing.T) onesie.Request
 			sentinel error
+			mayServe bool
 		}{
 			{name: "typesafe-unknown-model", client: typesafe, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
 			{name: "openrouter-unknown-model", client: liveOpenRouterClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
@@ -935,8 +937,8 @@ func TestLiveErrors(t *testing.T) {
 			{name: "typesafe-context-too-long", client: typesafe, req: ask("", long), sentinel: onesie.ErrContextTooLong},
 			{name: "openrouter-context-too-long", client: liveOpenRouterClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
 			{name: "gateway-context-too-long", client: liveCloudflareClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
-			{name: "typesafe-box-not-served", client: typesafe, req: boxOnLatest, sentinel: onesie.ErrNotServed},
-			{name: "openrouter-box-not-served", client: liveOpenRouterClient, req: boxOnLatest, sentinel: onesie.ErrNotServed},
+			{name: "typesafe-box-not-served", client: typesafe, req: boxOnLatest, sentinel: onesie.ErrNotServed, mayServe: true},
+			{name: "openrouter-box-not-served", client: liveOpenRouterClient, req: boxOnLatest, sentinel: onesie.ErrNotServed, mayServe: true},
 		}
 
 		for _, tc := range tests {
@@ -944,6 +946,9 @@ func TestLiveErrors(t *testing.T) {
 				t.Parallel()
 
 				_, err := tc.client(t).SystemOne(liveContext(t, time.Minute), tc.req(t))
+				if err == nil && tc.mayServe {
+					t.Skip("the model serves box questions, so there is no refusal to match")
+				}
 
 				var api *onesie.APIError
 				if errors.As(err, &api) {
@@ -960,32 +965,37 @@ func TestLiveErrors(t *testing.T) {
 	t.Run("should log each route's count refusal past the library's own check", func(t *testing.T) {
 		t.Parallel()
 
-		const question = `{"state":"x","model":"%s","questions":{"rate":{"type":"score","instructions":"How bad?",` +
-			`"criteria":["0","1","2","3","4","5","6","7","8","9","10"]}}}`
+		const questions = `"questions":{"rate":{"type":"score","instructions":"How bad?",` +
+			`"criteria":["0","1","2","3","4","5","6","7","8","9","10"]}}`
 
 		for _, tc := range []struct {
-			name   string
-			target func(t *testing.T) (url, key, body string)
+			name     string
+			provider onesie.Provider
+			target   func(t *testing.T) (url, key, body string)
 		}{
 			{
-				name: "typesafe-question-limit",
+				name:     "typesafe-question-limit",
+				provider: onesie.TypeSafe(),
 				target: func(t *testing.T) (string, string, string) {
-					return "https://api.typesafe.ai/v1/systemone", apiKey(t), fmt.Sprintf(question, "jev-latest")
+					return "https://api.typesafe.ai/v1/systemone", apiKey(t), `{"state":"x","model":"jev-latest",` + questions + `}`
 				},
 			},
 			{
-				name: "openrouter-question-limit",
+				name:     "openrouter-question-limit",
+				provider: onesie.OpenRouter(),
 				target: func(t *testing.T) (string, string, string) {
-					return "https://openrouter.ai/api/v1/systemone", openRouterKey(t), fmt.Sprintf(question, "jev-latest")
+					return "https://openrouter.ai/api/v1/systemone", openRouterKey(t), `{"state":"x","model":"jev-latest",` + questions + `}`
 				},
 			},
 			{
-				name: "gateway-question-limit",
+				name:     "gateway-question-limit",
+				provider: onesie.Cloudflare(),
 				target: func(t *testing.T) (string, string, string) {
 					token, account := cloudflareCredentials(t)
 
+					// The gateway takes the model beside the input, never inside it.
 					return "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run", token,
-						`{"model":"typesafe/jev","input":` + fmt.Sprintf(question, "typesafe/jev") + `}`
+						`{"model":"typesafe/jev","input":{"state":"x",` + questions + `}}`
 				},
 			},
 		} {
@@ -999,6 +1009,10 @@ func TestLiveErrors(t *testing.T) {
 
 				if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
 					t.Errorf("status = %d, want 400 or 422", status)
+				}
+
+				if err := replayed(t, tc.provider, status, raw); !errors.Is(err, onesie.ErrQuestionLimit) {
+					t.Errorf("error = %v, want ErrQuestionLimit", err)
 				}
 			})
 		}
@@ -1074,7 +1088,11 @@ func postLive(t *testing.T, url, key, body string) (int, []byte) {
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := http.DefaultClient.Do(req)
+	notFollowing := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	res, err := notFollowing.Do(req)
 	if err != nil {
 		t.Fatalf("sending the request: %v", err)
 	}
@@ -1091,6 +1109,42 @@ func postLive(t *testing.T, url, key, body string) (int, []byte) {
 	}
 
 	return res.StatusCode, raw
+}
+
+func replayed(t *testing.T, provider onesie.Provider, status int, body []byte) error {
+	t.Helper()
+
+	client, err := onesie.New(
+		onesie.WithProvider(provider),
+		onesie.WithAPIKey("replay"),
+		onesie.WithBaseURL("https://replay.invalid"),
+		onesie.WithEnv(func(string) (string, bool) { return "", false }),
+		onesie.WithHTTPClient(&http.Client{Transport: replayTransport{status: status, body: body}}),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_, err = client.SystemOne(liveContext(t, time.Minute), onesie.Request{
+		State:     "x",
+		Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "Is this a test?"}}},
+	})
+
+	return err
+}
+
+type replayTransport struct {
+	status int
+	body   []byte
+}
+
+func (r replayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: r.status,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(r.body)),
+		Request:    req,
+	}, nil
 }
 
 func liveCloudflareClient(t *testing.T) *onesie.Client {
