@@ -456,6 +456,36 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			want: onesie.ResultShapeError{Answer: "x", Field: "box", Want: "an object", Got: "an array"},
 			text: "answer 'x' has a box that is not an object",
 		},
+		{
+			name: "should leave a newline in an answer name out of the message",
+			body: `{"answers":{"a\nb":{"type":"noul","noul":"1"}}}`,
+			want: onesie.ResultShapeError{Answer: "a\nb", Field: "noul", Want: "a number", Got: "a string"},
+			text: "answer 'ab' has a noul that is not a number",
+		},
+		{
+			name: "should leave an ANSI escape in a type out of the message",
+			body: `{"answers":{"x":{"type":"\u001b[31mred"}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "type", Want: "noul, choice, score or box", Got: "\x1b[31mred"},
+			text: "answer 'x' has the type '[31mred', which is not noul, choice, score or box",
+		},
+		{
+			name: "should cut a very long type in the message",
+			body: `{"answers":{"x":{"type":"` + strings.Repeat("t", 300) + `"}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "type", Want: "noul, choice, score or box", Got: strings.Repeat("t", 300)},
+			text: "answer 'x' has the type '" + strings.Repeat("t", 200) + "...', which is not noul, choice, score or box",
+		},
+		{
+			name: "should leave a newline in a probability key out of the message",
+			body: `{"answers":{"x":{"type":"choice","choice":"a","probabilities":{"a\nb":null}}}}`,
+			want: onesie.ResultShapeError{Answer: "x", Field: "probabilities.a\nb", Want: "a number"},
+			text: "answer 'x' has no probability for 'ab', or it is null",
+		},
+		{
+			name: "should cut a very long answer name in the message",
+			body: `{"answers":{"` + strings.Repeat("n", 300) + `":[1]}}`,
+			want: onesie.ResultShapeError{Answer: strings.Repeat("n", 300), Want: "an object", Got: "an array"},
+			text: "answer '" + strings.Repeat("n", 200) + "...' is an array, not an object",
+		},
 	}
 
 	for _, tc := range shapes {

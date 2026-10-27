@@ -600,45 +600,48 @@ type ResultShapeError struct {
 	Got    string
 }
 
-// Error describes the fault in the response's own terms, with no Go types.
+// Error describes the fault in the response's own terms, with no Go types. Text from the response is
+// cleaned of control characters and cut short.
 func (e *ResultShapeError) Error() string {
+	field, got := printable(e.Field), printable(e.Got)
+
 	if e.Answer == "" {
-		return e.resultSentence()
+		return resultSentence(field, e.Want, got)
 	}
 
-	name := "answer '" + e.Answer + "'"
-	if e.Field == "" {
-		return fmt.Sprintf("%s is %s, not %s", name, e.Got, e.Want)
+	name := "answer '" + printable(e.Answer) + "'"
+	if field == "" {
+		return fmt.Sprintf("%s is %s, not %s", name, got, e.Want)
 	}
 
-	phrase, bare, verb := fieldPhrase(e.Field)
+	phrase, bare, verb := fieldPhrase(field)
 
 	switch {
-	case e.Got == "":
+	case got == "":
 		return fmt.Sprintf("%s has no %s, or it is null", name, bare)
-	case e.Field == "type" && e.Want == answerKinds:
-		return fmt.Sprintf("%s has the type '%s', which is not %s", name, e.Got, e.Want)
-	case strings.HasPrefix(e.Got, "an empty "):
+	case field == "type" && e.Want == answerKinds:
+		return fmt.Sprintf("%s has the type '%s', which is not %s", name, got, e.Want)
+	case strings.HasPrefix(got, "an empty "):
 		return fmt.Sprintf("%s has %s that %s empty", name, phrase, verb)
 	default:
 		return fmt.Sprintf("%s has %s that %s not %s", name, phrase, verb, e.Want)
 	}
 }
 
-func (e *ResultShapeError) resultSentence() string {
+func resultSentence(field, want, got string) string {
 	const lead = "the response is not a System One result"
 
 	switch {
-	case e.Field == "" && e.Got == "":
+	case field == "" && got == "":
 		return lead
-	case e.Field == "":
-		return lead + ", since it is " + e.Got
-	case e.Got == "":
-		return lead + ", since it has no " + e.Field + ", or it is null"
+	case field == "":
+		return lead + ", since it is " + got
+	case got == "":
+		return lead + ", since it has no " + field + ", or it is null"
 	default:
-		_, _, verb := fieldPhrase(e.Field)
+		_, _, verb := fieldPhrase(field)
 
-		return lead + ", since its " + e.Field + " " + verb + " not " + e.Want
+		return lead + ", since its " + field + " " + verb + " not " + want
 	}
 }
 

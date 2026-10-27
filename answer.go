@@ -182,7 +182,7 @@ func foundKind(value string) string {
 func namingAnswer(name string, err error) error {
 	var shape *ResultShapeError
 	if !errors.As(err, &shape) {
-		return fmt.Errorf("answer '%s': %w", name, err)
+		return fmt.Errorf("answer '%s': %w", printable(name), err)
 	}
 
 	shape.Answer = name
