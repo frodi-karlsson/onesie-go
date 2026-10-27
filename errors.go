@@ -110,8 +110,49 @@ func whole(text string) string {
 	return text
 }
 
+func describe(status int, header http.Header, body any, raw []byte, read func(any) string, fit func(string) string) string {
+	switch {
+	case redirected(status, header):
+		return describeRedirect(status, header.Get("Location"))
+	case body == nil && len(raw) == 0:
+		return fmt.Sprintf("%d status code, no body", status)
+	case body == nil:
+		return describeText(status, string(raw), fit)
+	}
+
+	if text, isText := body.(string); isText {
+		return describeString(status, text, fit)
+	}
+
+	if detail := read(body); detail != "" {
+		// Fitted here rather than inside extraction, so a hostile body cannot reach a log line at
+		// full length.
+		return fmt.Sprintf("%d %s", status, fit(detail))
+	}
+
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Sprintf("%d status code, unreadable body", status)
+	}
+
+	return fmt.Sprintf("%d %s", status, fit(string(encoded)))
+}
+
 func redirected(status int, header http.Header) bool {
 	return status >= 300 && status < 400 && header.Get("Location") != ""
+}
+
+func describeRedirect(status int, location string) string {
+	const refusal = ", which onesie does not follow, since the request carries the API key. " +
+		"Point the base URL at where the API is"
+
+	// Only the origin, since the rest of a location may carry a token.
+	parsed, err := url.Parse(location)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Sprintf("%d redirect", status) + refusal
+	}
+
+	return fmt.Sprintf("%d redirect to %s", status, printable(shownOf(parsed))) + refusal
 }
 
 func describeText(status int, body string, fit func(string) string) string {
@@ -169,47 +210,6 @@ func repeatsStatus(line string, status int) bool {
 	text = strings.TrimSpace(strings.TrimPrefix(text, strconv.Itoa(status)))
 
 	return strings.EqualFold(text, http.StatusText(status))
-}
-
-func describe(status int, header http.Header, body any, raw []byte, read func(any) string, fit func(string) string) string {
-	switch {
-	case redirected(status, header):
-		return describeRedirect(status, header.Get("Location"))
-	case body == nil && len(raw) == 0:
-		return fmt.Sprintf("%d status code, no body", status)
-	case body == nil:
-		return describeText(status, string(raw), fit)
-	}
-
-	if text, isText := body.(string); isText {
-		return describeString(status, text, fit)
-	}
-
-	if detail := read(body); detail != "" {
-		// Fitted here rather than inside extraction, so a hostile body cannot reach a log line at
-		// full length.
-		return fmt.Sprintf("%d %s", status, fit(detail))
-	}
-
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Sprintf("%d status code, unreadable body", status)
-	}
-
-	return fmt.Sprintf("%d %s", status, fit(string(encoded)))
-}
-
-func describeRedirect(status int, location string) string {
-	const refusal = ", which onesie does not follow, since the request carries the API key. " +
-		"Point the base URL at where the API is"
-
-	// Only the origin, since the rest of a location may carry a token.
-	parsed, err := url.Parse(location)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Sprintf("%d redirect", status) + refusal
-	}
-
-	return fmt.Sprintf("%d redirect to %s", status, printable(shownOf(parsed))) + refusal
 }
 
 func truncate(raw string) string {

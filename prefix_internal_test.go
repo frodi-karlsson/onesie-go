@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestError(t *testing.T) {
+func TestOnesie(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should write the onesie prefix only inside an Error method", func(t *testing.T) {

@@ -838,61 +838,112 @@ func TestTruncate(t *testing.T) {
 	})
 }
 
-func TestReason(t *testing.T) {
+func TestValidationErrorReason(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should give the message", func(t *testing.T) {
+		t.Parallel()
+
+		checkReason(t, &ValidationError{Message: "bad"}, "bad")
+	})
+}
+
+func TestAPIErrorReason(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should give the status and the message", func(t *testing.T) {
+		t.Parallel()
+
+		checkReason(t, NewAPIError(503, "503 down"), "503 down")
+	})
+}
+
+func TestRetryAfterErrorReason(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should give the delay and the cap", func(t *testing.T) {
+		t.Parallel()
+
+		checkReason(t, &RetryAfterError{APIError: APIError{Status: 429}, RetryAfter: 2 * time.Minute, Cap: time.Minute}, "status 429, the server asked to retry after 2m0s, above the 1m0s cap")
+	})
+}
+
+func TestResponseErrorReason(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should give the fault", func(t *testing.T) {
+		t.Parallel()
+
+		checkReason(t, &ResponseError{Status: 200, Err: errors.New("empty response body")}, "200 response could not be used: empty response body")
+	})
+}
+
+func TestConnectionErrorReason(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should give the cause", func(t *testing.T) {
+		t.Parallel()
+
+		checkReason(t, &ConnectionError{Err: errors.New("dial failed")}, "connection error: dial failed")
+	})
+}
+
+func TestTimeoutErrorReason(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
-		err  interface {
-			error
-			Reason() string
-		}
+		err  *TimeoutError
 		want string
 	}{
-		{name: "should give a ValidationError's message", err: &ValidationError{Message: "bad"}, want: "bad"},
-		{name: "should give an APIError's status and message", err: NewAPIError(503, "503 down"), want: "503 down"},
-		{
-			name: "should give a RetryAfterError its own reason",
-			err:  &RetryAfterError{APIError: APIError{Status: 429}, RetryAfter: 2 * time.Minute, Cap: time.Minute},
-			want: "status 429, the server asked to retry after 2m0s, above the 1m0s cap",
-		},
-		{
-			name: "should give a ResponseError's fault",
-			err:  &ResponseError{Status: 200, Err: errors.New("empty response body")},
-			want: "200 response could not be used: empty response body",
-		},
-		{name: "should give a ConnectionError's cause", err: &ConnectionError{Err: errors.New("dial failed")}, want: "connection error: dial failed"},
-		{
-			name: "should give a TimeoutError its own reason",
-			err:  &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}, Timeout: time.Second},
-			want: "request timed out after 1s",
-		},
-		{
-			name: "should say only that a deadline fired when the timeout is unknown",
-			err:  &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}},
-			want: "request timed out",
-		},
-		{name: "should give an AnswerError's reason", err: &AnswerError{Name: "a", Missing: true}, want: `no answer named "a"`},
-		{
-			name: "should give a CapabilityError its message",
-			err:  newCapabilityError("levanto", "m", Needs{Images: true}, nil),
-			want: "the levanto provider takes no images",
-		},
+		{name: "should give the timeout", err: &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}, Timeout: time.Second}, want: "request timed out after 1s"},
+		{name: "should say only that a deadline fired when the timeout is unknown", err: &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}}, want: "request timed out"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := tc.err.Reason(); got != tc.want {
-				t.Errorf("Reason = %q, want %q", got, tc.want)
-			}
-
-			if got := tc.err.Error(); got != "onesie: "+tc.want {
-				t.Errorf("Error = %q, want the reason with the prefix", got)
-			}
+			checkReason(t, tc.err, tc.want)
 		})
 	}
+}
+
+func TestAnswerErrorReason(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should say the answer is missing", func(t *testing.T) {
+		t.Parallel()
+
+		checkReason(t, &AnswerError{Name: "a", Missing: true}, `no answer named "a"`)
+	})
+}
+
+func TestCapabilityErrorReason(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should give the message", func(t *testing.T) {
+		t.Parallel()
+
+		checkReason(t, newCapabilityError("levanto", "m", Needs{Images: true}, nil), "the levanto provider takes no images")
+	})
+}
+
+func checkReason(t *testing.T, err reasoner, want string) {
+	t.Helper()
+
+	if got := err.Reason(); got != want {
+		t.Errorf("Reason = %q, want %q", got, want)
+	}
+
+	if got := err.Error(); got != "onesie: "+want {
+		t.Errorf("Error = %q, want the reason with the prefix", got)
+	}
+}
+
+type reasoner interface {
+	error
+	Reason() string
 }
 
 func TestResultShapeError(t *testing.T) {
