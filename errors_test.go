@@ -635,6 +635,42 @@ func TestNewAPIError(t *testing.T) {
 		})
 	}
 
+	t.Run("should classify on the whole message and show it truncated", func(t *testing.T) {
+		t.Parallel()
+
+		body := []byte(`{"detail":"` + strings.Repeat("x", 300) + ` Unknown model"}`)
+
+		got := newAPIError(typesafe, Needs{}, 400, http.Header{}, body, time.Now())
+		if !errors.Is(got, ErrUnknownModel) || strings.Contains(got.Error(), "Unknown model") || !strings.HasSuffix(got.Error(), "...") {
+			t.Errorf("error = %v, want ErrUnknownModel with a truncated message", got)
+		}
+	})
+
+	for _, tc := range []struct {
+		name     string
+		location string
+		want     string
+	}{
+		{
+			name: "should show only the scheme and host of a redirect", location: "https://elsewhere.example/v1/models?key=secret#top",
+			want: "onesie: 302 redirect to https://elsewhere.example, which onesie does not follow, since the request carries the API key. " +
+				"Point the base URL at where the API is",
+		},
+		{
+			name: "should show no location for a relative redirect", location: "/v2/models?key=secret",
+			want: "onesie: 302 redirect, which onesie does not follow, since the request carries the API key. Point the base URL at where the API is",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := newAPIError(typesafe, Needs{}, 302, http.Header{"Location": {tc.location}}, nil, time.Now())
+			if got.Error() != tc.want {
+				t.Errorf("error = %q, want %q", got.Error(), tc.want)
+			}
+		})
+	}
+
 	t.Run("should match the first refusal in order when several match", func(t *testing.T) {
 		t.Parallel()
 

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strconv"
@@ -424,13 +425,13 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 	}
 
 	// Numbered so concurrent requests, and the attempts within one, can be told apart in the logs.
-	tag := fmt.Sprintf("#%d %s %s", c.requests.Add(1), req.method, req.path)
-	url := c.baseURL + req.path
+	tag := fmt.Sprintf("#%d %s %s", c.requests.Add(1), req.method, withoutQuery(req.path))
+	target := c.baseURL + req.path
 
 	for attempt := 0; ; attempt++ {
 		retriesLeft := cfg.retry.MaxRetries - attempt
 
-		res, err := c.attempt(ctx, tag, attempt, req.method, url, payload, cfg)
+		res, err := c.attempt(ctx, tag, attempt, req.method, target, payload, cfg)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, interrupted(ctx, cfg.totalTimeout)
@@ -448,7 +449,7 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 		}
 
 		if res.status >= 200 && res.status < 300 {
-			return res, decodeInto(res, url, req.out, req.decode)
+			return res, decodeInto(res, withoutQuery(target), req.out, req.decode)
 		}
 
 		apiErr := newAPIError(req.via, req.needs, res.status, res.header, res.body, c.clock.Now())
@@ -501,7 +502,7 @@ func (c *Client) attempt(
 	ctx context.Context,
 	tag string,
 	attempt int,
-	method, url string,
+	method, target string,
 	payload []byte,
 	cfg requestConfig,
 ) (*rawResponse, error) {
@@ -514,7 +515,7 @@ func (c *Client) attempt(
 		reader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequestWithContext(actx, method, url, reader)
+	req, err := http.NewRequestWithContext(actx, method, target, reader)
 	if err != nil {
 		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error()}
 	}
@@ -524,7 +525,7 @@ func (c *Client) attempt(
 	if c.logger.Enabled(actx, slog.LevelDebug) {
 		c.logger.DebugContext(actx, "onesie request",
 			"tag", tag,
-			"url", url,
+			"url", withoutQuery(target),
 			"headers", redactedHeader(req.Header),
 			// Not redacted, matching the JavaScript SDK, so debug logging a request discloses its
 			// payload.
@@ -536,7 +537,7 @@ func (c *Client) attempt(
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		failure := classify(ctx, actx, err, cfg.attemptTimeout)
+		failure := classify(ctx, actx, queryHidden(err), cfg)
 		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
 
 		return nil, failure
@@ -551,7 +552,7 @@ func (c *Client) attempt(
 	// Read fully under the attempt deadline, so a slow body cannot outlive the timeout.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
 	if err != nil {
-		failure := classify(ctx, actx, err, cfg.attemptTimeout)
+		failure := classify(ctx, actx, err, cfg)
 		// Observed like any other failed round trip. The request was sent and the server answered,
 		// so an observer that skipped it would under count attempts and would see a failure it
 		// never saw an attempt for.
@@ -674,7 +675,7 @@ func interrupted(ctx context.Context, total time.Duration) error {
 	return &TimeoutError{ConnectionError: ConnectionError{Err: err}, Timeout: total}
 }
 
-func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]byte, error)) error {
+func decodeInto(res *rawResponse, shown string, out any, decode func([]byte) ([]byte, error)) error {
 	if out == nil {
 		return nil
 	}
@@ -687,7 +688,7 @@ func decodeInto(res *rawResponse, url string, out any, decode func([]byte) ([]by
 		return &ResponseError{
 			Status: res.status,
 			Body:   res.body,
-			Err:    fmt.Errorf("the response is not JSON, check the base URL %s", url),
+			Err:    fmt.Errorf("the response is not JSON, check the base URL %s", shown),
 		}
 	}
 
@@ -709,16 +710,31 @@ type rawResponse struct {
 	body   []byte
 }
 
-func classify(ctx, actx context.Context, err error, timeout time.Duration) error {
+func classify(ctx, actx context.Context, err error, cfg requestConfig) error {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return interrupted(ctx, cfg.totalTimeout)
 	}
 
 	if actx.Err() != nil {
-		return &TimeoutError{ConnectionError: ConnectionError{Err: err}, Timeout: timeout}
+		return &TimeoutError{ConnectionError: ConnectionError{Err: err}, Timeout: cfg.attemptTimeout}
 	}
 
 	return &ConnectionError{Err: err}
+}
+
+func queryHidden(err error) error {
+	var failed *url.Error
+	if errors.As(err, &failed) {
+		failed.URL = withoutQuery(failed.URL)
+	}
+
+	return err
+}
+
+func withoutQuery(target string) string {
+	before, _, _ := strings.Cut(target, "?")
+
+	return before
 }
 
 func retryableError(err error, policy RetryPolicy) bool {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +91,7 @@ func NewAPIError(status int, message string) *APIError {
 func newAPIError(via route, needs Needs, status int, header http.Header, body []byte, now time.Time) *APIError {
 	parsed := decodeBody(body)
 	retryAfter, _ := parseRetryAfter(header, now)
-	message := describe(status, header, parsed, body, via.reader())
+	read := via.reader()
 
 	return &APIError{
 		Status:     status,
@@ -100,16 +101,20 @@ func newAPIError(via route, needs Needs, status int, header http.Header, body []
 		RawBody:    body,
 		RetryAfter: retryAfter,
 		Code:       codeOf(parsed),
-		message:    message,
-		sentinel:   via.classify(status, parsed, message, needs),
+		message:    describe(status, header, parsed, body, read, truncate),
+		sentinel:   via.classify(status, parsed, describe(status, header, parsed, body, read, whole), needs),
 	}
+}
+
+func whole(text string) string {
+	return text
 }
 
 func redirected(status int, header http.Header) bool {
 	return status >= 300 && status < 400 && header.Get("Location") != ""
 }
 
-func describeText(status int, body string) string {
+func describeText(status int, body string, fit func(string) string) string {
 	message := statusLine(status) + ", with a response body that is not JSON"
 
 	// An HTML page from a proxy or a web server says nothing one line can show, while a line of text
@@ -119,16 +124,16 @@ func describeText(status int, body string) string {
 		return message
 	}
 
-	return message + ": " + line
+	return message + ": " + fit(line)
 }
 
-func describeString(status int, text string) string {
+func describeString(status int, text string, fit func(string) string) string {
 	line := firstLine(text)
 	if line == "" || strings.HasPrefix(line, "<") {
 		return statusLine(status)
 	}
 
-	return fmt.Sprintf("%d %s", status, line)
+	return fmt.Sprintf("%d %s", status, fit(line))
 }
 
 func statusLine(status int) string {
@@ -142,17 +147,21 @@ func statusLine(status int) string {
 func firstLine(body string) string {
 	line, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(body), byteOrderMark), "\n")
 
-	return printable(line)
+	return withoutControls(line)
 }
 
 func printable(text string) string {
-	return truncate(strings.TrimSpace(strings.Map(func(r rune) rune {
+	return truncate(withoutControls(text))
+}
+
+func withoutControls(text string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
 		}
 
 		return r
-	}, text)))
+	}, text))
 }
 
 func repeatsStatus(line string, status int) bool {
@@ -162,25 +171,24 @@ func repeatsStatus(line string, status int) bool {
 	return strings.EqualFold(text, http.StatusText(status))
 }
 
-func describe(status int, header http.Header, body any, raw []byte, read func(any) string) string {
+func describe(status int, header http.Header, body any, raw []byte, read func(any) string, fit func(string) string) string {
 	switch {
 	case redirected(status, header):
-		return fmt.Sprintf("%d redirect to %s, which onesie does not follow, since the request "+
-			"carries the API key. Point the base URL at where the API is", status, truncate(header.Get("Location")))
+		return describeRedirect(status, header.Get("Location"))
 	case body == nil && len(raw) == 0:
 		return fmt.Sprintf("%d status code, no body", status)
 	case body == nil:
-		return describeText(status, string(raw))
+		return describeText(status, string(raw), fit)
 	}
 
 	if text, isText := body.(string); isText {
-		return describeString(status, text)
+		return describeString(status, text, fit)
 	}
 
 	if detail := read(body); detail != "" {
-		// Truncated here rather than inside extraction, so a hostile body cannot reach a log line at
+		// Fitted here rather than inside extraction, so a hostile body cannot reach a log line at
 		// full length.
-		return fmt.Sprintf("%d %s", status, truncate(detail))
+		return fmt.Sprintf("%d %s", status, fit(detail))
 	}
 
 	encoded, err := json.Marshal(body)
@@ -188,7 +196,20 @@ func describe(status int, header http.Header, body any, raw []byte, read func(an
 		return fmt.Sprintf("%d status code, unreadable body", status)
 	}
 
-	return fmt.Sprintf("%d %s", status, truncate(string(encoded)))
+	return fmt.Sprintf("%d %s", status, fit(string(encoded)))
+}
+
+func describeRedirect(status int, location string) string {
+	const refusal = ", which onesie does not follow, since the request carries the API key. " +
+		"Point the base URL at where the API is"
+
+	// Only the origin, since the rest of a location may carry a token.
+	parsed, err := url.Parse(location)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Sprintf("%d redirect", status) + refusal
+	}
+
+	return fmt.Sprintf("%d redirect to %s", status, printable(shownOf(parsed))) + refusal
 }
 
 func truncate(raw string) string {

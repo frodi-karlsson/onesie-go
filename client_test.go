@@ -1,11 +1,13 @@
 package onesie_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -1937,6 +1939,61 @@ func TestClientSystemOne(t *testing.T) {
 func TestClientListModels(t *testing.T) {
 	t.Parallel()
 
+	t.Run("should show the URL without its query when the listing is not JSON", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "<!DOCTYPE html><html></html>")
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.OpenRouter()))
+
+		_, err := client.ListModels(t.Context())
+		if !errors.Is(err, onesie.ErrResponse) || !strings.Contains(err.Error(), server.URL+"/v1/models") ||
+			strings.Contains(err.Error(), "?") {
+			t.Errorf("error = %v, want it to name %s/v1/models without a query", err, server.URL)
+		}
+	})
+
+	t.Run("should show the URL without its query when the connection fails", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.NotFoundHandler())
+		server.Close()
+
+		noRetry := onesie.DefaultRetryPolicy()
+		noRetry.MaxRetries = 0
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.OpenRouter()), onesie.WithRetry(noRetry))
+
+		_, err := client.ListModels(t.Context())
+		if !errors.Is(err, onesie.ErrConnection) || !strings.Contains(err.Error(), server.URL+"/v1/models") ||
+			strings.Contains(err.Error(), "?") {
+			t.Errorf("error = %v, want it to name %s/v1/models without a query", err, server.URL)
+		}
+	})
+
+	t.Run("should log the URL without its query", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		}))
+		defer server.Close()
+
+		var logged bytes.Buffer
+
+		logger := slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.OpenRouter()), onesie.WithLogger(logger))
+
+		_, _ = client.ListModels(t.Context())
+
+		if !strings.Contains(logged.String(), "url="+server.URL+"/v1/models ") || strings.Contains(logged.String(), "output_modalities") {
+			t.Errorf("log = %s, want the URL without its query", logged.String())
+		}
+	})
+
 	t.Run("should name the base url when the listing is not JSON", func(t *testing.T) {
 		t.Parallel()
 
@@ -2035,7 +2092,7 @@ func TestClientListModels(t *testing.T) {
 				t.Fatalf("%s client: error = %v, want an APIError with status 302", name, err)
 			}
 
-			want := "onesie: 302 redirect to " + target.URL + "/v1/models, which onesie does not follow, " +
+			want := "onesie: 302 redirect to " + target.URL + ", which onesie does not follow, " +
 				"since the request carries the API key. Point the base URL at where the API is"
 			if err.Error() != want {
 				t.Errorf("%s client: error = %q, want %q", name, err.Error(), want)
@@ -2391,6 +2448,63 @@ func TestWithAttemptObserver(t *testing.T) {
 
 			if !slices.Equal(reports, tc.wantReports) {
 				t.Errorf("observed statuses = %v, want %v", reports, tc.wantReports)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name    string
+		opts    []onesie.Option
+		cancels bool
+	}{
+		{name: "should observe a cancelled call as the ConnectionError it returns", cancels: true},
+		{name: "should observe a call past its total timeout as the TimeoutError it returns", opts: []onesie.Option{onesie.WithTotalTimeout(50 * time.Millisecond)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			release := make(chan struct{})
+
+			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				if tc.cancels {
+					cancel()
+				}
+
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			defer server.Close()
+			defer close(release)
+
+			var (
+				mu       sync.Mutex
+				observed []error
+			)
+
+			opts := append([]onesie.Option{onesie.WithAttemptObserver(func(a onesie.Attempt) {
+				mu.Lock()
+				defer mu.Unlock()
+
+				observed = append(observed, a.Err)
+			})}, tc.opts...)
+			client, _ := newTestClient(t, server.URL, opts...)
+
+			_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if len(observed) != 1 || observed[0] == nil || err == nil {
+				t.Fatalf("observed = %v, error = %v, want one observed failure", observed, err)
+			}
+
+			if fmt.Sprintf("%T %v", observed[0], observed[0]) != fmt.Sprintf("%T %v", err, err) {
+				t.Errorf("observed %T %v, want the returned %T %v", observed[0], observed[0], err, err)
 			}
 		})
 	}
