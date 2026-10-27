@@ -152,7 +152,14 @@ func TestNewAPIError(t *testing.T) {
 			body:     strings.Repeat("é", 130),
 			sentinel: ErrServer,
 			message: "onesie: 500 Internal Server Error, with a response body that is not JSON: " +
-				strings.Repeat("é", 120) + "...",
+				strings.Repeat("é", 100) + "...",
+		},
+		{
+			name:     "should leave out an HTML body that starts with a byte order mark",
+			status:   502,
+			body:     "\ufeff<!DOCTYPE html><html></html>",
+			sentinel: ErrServer,
+			message:  "onesie: 502 Bad Gateway, with a response body that is not JSON",
 		},
 		{
 			name:     "should keep a JSON string body as the message",

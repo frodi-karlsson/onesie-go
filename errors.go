@@ -14,7 +14,7 @@ import (
 
 const (
 	maxBodyInError = 200
-	maxLineInError = 120
+	byteOrderMark  = "\ufeff"
 )
 
 // Sentinels for errors.Is. An APIError reports itself as the one matching its status.
@@ -99,20 +99,19 @@ func describeText(status int, body string) string {
 }
 
 func firstLine(body string) string {
-	line, _, _ := strings.Cut(strings.TrimSpace(body), "\n")
-	line = strings.TrimSpace(strings.Map(func(r rune) rune {
+	line, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(body), byteOrderMark), "\n")
+
+	return printable(line)
+}
+
+func printable(text string) string {
+	return truncate(strings.TrimSpace(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
 		}
 
 		return r
-	}, line))
-
-	if runes := []rune(line); len(runes) > maxLineInError {
-		return string(runes[:maxLineInError]) + "..."
-	}
-
-	return line
+	}, text)))
 }
 
 func repeatsStatus(line string, status int) bool {
