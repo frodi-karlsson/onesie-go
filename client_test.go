@@ -132,9 +132,40 @@ func TestNew(t *testing.T) {
 				wantURL: "https://proxy.example/ai/run",
 			},
 			{
-				name:    "should report the key before the account",
-				env:     map[string]string{},
-				wantErr: "onesie: no API key. Set CLOUDFLARE_API_TOKEN",
+				name: "should report the account before the key",
+				env:  map[string]string{},
+				wantErr: "onesie: no cloudflare account id. Set CLOUDFLARE_ACCOUNT_ID, or pass the base URL " +
+					"https://api.cloudflare.com/client/v4/accounts/<account_id>/ai",
+			},
+			{
+				name:    "should build the base url from WithAccountID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
+				opts:    []onesie.Option{onesie.WithAccountID(account)},
+				wantURL: "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run",
+			},
+			{
+				name:    "should let WithAccountID win over CLOUDFLARE_ACCOUNT_ID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t", "CLOUDFLARE_ACCOUNT_ID": "nope"},
+				opts:    []onesie.Option{onesie.WithAccountID(account)},
+				wantURL: "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run",
+			},
+			{
+				name:    "should let WithBaseURL win over WithAccountID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
+				opts:    []onesie.Option{onesie.WithAccountID(account), onesie.WithBaseURL("https://proxy.example/ai")},
+				wantURL: "https://proxy.example/ai/run",
+			},
+			{
+				name:    "should ignore a blank WithAccountID",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t", "CLOUDFLARE_ACCOUNT_ID": account},
+				opts:    []onesie.Option{onesie.WithAccountID("  ")},
+				wantURL: "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run",
+			},
+			{
+				name:    "should refuse a malformed WithAccountID, naming the account id",
+				env:     map[string]string{"CLOUDFLARE_API_TOKEN": "t"},
+				opts:    []onesie.Option{onesie.WithAccountID("nope")},
+				wantErr: "onesie: the account id must be 32 hexadecimal characters",
 			},
 		}
 
@@ -164,6 +195,115 @@ func TestNew(t *testing.T) {
 		}
 	})
 
+	t.Run("should resolve the key and the account", func(t *testing.T) {
+		t.Parallel()
+
+		const account = "0123456789abcdef0123456789abcdef"
+
+		t.Run("should refuse an account on a provider without accounts", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKey("k"), onesie.WithAccountID(account))
+			if !errors.Is(err, onesie.ErrValidation) || err.Error() != "onesie: the typesafe provider takes no account id" {
+				t.Fatalf("error = %v, want the account refused", err)
+			}
+		})
+
+		t.Run("should take the account whichever order the options come in", func(t *testing.T) {
+			t.Parallel()
+
+			client, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAccountID(account),
+				onesie.WithAPIKey("k"), onesie.WithProvider(onesie.Cloudflare()))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if !strings.Contains(client.BaseURL(), account) {
+				t.Errorf("BaseURL = %s, want the account", client.BaseURL())
+			}
+		})
+
+		t.Run("should match ErrNoAccountID for a missing account", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKey("k"), onesie.WithProvider(onesie.Cloudflare()))
+			if !errors.Is(err, onesie.ErrNoAccountID) || !errors.Is(err, onesie.ErrValidation) {
+				t.Fatalf("error = %v, want ErrNoAccountID", err)
+			}
+		})
+
+		t.Run("should call the key func only after the base url passes", func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			key := func() (string, error) {
+				calls++
+
+				return "k", nil
+			}
+
+			_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKeyFunc(key), onesie.WithBaseURL("not a url"))
+			if !errors.Is(err, onesie.ErrValidation) || calls != 0 {
+				t.Fatalf("error = %v after %d calls, want a base url refusal and no call", err, calls)
+			}
+		})
+
+		t.Run("should return the key func's error as it is", func(t *testing.T) {
+			t.Parallel()
+
+			locked := errors.New("the keychain is locked")
+
+			_, err := onesie.New(onesie.WithEnv(lookupFrom(nil)), onesie.WithAPIKeyFunc(func() (string, error) { return "", locked }))
+			if !errors.Is(err, locked) || err.Error() != "the keychain is locked" {
+				t.Fatalf("error = %v, want the func's own error", err)
+			}
+		})
+
+		t.Run("should refuse a nil key func", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := onesie.New(onesie.WithAPIKeyFunc(nil))
+			if !errors.Is(err, onesie.ErrValidation) || err.Error() != "onesie: API key func must not be nil" {
+				t.Fatalf("error = %v, want the nil func refused", err)
+			}
+		})
+
+		for _, opt := range []onesie.Option{
+			onesie.WithAPIKey(" "),
+			onesie.WithAPIKeyFunc(func() (string, error) { return "", nil }),
+		} {
+			t.Run("should refuse an explicit empty key and not read the environment", func(t *testing.T) {
+				t.Parallel()
+
+				_, err := onesie.New(onesie.WithEnv(lookupFrom(map[string]string{"TYPESAFE_API_KEY": "sk-env"})), opt)
+				if !errors.Is(err, onesie.ErrNoAPIKey) || err.Error() != "onesie: the API key is empty" {
+					t.Fatalf("error = %v, want the empty key refused", err)
+				}
+			})
+		}
+
+		t.Run("should let the last key option win", func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+
+			client, err := onesie.New(onesie.WithEnv(lookupFrom(nil)),
+				onesie.WithAPIKeyFunc(func() (string, error) { return "sk-func", nil }), onesie.WithAPIKey("sk-last"),
+				onesie.WithBaseURL("https://api.example"), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := transport.last().Header.Get("Authorization"); got != "Bearer sk-last" {
+				t.Errorf("Authorization = %q, want the last key", got)
+			}
+		})
+	})
+
 	mockEnv := func(values map[string]string) func(string) (string, bool) {
 		return func(name string) (string, bool) {
 			value, ok := values[name]
@@ -184,6 +324,10 @@ func TestNew(t *testing.T) {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error = %q, want it to name %q", err.Error(), want)
 			}
+		}
+
+		if !errors.Is(err, onesie.ErrNoAPIKey) || err.Error() != "onesie: no API key. Set TYPESAFE_API_KEY" {
+			t.Errorf("error = %v, want ErrNoAPIKey naming the variable", err)
 		}
 	})
 

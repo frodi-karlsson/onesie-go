@@ -28,7 +28,7 @@ const (
 var errTotalTimeout = errors.New("total timeout")
 
 // New builds a client. Resolution order is an explicit option, then the environment, then a
-// default. Blank and whitespace only values are ignored at every level.
+// default. Blank values are ignored at every level, except an explicit API key, which is refused.
 func New(opts ...Option) (*Client, error) {
 	c := &Client{
 		httpClient:       &http.Client{},
@@ -52,32 +52,53 @@ func New(opts ...Option) (*Client, error) {
 	}
 
 	c.httpClient = withoutRedirects(c.httpClient)
-
-	c.apiKey = orEnv(c.apiKey, c.lookupEnv, c.provider.envAPIKey)
-	baseURL, accountErr := c.provider.baseURL(c.baseURL, c.lookupEnv)
-	c.baseURL = strings.TrimRight(baseURL, "/")
 	c.defaultModel = c.provider.ResolveModel(c.defaultModel, c.lookupEnv)
-
-	// Computed once here rather than behind a package level singleton, which AGENTS.md bans.
 	c.runtime = fmt.Sprintf("go/%s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 
-	if c.apiKey == "" {
-		return nil, &ValidationError{Message: "no API key. Set " + c.provider.envAPIKey}
-	}
-
-	if accountErr != nil {
-		return nil, accountErr
-	}
-
-	if err := ValidateBaseURL(baseURL); err != nil {
+	baseURL, err := c.provider.baseURL(c.baseURL, c.accountID, c.lookupEnv)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := c.retry.validate(); err != nil {
+	if err = ValidateBaseURL(baseURL); err != nil {
 		return nil, err
 	}
+
+	c.baseURL = strings.TrimRight(baseURL, "/")
+
+	if err = c.retry.validate(); err != nil {
+		return nil, err
+	}
+
+	key, err := c.resolveKey()
+	if err != nil {
+		return nil, err
+	}
+
+	c.apiKey = key
 
 	return c, nil
+}
+
+func (c *Client) resolveKey() (string, error) {
+	if c.keyFunc == nil {
+		if key := orEnv("", c.lookupEnv, c.provider.envAPIKey); key != "" {
+			return key, nil
+		}
+
+		return "", &ValidationError{Message: "no API key. Set " + c.provider.envAPIKey, kind: ErrNoAPIKey}
+	}
+
+	key, err := c.keyFunc()
+	if err != nil {
+		return "", err
+	}
+
+	if strings.TrimSpace(key) == "" {
+		return "", &ValidationError{Message: "the API key is empty", kind: ErrNoAPIKey}
+	}
+
+	return strings.TrimSpace(key), nil
 }
 
 func withoutRedirects(hc *http.Client) *http.Client {
@@ -95,6 +116,8 @@ func withoutRedirects(hc *http.Client) *http.Client {
 // passing only a Clock, random source or RetryStatus that is safe for concurrent use too.
 type Client struct {
 	apiKey           string
+	keyFunc          func() (string, error)
+	accountID        string
 	baseURL          string
 	defaultModel     string
 	userAgent        string

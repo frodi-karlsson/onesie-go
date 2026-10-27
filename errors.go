@@ -63,6 +63,10 @@ var (
 	ErrResponse = errors.New("unusable response")
 	// ErrValidation matches a ValidationError.
 	ErrValidation = errors.New("invalid request")
+	// ErrNoAPIKey matches the ValidationError New returns when it finds no API key, or an empty one.
+	ErrNoAPIKey = errors.New("no API key")
+	// ErrNoAccountID matches the ValidationError New returns when a provider with accounts has none.
+	ErrNoAccountID = errors.New("no account id")
 )
 
 // NewAPIError builds an APIError from a status and a message, for fakes and mocks. The message
@@ -552,6 +556,8 @@ func (e *ResponseError) Is(target error) bool {
 type ValidationError struct {
 	Question string
 	Message  string
+
+	kind error
 }
 
 // Error is Reason with the package prefix.
@@ -564,9 +570,9 @@ func (e *ValidationError) Reason() string {
 	return e.Message
 }
 
-// Is matches ErrValidation.
+// Is matches ErrValidation, and the more specific sentinel the rejection carries.
 func (e *ValidationError) Is(target error) bool {
-	return target == ErrValidation
+	return target == ErrValidation || (e.kind != nil && target == e.kind)
 }
 
 func newCapabilityError(provider, model string, missing Needs, takers []string) *CapabilityError {

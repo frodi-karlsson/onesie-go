@@ -27,10 +27,33 @@ const (
 	HeaderLongContext = "TypeSafe-Danger-Zone-Long-Context"
 )
 
-// WithAPIKey sets the API key, taking precedence over the environment.
+// WithAPIKey sets the API key, so the environment is not read for one. Of WithAPIKey and
+// WithAPIKeyFunc, the last one passed wins.
 func WithAPIKey(key string) Option {
+	return WithAPIKeyFunc(func() (string, error) { return key, nil })
+}
+
+// WithAPIKeyFunc supplies the API key, called once by New after every other check passes. Its error
+// is returned as it is, and the environment is not read for the key.
+func WithAPIKeyFunc(key func() (string, error)) Option {
 	return func(c *Client) error {
-		c.apiKey = key
+		if key == nil {
+			return &ValidationError{Message: "API key func must not be nil"}
+		}
+
+		c.keyFunc = key
+
+		return nil
+	}
+}
+
+// WithAccountID sets the account for a provider that has accounts, ahead of its account variable.
+// A blank id is ignored.
+func WithAccountID(id string) Option {
+	return func(c *Client) error {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			c.accountID = trimmed
+		}
 
 		return nil
 	}

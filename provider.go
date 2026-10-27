@@ -242,26 +242,47 @@ func (p Provider) route(model string) route {
 	return p.routeFor(model)
 }
 
-func (p Provider) baseURL(explicit string, lookupEnv func(string) (string, bool)) (string, error) {
-	if chosen := orEnv(explicit, lookupEnv, p.envBaseURL); chosen != "" {
-		return chosen, nil
+func (p Provider) baseURL(explicit, accountID string, lookupEnv func(string) (string, bool)) (string, error) {
+	if accountID != "" {
+		if err := p.checkAccountID(accountID, "the account id"); err != nil {
+			return "", err
+		}
 	}
 
-	if p.envAccountID == "" {
+	switch fromEnv := orEnv("", lookupEnv, p.envBaseURL); {
+	case strings.TrimSpace(explicit) != "":
+		return strings.TrimSpace(explicit), nil
+	case accountID != "":
+		return p.accountBaseURL(accountID), nil
+	case fromEnv != "":
+		return fromEnv, nil
+	case p.envAccountID == "":
 		return p.defaultBaseURL, nil
 	}
 
 	account := orEnv("", lookupEnv, p.envAccountID)
 	if account == "" {
 		return "", &ValidationError{Message: fmt.Sprintf("no %s account id. Set %s, or pass the base URL %s",
-			p.name, p.envAccountID, p.accountBaseURL("<account_id>"))}
+			p.name, p.envAccountID, p.accountBaseURL("<account_id>")), kind: ErrNoAccountID}
 	}
 
-	if decoded, err := hex.DecodeString(account); err != nil || len(decoded) != 16 {
-		return "", &ValidationError{Message: p.envAccountID + " must be 32 hexadecimal characters"}
+	if err := p.checkAccountID(account, p.envAccountID); err != nil {
+		return "", err
 	}
 
 	return p.accountBaseURL(account), nil
+}
+
+func (p Provider) checkAccountID(account, subject string) error {
+	if p.accountBaseURL == nil {
+		return &ValidationError{Message: "the " + p.name + " provider takes no account id"}
+	}
+
+	if decoded, err := hex.DecodeString(account); err != nil || len(decoded) != 16 {
+		return &ValidationError{Message: subject + " must be 32 hexadecimal characters"}
+	}
+
+	return nil
 }
 
 func decodeTypeSafeModels(body []byte) ([]ModelCard, error) {
