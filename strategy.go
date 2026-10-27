@@ -112,7 +112,7 @@ func scanBody(body []byte) bodyScan {
 	var scan bodyScan
 
 	// A bytes.Buffer, which jsontext parses in place, so no image is copied.
-	dec := jsontext.NewDecoder(bytes.NewBuffer(body), rawOptions...)
+	dec := jsontext.NewDecoder(bytes.NewBuffer(body), rawOptions()...)
 	if dec.PeekKind() != '{' {
 		return scan
 	}
@@ -167,7 +167,7 @@ func nonEmptyAssets(value jsontext.Value) bool {
 	case 'n':
 		return false
 	case '{':
-		dec := jsontext.NewDecoder(bytes.NewBuffer(value), rawOptions...)
+		dec := jsontext.NewDecoder(bytes.NewBuffer(value), rawOptions()...)
 		if _, err := dec.ReadToken(); err != nil {
 			return true
 		}

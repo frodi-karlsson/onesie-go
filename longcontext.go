@@ -52,7 +52,7 @@ func takeLongContext(body []byte) ([]byte, bool, error) {
 }
 
 func objectMembers(body []byte) ([]member, bool) {
-	if jsontext.NewDecoder(bytes.NewReader(body), rawOptions...).PeekKind() != '{' {
+	if jsontext.NewDecoder(bytes.NewReader(body), rawOptions()...).PeekKind() != '{' {
 		return nil, false
 	}
 
@@ -64,7 +64,7 @@ func objectMembers(body []byte) ([]member, bool) {
 func writeMembers(members []member) ([]byte, error) {
 	var out bytes.Buffer
 
-	enc := jsontext.NewEncoder(&out, rawOptions...)
+	enc := jsontext.NewEncoder(&out, rawOptions()...)
 	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
 		return nil, err
 	}

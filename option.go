@@ -138,6 +138,10 @@ func WithLogger(l *slog.Logger) Option {
 // WithRetry replaces the retry policy.
 func WithRetry(p RetryPolicy) Option {
 	return func(c *Client) error {
+		if err := p.validate(); err != nil {
+			return err
+		}
+
 		c.retry = p
 
 		return nil

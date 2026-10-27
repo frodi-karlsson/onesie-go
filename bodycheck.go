@@ -25,7 +25,7 @@ func validationOnly(err error) error {
 }
 
 func scanBodyImages(body []byte) error {
-	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions...)
+	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions()...)
 	if _, err := dec.ReadToken(); err != nil {
 		return err
 	}

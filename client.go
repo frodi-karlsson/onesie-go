@@ -65,10 +65,6 @@ func New(opts ...Option) (*Client, error) {
 
 	c.baseURL, c.baseURLSource = baseURL, source
 
-	if err = c.retry.validate(); err != nil {
-		return nil, err
-	}
-
 	key, err := c.resolveKey()
 	if err != nil {
 		return nil, err

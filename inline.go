@@ -11,8 +11,6 @@ import (
 	"strings"
 )
 
-var rawOptions = []jsontext.Options{jsontext.AllowDuplicateNames(true), jsontext.PreserveRawStrings(true)}
-
 func inlineParts(body []byte) ([]byte, error) {
 	members, err := readMembers(body)
 	if err != nil {
@@ -91,7 +89,7 @@ func assetsToImages(body []byte) ([]byte, error) {
 func (r *inliner) rewrite(members []member, last func(*jsontext.Encoder) error) ([]byte, error) {
 	var out bytes.Buffer
 
-	enc := jsontext.NewEncoder(&out, rawOptions...)
+	enc := jsontext.NewEncoder(&out, rawOptions()...)
 	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
 		return nil, err
 	}
@@ -129,7 +127,7 @@ func (r *inliner) rewrite(members []member, last func(*jsontext.Encoder) error) 
 }
 
 func readMembers(body []byte) ([]member, error) {
-	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions...)
+	dec := jsontext.NewDecoder(bytes.NewReader(body), rawOptions()...)
 
 	if _, err := dec.ReadToken(); err != nil {
 		return nil, unreadableBody(err)
@@ -237,9 +235,9 @@ type imageURL struct {
 func (r *inliner) member(enc *jsontext.Encoder, m member) error {
 	switch m.name {
 	case "state":
-		return r.value(enc, jsontext.NewDecoder(bytes.NewReader(m.value), rawOptions...))
+		return r.value(enc, jsontext.NewDecoder(bytes.NewReader(m.value), rawOptions()...))
 	case "questions":
-		return r.questions(enc, jsontext.NewDecoder(bytes.NewReader(m.value), rawOptions...))
+		return r.questions(enc, jsontext.NewDecoder(bytes.NewReader(m.value), rawOptions()...))
 	default:
 		return enc.WriteValue(m.value)
 	}
@@ -498,4 +496,8 @@ func copyValue(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	}
 
 	return enc.WriteValue(raw)
+}
+
+func rawOptions() []jsontext.Options {
+	return []jsontext.Options{jsontext.AllowDuplicateNames(true), jsontext.PreserveRawStrings(true)}
 }

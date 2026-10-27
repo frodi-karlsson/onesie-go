@@ -79,3 +79,19 @@ func TestWithLongContext(t *testing.T) {
 		})
 	}
 }
+
+func TestWithRetry(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should refuse an invalid policy in the option itself", func(t *testing.T) {
+		t.Parallel()
+
+		policy := onesie.DefaultRetryPolicy()
+		policy.BackoffJitter = 2
+
+		err := onesie.WithRetry(policy)(&onesie.Client{})
+		if !errors.Is(err, onesie.ErrValidation) || err.Error() != "onesie: retry BackoffJitter must be between 0 and 1" {
+			t.Fatalf("error = %v, want the policy refused", err)
+		}
+	})
+}

@@ -40,7 +40,30 @@ func ValidateRequest(req Request) error {
 // ValidateImage rejects an image the API would reject, naming it in the message. It checks the
 // format, the file size and the sides, reading only the file's header.
 func ValidateImage(name string, img Image) error {
-	return checkImage(name, img)
+	format := wireFormat(img.Format)
+	if format != "png" && format != "jpg" {
+		return &ValidationError{Message: fmt.Sprintf(
+			"image '%s' has format '%s', and an image must be png or jpg", name, img.Format)}
+	}
+
+	if len(img.Data) > MaxImageBytes {
+		return &ValidationError{Message: fmt.Sprintf(
+			"image '%s' is %d bytes, and an image is at most %d. Resize it to at most %d pixels a side "+
+				"or save it as a smaller JPEG", name, len(img.Data), MaxImageBytes, MaxImageSide)}
+	}
+
+	config, err := configOf(format, img.Data)
+	if err != nil {
+		return err
+	}
+
+	if !sideFits(config.Width) || !sideFits(config.Height) {
+		return &ValidationError{Message: fmt.Sprintf(
+			"image '%s' is %d by %d pixels, and each side must be %d to %d. Resize it first",
+			name, config.Width, config.Height, MinImageSide, MaxImageSide)}
+	}
+
+	return nil
 }
 
 func checkBoxes(req Request) error {
@@ -170,33 +193,6 @@ func collectStrings(value any, texts *[]string) {
 			collectStrings(item, texts)
 		}
 	}
-}
-
-func checkImage(ref string, img Image) error {
-	format := wireFormat(img.Format)
-	if format != "png" && format != "jpg" {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' has format '%s', and an image must be png or jpg", ref, img.Format)}
-	}
-
-	if len(img.Data) > MaxImageBytes {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' is %d bytes, and an image is at most %d. Resize it to at most %d pixels a side "+
-				"or save it as a smaller JPEG", ref, len(img.Data), MaxImageBytes, MaxImageSide)}
-	}
-
-	config, err := configOf(format, img.Data)
-	if err != nil {
-		return err
-	}
-
-	if !sideFits(config.Width) || !sideFits(config.Height) {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' is %d by %d pixels, and each side must be %d to %d. Resize it first",
-			ref, config.Width, config.Height, MinImageSide, MaxImageSide)}
-	}
-
-	return nil
 }
 
 func sideFits(side int) bool {
