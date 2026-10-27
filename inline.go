@@ -31,7 +31,12 @@ func inlineParts(members []member) ([]member, error) {
 		return nil, err
 	}
 
-	if size := encodedSize(rewritten); size > MaxBodyBytes {
+	size, err := encodedSize(rewritten)
+	if err != nil {
+		return nil, err
+	}
+
+	if size > MaxBodyBytes {
 		return nil, &ValidationError{Message: fmt.Sprintf(
 			"the request body is %d bytes once each image is placed where it is named, and the API takes "+
 				"at most %d. This provider takes an image once per place it is named, so name each image once",

@@ -83,3 +83,32 @@ func TestBodySize(t *testing.T) {
 		}
 	})
 }
+
+func TestEncodedSize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		members []member
+	}{
+		{name: "should size plain names exactly", members: []member{{name: "state", value: []byte(`"s"`)}, {name: "model", value: []byte(`"m"`)}}},
+		{name: "should size a name with a quote and a backslash as it is written", members: []member{{name: `a"b\c`, value: []byte(`1`)}}},
+		{name: "should size a name with control characters as it is written", members: []member{{name: "a\nb\x01", value: []byte(`1`)}}},
+		{name: "should size an empty list", members: nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			written, err := writeMembers(tc.members)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if size, err := encodedSize(tc.members); err != nil || size != len(written) {
+				t.Errorf("encodedSize = %d, %v, want %d for %s", size, err, len(written), written)
+			}
+		})
+	}
+}

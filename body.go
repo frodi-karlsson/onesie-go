@@ -123,14 +123,19 @@ func writeMembers(members []member) ([]byte, error) {
 	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
 }
 
-func encodedSize(members []member) int {
+func encodedSize(members []member) (int, error) {
 	size := len("{}") + max(len(members)-1, 0)
 
 	for _, m := range members {
-		size += len(m.name) + len(`"":`) + len(m.value)
+		name, err := jsontext.AppendQuote(nil, m.name)
+		if err != nil {
+			return 0, unencodable(err)
+		}
+
+		size += len(name) + len(":") + len(m.value)
 	}
 
-	return size
+	return size, nil
 }
 
 func rawOptions() []jsontext.Options {
