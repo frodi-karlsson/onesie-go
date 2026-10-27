@@ -559,7 +559,7 @@ func newCapabilityError(provider, model string, missing Needs, takers []string) 
 }
 
 // CapabilityError is a request the provider's route for Model does not take. Missing holds only what
-// it lacks, and Takers the providers from Providers whose default model takes all of it.
+// it lacks, and Takers the other providers from Providers whose default model takes all of it.
 type CapabilityError struct {
 	ValidationError
 

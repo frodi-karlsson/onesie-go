@@ -72,6 +72,17 @@ func TestRouteRefuse(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should leave the refusing provider out of the takers", func(t *testing.T) {
+		t.Parallel()
+
+		err := route{takes: capabilities{images: true, box: true}}.refuse("typesafe", "jev-old", capabilities{longContext: true})
+
+		const want = "onesie: the typesafe provider takes no long context. The openrouter, berget and levanto providers do"
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
 }
 
 func TestClientSystemOne(t *testing.T) {

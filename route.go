@@ -17,7 +17,7 @@ func (r route) refuse(provider, model string, needs capabilities) error {
 	var takers []string
 
 	for _, candidate := range Providers() {
-		if candidate.route(candidate.defaultModel).lacks(missing) == (capabilities{}) {
+		if candidate.Name != provider && candidate.route(candidate.defaultModel).lacks(missing) == (capabilities{}) {
 			takers = append(takers, candidate.Name)
 		}
 	}
