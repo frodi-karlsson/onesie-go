@@ -174,29 +174,4 @@ func TestProviderRoute(t *testing.T) {
 			})
 		}
 	}
-
-	t.Run("should take everything on a provider built outside the package, with every step", func(t *testing.T) {
-		t.Parallel()
-
-		got := (Provider{Name: "mine"}).route("m")
-		if got.takes != takesEverything() {
-			t.Errorf("takes = %+v, want everything", got.takes)
-		}
-
-		if got.images == nil || got.encode == nil || got.decode == nil {
-			t.Fatal("the route has a nil step")
-		}
-
-		body := []byte(`{"state":"s"}`)
-
-		sent, extra, err := got.images(body)
-		if err != nil || string(sent) != string(body) || extra != nil {
-			t.Errorf("images = %s, %v, %v, want the body unchanged and no options", sent, extra, err)
-		}
-
-		encoded, err := got.encode(body)
-		if err != nil || string(encoded) != string(body) {
-			t.Errorf("encode = %s, %v, want the body unchanged", encoded, err)
-		}
-	})
 }

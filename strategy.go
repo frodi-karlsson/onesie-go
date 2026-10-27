@@ -11,12 +11,16 @@ import (
 // Refuse returns the error a request with these needs gets from this provider for model, or nil.
 // An empty model means the provider's built in default.
 func (p Provider) Refuse(model string, needs Needs) error {
+	if err := p.check(); err != nil {
+		return err
+	}
+
 	model = strings.TrimSpace(model)
 	if model == "" {
 		model = p.defaultModel
 	}
 
-	return p.route(model).refuse(p.Name, model, capabilities{
+	return p.route(model).refuse(p.name, model, capabilities{
 		images:      needs.Images,
 		box:         needs.Box,
 		longContext: needs.LongContext,
@@ -33,6 +37,10 @@ type Needs struct {
 // Encode refuses a request this provider's route does not take, then returns the body SystemOne
 // sends, without the headers it adds. A blank model is the built in default. It does not validate.
 func (p Provider) Encode(req Request) ([]byte, error) {
+	if err := p.check(); err != nil {
+		return nil, err
+	}
+
 	_, body, _, err := encodeRequest(p, req, false)
 
 	return body, err
@@ -48,7 +56,7 @@ func encodeRequest(p Provider, req Request, headerLongContext bool) (route, []by
 	needs := requestNeeds(req)
 	needs.longContext = needs.longContext || headerLongContext
 
-	if err := via.refuse(p.Name, model, needs); err != nil {
+	if err := via.refuse(p.name, model, needs); err != nil {
 		return route{}, nil, nil, err
 	}
 

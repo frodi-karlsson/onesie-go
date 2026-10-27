@@ -15,26 +15,39 @@ const (
 	keyCheckByEndpoint
 )
 
-// ProviderNamed returns the provider a --provider value or ONESIE_PROVIDER names. An empty name is
-// TypeSafe.
+const (
+	typeSafeBaseURL = "https://api.typesafe.ai"
+	jevLatest       = "jev-latest"
+	bergetModel     = "systemone"
+	levantoModel    = "sage-latest"
+	cloudflareJev   = "typesafe/jev"
+)
+
+// ProviderNamed returns the provider with this name, as Name reports it. An empty name is TypeSafe.
 func ProviderNamed(name string) (Provider, error) {
 	wanted := strings.TrimSpace(name)
 	if wanted == "" {
 		return TypeSafe(), nil
 	}
 
+	for _, provider := range Providers() {
+		if provider.name == wanted {
+			return provider, nil
+		}
+	}
+
+	return Provider{}, &ValidationError{Message: "unknown provider " + name + ". Use " + joinNames(providerNames(), "or")}
+}
+
+func providerNames() []string {
 	providers := Providers()
 	names := make([]string, 0, len(providers))
 
 	for _, provider := range providers {
-		if provider.Name == wanted {
-			return provider, nil
-		}
-
-		names = append(names, provider.Name)
+		names = append(names, provider.name)
 	}
 
-	return Provider{}, &ValidationError{Message: "unknown provider " + name + ". Use " + joinNames(names, "or")}
+	return names
 }
 
 // Providers lists every provider this package serves, TypeSafe first, in the order a refusal names them.
@@ -53,12 +66,12 @@ func joinNames(names []string, conjunction string) string {
 // TypeSafe is the TypeSafe System One API, the default provider.
 func TypeSafe() Provider {
 	return Provider{
-		Name:            "typesafe",
-		BaseURL:         DefaultBaseURL,
-		EnvAPIKey:       EnvAPIKey,
-		EnvBaseURL:      EnvBaseURL,
-		EnvDefaultModel: EnvDefaultModel,
-		defaultModel:    DefaultModel,
+		name:            "typesafe",
+		defaultBaseURL:  typeSafeBaseURL,
+		envAPIKey:       "TYPESAFE_API_KEY",
+		envBaseURL:      "TYPESAFE_BASE_URL",
+		envDefaultModel: "TYPESAFE_DEFAULT_MODEL",
+		defaultModel:    jevLatest,
 		requestIDHeader: "X-TypeSafe-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
@@ -75,10 +88,10 @@ func TypeSafe() Provider {
 // OpenRouter serves the same model and wire protocol through OpenRouter.
 func OpenRouter() Provider {
 	return Provider{
-		Name:            "openrouter",
-		BaseURL:         "https://openrouter.ai/api",
-		EnvAPIKey:       "OPENROUTER_API_KEY",
-		defaultModel:    DefaultModel,
+		name:            "openrouter",
+		defaultBaseURL:  "https://openrouter.ai/api",
+		envAPIKey:       "OPENROUTER_API_KEY",
+		defaultModel:    jevLatest,
 		requestIDHeader: "X-Generation-Id",
 		modelsPath:      "/v1/models?output_modalities=decisions",
 		decodeModels:    decodeOpenRouterModels,
@@ -96,10 +109,10 @@ func OpenRouter() Provider {
 // Berget serves the same wire protocol with its own models, which do not include jev-latest.
 func Berget() Provider {
 	return Provider{
-		Name:            "berget",
-		BaseURL:         "https://api.berget.ai",
-		EnvAPIKey:       "BERGET_API_KEY",
-		defaultModel:    BergetDefaultModel,
+		name:            "berget",
+		defaultBaseURL:  "https://api.berget.ai",
+		envAPIKey:       "BERGET_API_KEY",
+		defaultModel:    bergetModel,
 		requestIDHeader: "X-Request-Id",
 		modelsPath:      "/v1/models/",
 		decodeModels:    decodeBergetModels,
@@ -116,10 +129,10 @@ func Berget() Provider {
 // Levanto serves the same wire protocol with its Sage models, which do not include jev-latest.
 func Levanto() Provider {
 	return Provider{
-		Name:            "levanto",
-		BaseURL:         "https://sage.levanto.ai",
-		EnvAPIKey:       "LEVANTO_API_KEY",
-		defaultModel:    LevantoDefaultModel,
+		name:            "levanto",
+		defaultBaseURL:  "https://sage.levanto.ai",
+		envAPIKey:       "LEVANTO_API_KEY",
+		defaultModel:    levantoModel,
 		requestIDHeader: "X-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
@@ -132,14 +145,14 @@ func Levanto() Provider {
 	}
 }
 
-// Cloudflare serves TypeSafe's Jev through AI Gateway and its own Clef models on Workers AI. The
-// account comes from CLOUDFLARE_ACCOUNT_ID, or from a base URL that holds it.
+// Cloudflare serves TypeSafe's Jev through AI Gateway and its own Clef models on Workers AI. Its
+// base URL holds an account id.
 func Cloudflare() Provider {
 	return Provider{
-		Name:            "cloudflare",
-		EnvAPIKey:       "CLOUDFLARE_API_TOKEN",
-		EnvAccountID:    "CLOUDFLARE_ACCOUNT_ID",
-		defaultModel:    CloudflareDefaultModel,
+		name:            "cloudflare",
+		envAPIKey:       "CLOUDFLARE_API_TOKEN",
+		envAccountID:    "CLOUDFLARE_ACCOUNT_ID",
+		defaultModel:    cloudflareJev,
 		requestIDHeader: "Cf-Ray",
 		modelsPath:      "/models/search?search=clef",
 		decodeModels:    decodeCloudflareModels,
@@ -148,25 +161,68 @@ func Cloudflare() Provider {
 	}
 }
 
-// Provider is a host that serves the System One API. Build one with TypeSafe, OpenRouter, Berget,
-// Levanto or Cloudflare.
-// An empty env var name means the provider reads nothing from the environment for that setting.
+// Provider is a host that serves the System One API. Take one from ProviderNamed, Providers or a
+// constructor such as TypeSafe, since the zero value is refused wherever a provider is used.
 type Provider struct {
-	Name            string
-	BaseURL         string
-	EnvAPIKey       string
-	EnvBaseURL      string
-	EnvDefaultModel string
-	EnvAccountID    string
-
+	name            string
+	defaultBaseURL  string
+	envAPIKey       string
+	envBaseURL      string
+	envDefaultModel string
+	envAccountID    string
 	defaultModel    string
 	requestIDHeader string
 	modelsPath      string
 	decodeModels    func([]byte) ([]ModelCard, error)
 	routeFor        func(model string) route
+	keyCheck        keyCheck
+	accountBaseURL  func(account string) string
+}
 
-	keyCheck       keyCheck
-	accountBaseURL func(account string) string
+// Name is the provider's name, as ProviderNamed takes it.
+func (p Provider) Name() string {
+	return p.name
+}
+
+// EnvAPIKey names the environment variable New reads the API key from.
+func (p Provider) EnvAPIKey() string {
+	return p.envAPIKey
+}
+
+// EnvBaseURL names the environment variable that overrides the base URL, or is empty when none does.
+func (p Provider) EnvBaseURL() string {
+	return p.envBaseURL
+}
+
+// EnvDefaultModel names the environment variable that overrides the default model, or is empty
+// when none does.
+func (p Provider) EnvDefaultModel() string {
+	return p.envDefaultModel
+}
+
+// EnvAccountID names the environment variable holding the account id, or is empty for a provider
+// without accounts.
+func (p Provider) EnvAccountID() string {
+	return p.envAccountID
+}
+
+// DefaultModel is the model a request carries when it names none and nothing overrides it.
+func (p Provider) DefaultModel() string {
+	return p.defaultModel
+}
+
+// DefaultBaseURL is the base URL used when nothing overrides it, or is empty when the base URL
+// depends on an account.
+func (p Provider) DefaultBaseURL() string {
+	return p.defaultBaseURL
+}
+
+func (p Provider) check() error {
+	if p.routeFor != nil {
+		return nil
+	}
+
+	return &ValidationError{Message: "the provider is empty. Use ProviderNamed with " + joinNames(providerNames(), "or")}
 }
 
 type keyCheck struct {
@@ -176,38 +232,33 @@ type keyCheck struct {
 
 type keyCheckMethod int
 
-// ResolveModel reports the model a request will carry under this provider. It exists so a caller
-// that prints a request without building a client fills the model the way a client would.
+// ResolveModel reports the model a request carries under this provider, so a caller that prints a
+// request without a client fills the model as a client would.
 func (p Provider) ResolveModel(model string, lookupEnv func(string) (string, bool)) string {
-	return orDefault(orEnv(model, lookupEnv, p.EnvDefaultModel), p.defaultModel)
+	return orDefault(orEnv(model, lookupEnv, p.envDefaultModel), p.defaultModel)
 }
 
 func (p Provider) route(model string) route {
-	if p.routeFor == nil {
-		// A Provider built outside the package never reaches New, so it is only refused or encoded.
-		return route{takes: takesEverything(), images: keepAssets, encode: identity, decode: identity}
-	}
-
 	return p.routeFor(model)
 }
 
 func (p Provider) baseURL(explicit string, lookupEnv func(string) (string, bool)) (string, error) {
-	if chosen := orEnv(explicit, lookupEnv, p.EnvBaseURL); chosen != "" {
+	if chosen := orEnv(explicit, lookupEnv, p.envBaseURL); chosen != "" {
 		return chosen, nil
 	}
 
-	if p.EnvAccountID == "" {
-		return p.BaseURL, nil
+	if p.envAccountID == "" {
+		return p.defaultBaseURL, nil
 	}
 
-	account := orEnv("", lookupEnv, p.EnvAccountID)
+	account := orEnv("", lookupEnv, p.envAccountID)
 	if account == "" {
 		return "", &ValidationError{Message: fmt.Sprintf("no %s account id. Set %s, or pass the base URL %s",
-			p.Name, p.EnvAccountID, p.accountBaseURL("<account_id>"))}
+			p.name, p.envAccountID, p.accountBaseURL("<account_id>"))}
 	}
 
 	if decoded, err := hex.DecodeString(account); err != nil || len(decoded) != 16 {
-		return "", &ValidationError{Message: p.EnvAccountID + " must be 32 hexadecimal characters"}
+		return "", &ValidationError{Message: p.envAccountID + " must be 32 hexadecimal characters"}
 	}
 
 	return p.accountBaseURL(account), nil

@@ -11,19 +11,6 @@ import (
 )
 
 const (
-	// DefaultBaseURL is the API root used when none is configured.
-	DefaultBaseURL = "https://api.typesafe.ai"
-	// DefaultModel is the model a TypeSafe or OpenRouter request carries when it names none.
-	DefaultModel = "jev-latest"
-	// BergetDefaultModel is the model a Berget request carries when it names none. It is Berget's
-	// alias for its default System One model.
-	BergetDefaultModel = "systemone"
-	// LevantoDefaultModel is the model a Levanto request carries when it names none. It is Levanto's
-	// alias for its newest Sage model.
-	LevantoDefaultModel = "sage-latest"
-	// CloudflareDefaultModel is the model a Cloudflare request carries when it names none: TypeSafe's
-	// Jev through AI Gateway.
-	CloudflareDefaultModel = "typesafe/jev"
 	// DefaultAttemptTimeout bounds one HTTP attempt, not the whole call.
 	DefaultAttemptTimeout = 10 * time.Second
 	// DefaultMaxResponseBytes caps how much of a response body is read.
@@ -33,12 +20,6 @@ const (
 	// DefaultRetries is the number of retries after the first attempt.
 	DefaultRetries = 2
 
-	// EnvAPIKey names the environment variable holding the API key.
-	EnvAPIKey = "TYPESAFE_API_KEY"
-	// EnvBaseURL names the environment variable overriding the API root.
-	EnvBaseURL = "TYPESAFE_BASE_URL"
-	// EnvDefaultModel names the environment variable overriding the default model.
-	EnvDefaultModel = "TYPESAFE_DEFAULT_MODEL"
 	// HeaderImages turns on images and Box questions. SystemOne sends it on a request that needs it.
 	HeaderImages = "TypeSafe-Danger-Zone-Images"
 	// HeaderLongContext raises the context limits. Set Request.LongContext or pass WithLongContext
@@ -58,8 +39,8 @@ func WithAPIKey(key string) Option {
 // WithProvider sets the host the client talks to. The default is TypeSafe.
 func WithProvider(p Provider) Option {
 	return func(c *Client) error {
-		if p.routeFor == nil {
-			return &ValidationError{Message: "provider must come from TypeSafe, OpenRouter, Berget, Levanto, Cloudflare or ProviderNamed"}
+		if err := p.check(); err != nil {
+			return err
 		}
 
 		c.provider = p

@@ -159,7 +159,7 @@ func decodeCloudflareModels(body []byte) ([]ModelCard, error) {
 
 	// Jev is served through AI Gateway, so Workers AI's search never lists it.
 	cards := []ModelCard{{
-		Name:        CloudflareDefaultModel,
+		Name:        cloudflareJev,
 		Description: "TypeSafe's Jev through AI Gateway, billed from AI Gateway credits",
 	}}
 

@@ -472,11 +472,11 @@ func fakeProvider() Provider {
 	keep := func(body []byte) ([]byte, []RequestOption, error) { return body, nil, nil }
 
 	return Provider{
-		Name:         "fake",
-		BaseURL:      "http://fake.invalid",
-		defaultModel: "plain",
-		modelsPath:   "/models",
-		decodeModels: decodeTypeSafeModels,
+		name:           "fake",
+		defaultBaseURL: "http://fake.invalid",
+		defaultModel:   "plain",
+		modelsPath:     "/models",
+		decodeModels:   decodeTypeSafeModels,
 		routeFor: func(model string) route {
 			switch model {
 			case "wrapped":

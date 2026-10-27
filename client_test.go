@@ -44,7 +44,7 @@ func TestClientSystemOneURL(t *testing.T) {
 	}{
 		{
 			name: "should add the API path to each provider's default base URL",
-			want: onesie.DefaultBaseURL + "/v1/systemone",
+			want: onesie.TypeSafe().DefaultBaseURL() + "/v1/systemone",
 		},
 		{
 			name:    "should add the API path to a base URL whose path already ends in /v1",
@@ -180,7 +180,7 @@ func TestNew(t *testing.T) {
 			t.Fatalf("expected an error, got none")
 		}
 
-		for _, want := range []string{onesie.EnvAPIKey, "no API key"} {
+		for _, want := range []string{onesie.TypeSafe().EnvAPIKey(), "no API key"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error = %q, want it to name %q", err.Error(), want)
 			}
@@ -190,7 +190,7 @@ func TestNew(t *testing.T) {
 	t.Run("should read the api key from the environment", func(t *testing.T) {
 		t.Parallel()
 
-		client, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-from-env"})))
+		client, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.TypeSafe().EnvAPIKey(): "sk-from-env"})))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -224,8 +224,8 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvAPIKey:       "sk-from-env",
-				onesie.EnvDefaultModel: "onesie-from-env",
+				onesie.TypeSafe().EnvAPIKey():       "sk-from-env",
+				onesie.TypeSafe().EnvDefaultModel(): "onesie-from-env",
 			})),
 			onesie.WithAPIKey("sk-explicit"),
 			onesie.WithBaseURL(server.URL),
@@ -248,8 +248,8 @@ func TestNew(t *testing.T) {
 		t.Parallel()
 
 		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{
-			onesie.EnvAPIKey:  "   ",
-			onesie.EnvBaseURL: "   ",
+			onesie.TypeSafe().EnvAPIKey():  "   ",
+			onesie.TypeSafe().EnvBaseURL(): "   ",
 		})))
 
 		if err == nil {
@@ -311,8 +311,8 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvAPIKey:     "sk-typesafe",
-				"OPENROUTER_API_KEY": "sk-or-test",
+				onesie.TypeSafe().EnvAPIKey(): "sk-typesafe",
+				"OPENROUTER_API_KEY":          "sk-or-test",
 			})),
 			onesie.WithProvider(onesie.OpenRouter()),
 			onesie.WithHTTPClient(&http.Client{Transport: transport}),
@@ -337,8 +337,8 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvBaseURL:      "https://typesafe.example",
-				onesie.EnvDefaultModel: "onesie-1.2.0",
+				onesie.TypeSafe().EnvBaseURL():      "https://typesafe.example",
+				onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0",
 			})),
 			onesie.WithAPIKey("sk-or-test"),
 			onesie.WithProvider(onesie.OpenRouter()),
@@ -357,7 +357,7 @@ func TestNew(t *testing.T) {
 			t.Errorf("url = %s, want the OpenRouter default", got)
 		}
 
-		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.DefaultModel+`"`) {
+		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.TypeSafe().DefaultModel()+`"`) {
 			t.Errorf("body = %s, want the default model", transport.lastBody())
 		}
 	})
@@ -365,7 +365,7 @@ func TestNew(t *testing.T) {
 	t.Run("should name OPENROUTER_API_KEY in the no key error under openrouter", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-typesafe"})),
+		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.TypeSafe().EnvAPIKey(): "sk-typesafe"})),
 			onesie.WithProvider(onesie.OpenRouter()))
 		if err == nil {
 			t.Fatalf("expected an error, got none")
@@ -383,10 +383,10 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvAPIKey:       "sk-typesafe",
-				onesie.EnvBaseURL:      "https://typesafe.example",
-				onesie.EnvDefaultModel: "onesie-1.2.0",
-				"BERGET_API_KEY":       "sk_ber_test",
+				onesie.TypeSafe().EnvAPIKey():       "sk-typesafe",
+				onesie.TypeSafe().EnvBaseURL():      "https://typesafe.example",
+				onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0",
+				"BERGET_API_KEY":                    "sk_ber_test",
 			})),
 			onesie.WithProvider(onesie.Berget()),
 			onesie.WithHTTPClient(&http.Client{Transport: transport}),
@@ -408,7 +408,7 @@ func TestNew(t *testing.T) {
 			t.Errorf("url = %s, want the Berget default", got)
 		}
 
-		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.BergetDefaultModel+`"`) {
+		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.Berget().DefaultModel()+`"`) {
 			t.Errorf("body = %s, want the Berget default model", transport.lastBody())
 		}
 	})
@@ -416,7 +416,7 @@ func TestNew(t *testing.T) {
 	t.Run("should name BERGET_API_KEY in the no key error under berget", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-typesafe"})),
+		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.TypeSafe().EnvAPIKey(): "sk-typesafe"})),
 			onesie.WithProvider(onesie.Berget()))
 		if err == nil {
 			t.Fatalf("expected an error, got none")
@@ -434,10 +434,10 @@ func TestNew(t *testing.T) {
 
 		client, err := onesie.New(
 			onesie.WithEnv(mockEnv(map[string]string{
-				onesie.EnvAPIKey:       "sk-typesafe",
-				onesie.EnvBaseURL:      "https://typesafe.example",
-				onesie.EnvDefaultModel: "onesie-1.2.0",
-				"LEVANTO_API_KEY":      "lv_live_test",
+				onesie.TypeSafe().EnvAPIKey():       "sk-typesafe",
+				onesie.TypeSafe().EnvBaseURL():      "https://typesafe.example",
+				onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0",
+				"LEVANTO_API_KEY":                   "lv_live_test",
 			})),
 			onesie.WithProvider(onesie.Levanto()),
 			onesie.WithHTTPClient(&http.Client{Transport: transport}),
@@ -459,7 +459,7 @@ func TestNew(t *testing.T) {
 			t.Errorf("url = %s, want the Levanto default", got)
 		}
 
-		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.LevantoDefaultModel+`"`) {
+		if !strings.Contains(transport.lastBody(), `"model":"`+onesie.Levanto().DefaultModel()+`"`) {
 			t.Errorf("body = %s, want the Levanto default model", transport.lastBody())
 		}
 	})
@@ -467,7 +467,7 @@ func TestNew(t *testing.T) {
 	t.Run("should name LEVANTO_API_KEY in the no key error under levanto", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.EnvAPIKey: "sk-typesafe"})),
+		_, err := onesie.New(onesie.WithEnv(mockEnv(map[string]string{onesie.TypeSafe().EnvAPIKey(): "sk-typesafe"})),
 			onesie.WithProvider(onesie.Levanto()))
 		if err == nil {
 			t.Fatalf("expected an error, got none")
@@ -1633,7 +1633,7 @@ func TestClientSystemOne(t *testing.T) {
 	})
 
 	for _, provider := range []onesie.Provider{onesie.Levanto(), onesie.Berget()} {
-		t.Run("should refuse images and a box on "+provider.Name+" before any request", func(t *testing.T) {
+		t.Run("should refuse images and a box on "+provider.Name()+" before any request", func(t *testing.T) {
 			t.Parallel()
 
 			transport := &recordingTransport{body: shortAnswer}
@@ -1694,7 +1694,7 @@ func TestClientSystemOne(t *testing.T) {
 	})
 
 	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Levanto(), onesie.Berget()} {
-		t.Run("should send long context as the header and never the key on "+provider.Name, func(t *testing.T) {
+		t.Run("should send long context as the header and never the key on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
 			transport := &recordingTransport{body: shortAnswer}
@@ -2090,7 +2090,7 @@ func TestClientVerifyKey(t *testing.T) {
 				}
 			}
 
-			if body != "" && !strings.Contains(body, `"model":"`+onesie.BergetDefaultModel+`"`) {
+			if body != "" && !strings.Contains(body, `"model":"`+onesie.Berget().DefaultModel()+`"`) {
 				t.Errorf("question body = %s, want the default model", body)
 			}
 
@@ -2503,7 +2503,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Berget(), onesie.Levanto()} {
 		for _, body := range []string{"", "<!DOCTYPE html><html></html>"} {
-			t.Run("should return a 200 body it cannot read unchanged on "+provider.Name+": "+body, func(t *testing.T) {
+			t.Run("should return a 200 body it cannot read unchanged on "+provider.Name()+": "+body, func(t *testing.T) {
 				t.Parallel()
 
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -2583,7 +2583,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 	})
 
 	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Levanto(), onesie.Berget()} {
-		t.Run("should send a raw text body as it is on "+provider.Name, func(t *testing.T) {
+		t.Run("should send a raw text body as it is on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
 			transport := &recordingTransport{body: shortAnswer}
@@ -2602,7 +2602,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 	}
 
 	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter()} {
-		t.Run("should send a raw body's long_context as the header on "+provider.Name, func(t *testing.T) {
+		t.Run("should send a raw body's long_context as the header on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
 			transport := &recordingTransport{body: shortAnswer}
@@ -2710,14 +2710,14 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 			for _, err := range []error{rawErr, typedErr} {
 				if !errors.Is(err, onesie.ErrValidation) {
-					t.Fatalf("%s: error = %v, want ErrValidation", provider.Name, err)
+					t.Fatalf("%s: error = %v, want ErrValidation", provider.Name(), err)
 				}
 
 				messages = append(messages, err.Error())
 			}
 
 			if len(transport.requests) != 0 {
-				t.Errorf("%s: requests = %d, want none", provider.Name, len(transport.requests))
+				t.Errorf("%s: requests = %d, want none", provider.Name(), len(transport.requests))
 			}
 		}
 
@@ -2736,7 +2736,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 		{name: "assets that are not an object", body: `{"state":"r","questions":{},"assets":[1]}`, want: "assets must be an object of images"},
 	} {
 		for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter()} {
-			t.Run("should refuse "+bad.name+" in a raw body on "+provider.Name+" before any request", func(t *testing.T) {
+			t.Run("should refuse "+bad.name+" in a raw body on "+provider.Name()+" before any request", func(t *testing.T) {
 				t.Parallel()
 
 				transport := &recordingTransport{body: shortAnswer}
@@ -2753,6 +2753,52 @@ func TestClientSystemOneRaw(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestClientProvider(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should return the provider the client talks to", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "https://api.example", onesie.WithProvider(onesie.Levanto()))
+
+		if got := client.Provider().Name(); got != "levanto" {
+			t.Errorf("Provider().Name() = %q, want levanto", got)
+		}
+	})
+}
+
+func TestClientDefaultModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []onesie.Option
+		env  map[string]string
+		want string
+	}{
+		{name: "should return the provider's default", want: "jev-latest"},
+		{name: "should return the option's model", opts: []onesie.Option{onesie.WithDefaultModel("m")}, want: "m"},
+		{name: "should return the environment's model", env: map[string]string{"TYPESAFE_DEFAULT_MODEL": "e"}, want: "e"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := append([]onesie.Option{onesie.WithAPIKey("k"), onesie.WithEnv(lookupFrom(tc.env))}, tc.opts...)
+
+			client, err := onesie.New(opts...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := client.DefaultModel(); got != tc.want {
+				t.Errorf("DefaultModel() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -3013,17 +3059,17 @@ func TestProviderResolveModel(t *testing.T) {
 		{
 			name:  "should prefer an explicit model",
 			model: "onesie-1.9.9",
-			env:   map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"},
+			env:   map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"},
 			want:  "onesie-1.9.9",
 		},
 		{
 			name: "should fall back to the environment",
-			env:  map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"},
+			env:  map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"},
 			want: "onesie-1.2.0",
 		},
 		{
 			name: "should fall back to the built in default",
-			want: onesie.DefaultModel,
+			want: onesie.TypeSafe().DefaultModel(),
 		},
 		{
 			name:  "should trim an explicit model",
@@ -3033,17 +3079,17 @@ func TestProviderResolveModel(t *testing.T) {
 		{
 			name:  "should treat a whitespace only model as absent",
 			model: "   ",
-			want:  onesie.DefaultModel,
+			want:  onesie.TypeSafe().DefaultModel(),
 		},
 		{
 			name:  "should treat a tab only model as absent",
 			model: "\t",
-			want:  onesie.DefaultModel,
+			want:  onesie.TypeSafe().DefaultModel(),
 		},
 		{
 			name:  "should fall back to the environment for a whitespace only model",
 			model: "   ",
-			env:   map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"},
+			env:   map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"},
 			want:  "onesie-1.2.0",
 		},
 	}
@@ -3061,7 +3107,7 @@ func TestProviderResolveModel(t *testing.T) {
 	t.Run("should default to systemone and ignore TYPESAFE_DEFAULT_MODEL under berget", func(t *testing.T) {
 		t.Parallel()
 
-		env := lookupFrom(map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"})
+		env := lookupFrom(map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"})
 		if got := onesie.Berget().ResolveModel("", env); got != "systemone" {
 			t.Errorf("ResolveModel = %s, want systemone", got)
 		}
@@ -3074,7 +3120,7 @@ func TestProviderResolveModel(t *testing.T) {
 	t.Run("should default to sage-latest and ignore TYPESAFE_DEFAULT_MODEL under levanto", func(t *testing.T) {
 		t.Parallel()
 
-		env := lookupFrom(map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"})
+		env := lookupFrom(map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"})
 		if got := onesie.Levanto().ResolveModel("", env); got != "sage-latest" {
 			t.Errorf("ResolveModel = %s, want sage-latest", got)
 		}
@@ -3087,9 +3133,9 @@ func TestProviderResolveModel(t *testing.T) {
 	t.Run("should ignore TYPESAFE_DEFAULT_MODEL under openrouter", func(t *testing.T) {
 		t.Parallel()
 
-		env := lookupFrom(map[string]string{onesie.EnvDefaultModel: "onesie-1.2.0"})
-		if got := onesie.OpenRouter().ResolveModel("", env); got != onesie.DefaultModel {
-			t.Errorf("ResolveModel = %s, want %s", got, onesie.DefaultModel)
+		env := lookupFrom(map[string]string{onesie.TypeSafe().EnvDefaultModel(): "onesie-1.2.0"})
+		if got := onesie.OpenRouter().ResolveModel("", env); got != onesie.TypeSafe().DefaultModel() {
+			t.Errorf("ResolveModel = %s, want %s", got, onesie.TypeSafe().DefaultModel())
 		}
 	})
 

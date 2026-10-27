@@ -61,7 +61,7 @@ func TestLiveSystemOne(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if result.Model == onesie.DefaultModel {
+		if result.Model == onesie.TypeSafe().DefaultModel() {
 			t.Errorf("model should resolve to a versioned id, got the alias %q", result.Model)
 		}
 
@@ -655,13 +655,13 @@ func TestLiveListModels(t *testing.T) {
 		found := false
 
 		for _, model := range models {
-			if model.Name == onesie.LevantoDefaultModel {
+			if model.Name == onesie.Levanto().DefaultModel() {
 				found = true
 			}
 		}
 
 		if !found {
-			t.Errorf("no model is named %s: %+v", onesie.LevantoDefaultModel, models)
+			t.Errorf("no model is named %s: %+v", onesie.Levanto().DefaultModel(), models)
 		}
 	})
 
@@ -848,7 +848,7 @@ func TestLiveErrors(t *testing.T) {
 
 		_, err := liveLevantoClient(t).SystemOne(liveContext(t, 30*time.Second), onesie.Request{
 			State:     "x",
-			Model:     onesie.DefaultModel,
+			Model:     onesie.TypeSafe().DefaultModel(),
 			Questions: onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "Is this a test?"}}},
 		})
 

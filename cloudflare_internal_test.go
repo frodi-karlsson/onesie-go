@@ -207,7 +207,7 @@ func TestCloudflareRoute(t *testing.T) {
 	t.Run("should send a body naming no model as the default model", func(t *testing.T) {
 		t.Parallel()
 
-		sent, err := Cloudflare().route(CloudflareDefaultModel).encode([]byte(`{"state":"s","questions":{}}`))
+		sent, err := Cloudflare().route(cloudflareJev).encode([]byte(`{"state":"s","questions":{}}`))
 		if err != nil || string(sent) != `{"model":"typesafe/jev","input":{"state":"s","questions":{}}}` {
 			t.Errorf("encode = %s, %v, want the default model's envelope", sent, err)
 		}

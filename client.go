@@ -53,7 +53,7 @@ func New(opts ...Option) (*Client, error) {
 
 	c.httpClient = withoutRedirects(c.httpClient)
 
-	c.apiKey = orEnv(c.apiKey, c.lookupEnv, c.provider.EnvAPIKey)
+	c.apiKey = orEnv(c.apiKey, c.lookupEnv, c.provider.envAPIKey)
 	baseURL, accountErr := c.provider.baseURL(c.baseURL, c.lookupEnv)
 	c.baseURL = strings.TrimRight(baseURL, "/")
 	c.defaultModel = c.provider.ResolveModel(c.defaultModel, c.lookupEnv)
@@ -62,7 +62,7 @@ func New(opts ...Option) (*Client, error) {
 	c.runtime = fmt.Sprintf("go/%s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 
 	if c.apiKey == "" {
-		return nil, &ValidationError{Message: "no API key. Set " + c.provider.EnvAPIKey}
+		return nil, &ValidationError{Message: "no API key. Set " + c.provider.envAPIKey}
 	}
 
 	if accountErr != nil {
@@ -118,6 +118,16 @@ type Client struct {
 // default are applied.
 func (c *Client) BaseURL() string {
 	return c.baseURL
+}
+
+// Provider returns the provider this client talks to.
+func (c *Client) Provider() Provider {
+	return c.provider
+}
+
+// DefaultModel returns the model a request carries when it names none, after the environment is read.
+func (c *Client) DefaultModel() string {
+	return c.defaultModel
 }
 
 // SystemOneURL is the address a question for the default model is posted to, the base URL with
@@ -316,7 +326,7 @@ func (c *Client) prepareRaw(body json.RawMessage, opts []RequestOption) (route, 
 	}
 
 	needs.longContext = needs.longContext || c.sendsLongContext(opts)
-	if refusal := via.refuse(c.provider.Name, model, needs); refusal != nil {
+	if refusal := via.refuse(c.provider.name, model, needs); refusal != nil {
 		return route{}, nil, nil, refusal
 	}
 

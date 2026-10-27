@@ -28,7 +28,7 @@ func TestClientVerifyKey(t *testing.T) {
 		{
 			name: "should only list the models for a provider whose key check is the zero value",
 			provider: Provider{
-				Name:         "custom",
+				name:         "custom",
 				modelsPath:   "/v1/models",
 				decodeModels: decodeTypeSafeModels,
 				routeFor: oneRoute(route{
