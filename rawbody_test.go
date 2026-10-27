@@ -60,6 +60,18 @@ func TestPrepareRawBody(t *testing.T) {
 			want:  `{"model":"m","state":"a < b  ","n":1.50,"questions":{}}`,
 		},
 		{
+			name:  "should keep a large integer and an out of range number digit for digit",
+			body:  `{"state":{"id":123456789012345678901234567890,"big":1e400,"small":-0.10000000000000000001}}`,
+			model: "m",
+			want:  `{"model":"m","state":{"id":123456789012345678901234567890,"big":1e400,"small":-0.10000000000000000001}}`,
+		},
+		{
+			name:        "should keep numbers digit for digit when it adds long context",
+			body:        `{"model":"m","n":9007199254740993,"x":1e400}`,
+			longContext: true,
+			want:        `{"model":"m","n":9007199254740993,"x":1e400,"long_context":true}`,
+		},
+		{
 			name:  "should keep duplicate model keys when the last one names a model",
 			body:  `{"model":"","state":"s","model":"m"}`,
 			model: "jev-latest",
