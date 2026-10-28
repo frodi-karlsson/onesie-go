@@ -1,5 +1,11 @@
 package onesie
 
+func oneRoute(r route) func(string) route {
+	return func(string) route {
+		return r
+	}
+}
+
 type route struct {
 	path            string
 	takes           capabilities
@@ -58,12 +64,6 @@ func (c capabilities) asNeeds() Needs {
 
 func takesEverything() capabilities {
 	return capabilities{images: true, box: true, longContext: true}
-}
-
-func oneRoute(r route) func(string) route {
-	return func(string) route {
-		return r
-	}
 }
 
 func identity(body []byte) ([]byte, error) {

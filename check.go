@@ -266,10 +266,6 @@ func formatNumber(value float64) string {
 	return string(encoded)
 }
 
-type shapeFault int
-
-type jsonKind int
-
 func resultSentence(field string, fault shapeFault, want, got jsonKind) string {
 	const lead = "the response is not a System One result"
 
@@ -284,6 +280,10 @@ func resultSentence(field string, fault shapeFault, want, got jsonKind) string {
 		return lead + ", since its " + field + " " + verb + " not " + want.phrase()
 	}
 }
+
+type shapeFault int
+
+type jsonKind int
 
 func (k jsonKind) phrase() string {
 	switch k {
