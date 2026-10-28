@@ -698,6 +698,25 @@ func TestResultCheck(t *testing.T) {
 			question: onesie.NamedQuestion{ID: "severity", Question: &onesie.Score{Criteria: onesie.Levels("low", "mid", "high")}},
 			want:     "question 'severity' has score 3, which lies outside [0,2]",
 		},
+		{
+			name: "should check a choice behind a pointer", answer: choice("sales", 0.6, even),
+			question: onesie.NamedQuestion{ID: "team", Question: &onesie.Choice{Criteria: onesie.Criteria{{Name: "billing"}, {Name: "technical"}}}},
+			want:     "question 'team' picked 'sales', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should check the kind of a noul behind a pointer", answer: choice("x", 0.5, nil),
+			question: onesie.NamedQuestion{ID: "urgent", Question: &onesie.Noul{Instructions: "Urgent?"}},
+			want:     "question 'urgent' expects a noul answer, got choice",
+		},
+		{
+			name: "should check a box behind a pointer", answer: box(onesie.Edges{Top: 0, Bottom: 1, Left: 0.6, Right: 0.4}, 0.5),
+			question: onesie.NamedQuestion{ID: "mug", Question: &onesie.Box{Instructions: "the mug"}}, want: crossed,
+		},
+		{
+			name: "should check only the range behind a nil pointer", answer: &onesie.NoulAnswer{Noul: 2},
+			question: onesie.NamedQuestion{ID: "urgent", Question: (*onesie.Score)(nil)},
+			want:     "question 'urgent' answered 2, which lies outside [0,1]",
+		},
 	}
 
 	for _, tc := range tests {

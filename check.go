@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -53,13 +52,23 @@ func checkAnswer(id string, asked Question, answer Answer) *AnswerFault {
 }
 
 func dereferenced(asked Question) Question {
-	value := reflect.ValueOf(asked)
-	if value.Kind() != reflect.Pointer || value.IsNil() {
-		return asked
-	}
-
-	if pointed, isQuestion := value.Elem().Interface().(Question); isQuestion {
-		return pointed
+	switch typed := asked.(type) {
+	case *Noul:
+		if typed != nil {
+			return *typed
+		}
+	case *Choice:
+		if typed != nil {
+			return *typed
+		}
+	case *Score:
+		if typed != nil {
+			return *typed
+		}
+	case *Box:
+		if typed != nil {
+			return *typed
+		}
 	}
 
 	return asked
