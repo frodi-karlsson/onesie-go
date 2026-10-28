@@ -600,7 +600,8 @@ func (e *TimeoutError) Error() string {
 	return "onesie: " + e.Reason()
 }
 
-// Reason reports the deadline that fired, or only that one fired when it was the caller's own.
+// Reason reports the client's deadline that fired, or only that one fired when it was the caller's or
+// the transport's own.
 func (e *TimeoutError) Reason() string {
 	if e.Timeout <= 0 {
 		return "request timed out"

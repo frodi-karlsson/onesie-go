@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -349,7 +350,18 @@ func classify(ctx, actx context.Context, err error, cfg requestConfig) error {
 		return &TimeoutError{ConnectionError: ConnectionError{Err: err}, Timeout: cfg.attemptTimeout}
 	}
 
+	if reportsTimeout(err) {
+		// The transport's own deadline, such as the dialer's, fired first, so its length is unknown.
+		return &TimeoutError{ConnectionError: ConnectionError{Err: err}}
+	}
+
 	return &ConnectionError{Err: err}
+}
+
+func reportsTimeout(err error) bool {
+	var network net.Error
+
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &network) && network.Timeout())
 }
 
 func queryHidden(err error) error {

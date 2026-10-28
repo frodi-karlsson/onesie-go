@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -1459,6 +1460,40 @@ func TestClientSystemOne(t *testing.T) {
 			t.Errorf("error got %v, want ErrConnection", err)
 		}
 	})
+
+	for _, tc := range []struct {
+		name    string
+		err     error
+		timeout bool
+		want    string
+	}{
+		{name: "should read a deadline the transport reports as a timeout", err: context.DeadlineExceeded, timeout: true, want: "onesie: request timed out"},
+		{
+			name: "should read a dial the network timed out as a timeout", timeout: true, want: "onesie: request timed out",
+			err: &net.OpError{Op: "dial", Net: "tcp", Err: netError{timeout: true}},
+		},
+		{
+			name: "should leave a network error that is not a timeout a connection error",
+			err:  &net.OpError{Op: "dial", Net: "tcp", Err: netError{}}, want: "onesie: could not reach api.example: network failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, _, _ := newScriptedClient(t, []scriptedReply{{err: tc.err}})
+
+			_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+
+			var timedOut *onesie.TimeoutError
+			if errors.As(err, &timedOut) != tc.timeout || !errors.Is(err, onesie.ErrConnection) || err.Error() != tc.want {
+				t.Fatalf("error = %v, want %q, a timeout: %t", err, tc.want, tc.timeout)
+			}
+
+			if tc.timeout && timedOut.Timeout != 0 {
+				t.Errorf("Timeout = %s, want zero", timedOut.Timeout)
+			}
+		})
+	}
 
 	t.Run("should retry a failed request when the policy allows it", func(t *testing.T) {
 		t.Parallel()
@@ -4097,6 +4132,22 @@ func (rt *recordingTransport) lastBody() string {
 	defer rt.mu.Unlock()
 
 	return rt.bodies[len(rt.bodies)-1]
+}
+
+type netError struct {
+	timeout bool
+}
+
+func (e netError) Error() string {
+	return "network failed"
+}
+
+func (e netError) Timeout() bool {
+	return e.timeout
+}
+
+func (e netError) Temporary() bool {
+	return false
 }
 
 type stallingTransport struct {
