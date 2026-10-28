@@ -397,6 +397,10 @@ func decodeTypeSafeModels(body []byte) ([]ModelCard, error) {
 		return nil, errors.New("expected a models list")
 	}
 
+	for i := range wire.Models {
+		wire.Models[i].ReleaseDate = dayOf(wire.Models[i].ReleaseDate)
+	}
+
 	return wire.Models, nil
 }
 
@@ -422,11 +426,19 @@ func decodeOpenRouterModels(body []byte) ([]ModelCard, error) {
 		cards = append(cards, ModelCard{
 			Name:        model.ID,
 			Description: model.Description,
-			ReleaseDate: time.Unix(model.Created, 0).UTC().Format(time.DateOnly),
+			ReleaseDate: unixDay(model.Created),
 		})
 	}
 
 	return cards, nil
+}
+
+func unixDay(seconds int64) string {
+	if seconds <= 0 {
+		return ""
+	}
+
+	return time.Unix(seconds, 0).UTC().Format(time.DateOnly)
 }
 
 func decodeBergetModels(body []byte) ([]ModelCard, error) {
@@ -456,7 +468,7 @@ func decodeBergetModels(body []byte) ([]ModelCard, error) {
 			continue
 		}
 
-		card := ModelCard{Name: model.ID, ReleaseDate: model.ReleaseDate}
+		card := ModelCard{Name: model.ID, ReleaseDate: dayOf(model.ReleaseDate)}
 		if len(model.Aliases) > 0 {
 			card.Description = "aliases " + strings.Join(model.Aliases, ", ")
 		}
@@ -465,4 +477,15 @@ func decodeBergetModels(body []byte) ([]ModelCard, error) {
 	}
 
 	return cards, nil
+}
+
+func dayOf(date string) string {
+	day, _, _ := strings.Cut(strings.TrimSpace(date), "T")
+	day, _, _ = strings.Cut(day, " ")
+
+	if _, err := time.Parse(time.DateOnly, day); err != nil {
+		return ""
+	}
+
+	return day
 }

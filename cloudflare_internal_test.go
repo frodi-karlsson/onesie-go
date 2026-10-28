@@ -218,6 +218,15 @@ func TestDecodeCloudflareModels(t *testing.T) {
 		}
 	})
 
+	t.Run("should leave a date that does not parse empty", func(t *testing.T) {
+		t.Parallel()
+
+		cards, err := decodeCloudflareModels([]byte(`{"result":[{"name":"@cf/cloudflare/clef","created_at":"yesterday"}]}`))
+		if err != nil || len(cards) != 2 || cards[1].ReleaseDate != "" {
+			t.Errorf("models = %+v, %v, want clef with no date", cards, err)
+		}
+	})
+
 	t.Run("should refuse a body with no list", func(t *testing.T) {
 		t.Parallel()
 
