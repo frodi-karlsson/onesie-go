@@ -50,8 +50,10 @@ func New(opts ...Option) (*Client, error) {
 		return nil, err
 	}
 
-	if !c.insecureHTTP && InsecureBaseURL(baseURL) {
-		return nil, refuseInsecure(baseURL, source)
+	if !c.insecureHTTP {
+		if refused := refuseInsecureBaseURL(baseURL, source); refused != nil {
+			return nil, refused
+		}
 	}
 
 	c.baseURL, c.baseURLSource = baseURL, source

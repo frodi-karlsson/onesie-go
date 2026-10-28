@@ -80,6 +80,24 @@ func newBaseURLError(shown string, source BaseURLSource, rule string, kind error
 	return refused
 }
 
+// RefuseInsecureBaseURL returns the refusal New gives raw without WithInsecureHTTP, or nil, with no
+// client. A URL ValidateBaseURL refuses gets that refusal instead.
+func RefuseInsecureBaseURL(raw string) error {
+	if refused := refuseInsecureBaseURL(raw, BaseURLSourceUnknown); refused != nil {
+		return refused
+	}
+
+	return nil
+}
+
+func refuseInsecureBaseURL(raw string, source BaseURLSource) *BaseURLError {
+	if refused := checkBaseURL(raw, source); refused != nil || !InsecureBaseURL(raw) {
+		return refused
+	}
+
+	return refuseInsecure(raw, source)
+}
+
 // InsecureBaseURL reports whether raw is plain http to a host other than this machine. Only
 // localhost and loopback addresses count as this machine.
 func InsecureBaseURL(raw string) bool {
