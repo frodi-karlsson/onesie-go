@@ -26,7 +26,7 @@ func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...
 }
 
 func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*PreparedBody, error) {
-	if _, err := compactBody(raw); err != nil {
+	if err := checkJSON(raw); err != nil {
 		return nil, err
 	}
 
@@ -81,6 +81,17 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 	}
 
 	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked}, nil
+}
+
+func checkJSON(body []byte) error {
+	if json.Valid(body) {
+		return nil
+	}
+
+	// Compacted only to name the fault, which json.Valid does not report.
+	_, err := compactBody(body)
+
+	return err
 }
 
 // PreparedBody is a raw body PrepareRaw checked and encoded for one provider, which SendPrepared
