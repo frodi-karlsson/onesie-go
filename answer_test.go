@@ -408,6 +408,21 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			text: "answer 'x' has a noul that is not a number",
 		},
 		{
+			name: "should report a noul too large for a number",
+			body: `{"answers":{"x":{"type":"noul","noul":1e400}}}`,
+			text: "answer 'x' has a noul that is not a finite number",
+		},
+		{
+			name: "should report a probability too large for a number",
+			body: `{"answers":{"x":{"type":"choice","choice":"a","probabilities":{"a":-1e400}}}}`,
+			text: "answer 'x' has a probability for 'a' that is not a finite number",
+		},
+		{
+			name: "should report a token count that is not whole",
+			body: `{"answers":{},"usage":{"input_tokens":1.5}}`,
+			text: "the response is not a System One result, since its usage.input_tokens is not a whole number",
+		},
+		{
 			name: "should report an empty choice",
 			body: `{"answers":{"x":{"type":"choice","choice":"","probabilities":{"a":1}}}}`,
 			text: "answer 'x' has a choice that is empty",

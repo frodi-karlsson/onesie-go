@@ -133,12 +133,17 @@ func describeShape(raw []byte, err error) error {
 	}
 
 	field := strings.TrimPrefix(mistyped.Field, ".")
+	want, got := wantedKind(mistyped.Type), kindAt(raw, field)
+
+	if want == kindNumber && got == kindNumber {
+		want = boundedNumber(mistyped.Type)
+	}
 
 	return &AnswerFault{
 		field: field,
 		fault: faultWrongKind,
-		want:  wantedKind(mistyped.Type),
-		got:   kindAt(raw, field),
+		want:  want,
+		got:   got,
 		cause: err,
 	}
 }
@@ -189,6 +194,18 @@ func wantedKind(wanted reflect.Type) jsonKind {
 	default:
 		return kindObject
 	}
+}
+
+func boundedNumber(wanted reflect.Type) jsonKind {
+	for wanted.Kind() == reflect.Pointer {
+		wanted = wanted.Elem()
+	}
+
+	if wanted.Kind() == reflect.Float32 || wanted.Kind() == reflect.Float64 {
+		return kindFiniteNumber
+	}
+
+	return kindWholeNumber
 }
 
 func namingAnswer(name string, err error) error {

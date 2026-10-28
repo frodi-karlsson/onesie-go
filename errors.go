@@ -34,6 +34,8 @@ const (
 	kindArray
 	kindString
 	kindNumber
+	kindFiniteNumber
+	kindWholeNumber
 	kindBoolean
 	kindNull
 )
@@ -820,6 +822,10 @@ func (k jsonKind) phrase() string {
 		return "a string"
 	case kindNumber:
 		return "a number"
+	case kindFiniteNumber:
+		return "a finite number"
+	case kindWholeNumber:
+		return "a whole number"
 	case kindBoolean:
 		return "a boolean"
 	case kindNull:
