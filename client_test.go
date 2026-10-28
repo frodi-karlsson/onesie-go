@@ -3231,8 +3231,8 @@ func TestClientSystemOneRaw(t *testing.T) {
 		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{}}`))
 
 		var respErr *onesie.ResponseError
-		if !errors.As(err, &respErr) || respErr.Status != http.StatusOK || !strings.Contains(err.Error(), "expected a result object") {
-			t.Fatalf("error = %v, want a 200 ResponseError saying it expected a result object", err)
+		if !errors.As(err, &respErr) || respErr.Status != http.StatusOK || err.Error() != "onesie: 200 response could not be used: the cloudflare response has no result object, since its result is missing or null" {
+			t.Fatalf("error = %v, want a 200 ResponseError saying the result is missing", err)
 		}
 	})
 

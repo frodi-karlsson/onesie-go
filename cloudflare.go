@@ -1,7 +1,6 @@
 package onesie
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -131,13 +130,13 @@ func withoutAssets(b jsonBody) jsonBody {
 }
 
 func unwrapResult(body []byte) ([]byte, error) {
-	result, err := resultObject(body)
+	result, err := resultObject(body, "the cloudflare response")
 	if err != nil {
 		return nil, err
 	}
 
 	var run struct {
-		State *string `json:"state"`
+		State json.RawMessage `json:"state"`
 	}
 
 	if err = json.Unmarshal(result, &run); err != nil {
@@ -145,22 +144,37 @@ func unwrapResult(body []byte) ([]byte, error) {
 	}
 
 	// AI Gateway reports a run, whose own result holds the answers. Workers AI answers directly.
-	if run.State == nil {
+	switch kind := rawKind(run.State); kind {
+	case kindNothing, kindNull:
 		return result, nil
+	case kindString:
+	default:
+		return nil, fmt.Errorf("the cloudflare run has no state, since its state is %s", kind.phrase())
 	}
 
-	if *run.State != "Completed" {
-		return nil, fmt.Errorf("the cloudflare run is %s", *run.State)
+	var state string
+	if err = json.Unmarshal(run.State, &state); err != nil {
+		return nil, err
 	}
 
-	return resultObject(result)
+	if state != "Completed" {
+		return nil, fmt.Errorf("the cloudflare run is %s", state)
+	}
+
+	return resultObject(result, "the completed cloudflare run")
 }
 
 func resultEnvelope(result []byte) ([]byte, error) {
 	return writeMembers([]member{{name: "result", value: result}})
 }
 
-func resultObject(body []byte) ([]byte, error) {
+func resultObject(body []byte, whose string) ([]byte, error) {
+	lead := whose + " has no result object, since "
+
+	if kind := rawKind(body); kind != kindObject {
+		return nil, errors.New(lead + "it is " + kind.phrase())
+	}
+
 	var wire struct {
 		Result json.RawMessage `json:"result"`
 	}
@@ -169,11 +183,14 @@ func resultObject(body []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	if trimmed := bytes.TrimSpace(wire.Result); len(trimmed) == 0 || trimmed[0] != '{' {
-		return nil, errors.New("expected a result object")
+	switch kind := rawKind(wire.Result); kind {
+	case kindObject:
+		return wire.Result, nil
+	case kindNothing, kindNull:
+		return nil, errors.New(lead + "its result is missing or null")
+	default:
+		return nil, errors.New(lead + "its result is " + kind.phrase())
 	}
-
-	return wire.Result, nil
 }
 
 func decodeCloudflareModels(body []byte) ([]ModelCard, error) {
