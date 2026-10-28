@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -240,6 +241,30 @@ func TestProviderResponseBody(t *testing.T) {
 			})
 		}
 	}
+
+	t.Run("should leave the request id to the header, so it round trips", func(t *testing.T) {
+		t.Parallel()
+
+		tagged := &onesie.Result{Model: "m", Answers: result.Answers, RequestID: "req-1"}
+
+		body, err := onesie.TypeSafe().ResponseBody("", tagged)
+		if err != nil || strings.Contains(string(body), "request_id") {
+			t.Fatalf("ResponseBody = %s, %v, want a body with no request_id", body, err)
+		}
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("X-TypeSafe-Request-Id", tagged.RequestID)
+			_, _ = w.Write(body)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.TypeSafe()))
+
+		got, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()})
+		if err != nil || got.RequestID != tagged.RequestID {
+			t.Fatalf("result = %+v, %v, want request id %s", got, err, tagged.RequestID)
+		}
+	})
 
 	t.Run("should write a result with no answers as one a send refuses", func(t *testing.T) {
 		t.Parallel()

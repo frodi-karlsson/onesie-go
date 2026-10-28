@@ -303,8 +303,8 @@ func (p Provider) BoxModel() string {
 	return p.boxModel
 }
 
-// ResponseBody encodes result as the route for model returns it, a blank model being the default, so
-// a fake server answers as this provider does.
+// ResponseBody encodes result as the route for model returns it, a blank model being the default. It
+// leaves out the request id, which travels in a response header, so a fake that wants one sets that header.
 func (p Provider) ResponseBody(model string, result *Result) ([]byte, error) {
 	if err := p.check(); err != nil {
 		return nil, err
@@ -314,7 +314,10 @@ func (p Provider) ResponseBody(model string, result *Result) ([]byte, error) {
 		return nil, &ValidationError{Message: "the result is nil"}
 	}
 
-	body, err := json.Marshal(result)
+	inBody := *result
+	inBody.RequestID = ""
+
+	body, err := json.Marshal(&inBody)
 	if err != nil {
 		return nil, err
 	}
