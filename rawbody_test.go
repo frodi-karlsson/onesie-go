@@ -86,6 +86,12 @@ func TestProviderPrepareRaw(t *testing.T) {
 			wantErr: `onesie: choice question 'pick' has 256 options, and at most 255 are allowed`,
 		},
 		{
+			name: "should name the first question over a limit in body order, not by id",
+			body: `{"state":"s","questions":{"zeta":{"type":"score","criteria":["0","1","2","3","4","5","6","7","8","9","10"]},` +
+				`"alpha":{"type":"choice","criteria":` + manyOptions(256) + `}}}`,
+			wantErr: `onesie: score question 'zeta' has 11 levels, and at most 10 are allowed`,
+		},
+		{
 			name: "should count a repeated raw option name once",
 			body: `{"model":"m","questions":{"pick":{"type":"choice","criteria":` + manyOptions(255)[:len(manyOptions(255))-1] + `,"option 0":"y"}}}}`,
 			want: `{"model":"m","questions":{"pick":{"type":"choice","criteria":` + manyOptions(255)[:len(manyOptions(255))-1] + `,"option 0":"y"}}}}`,
