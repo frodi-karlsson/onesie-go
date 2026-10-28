@@ -126,6 +126,39 @@ func (c *Client) attempt(
 	actx, cancel := context.WithTimeout(ctx, cfg.attemptTimeout)
 	defer cancel()
 
+	req, err := c.newRequest(actx, tag, attempt, target, payload, cfg.header, sent)
+	if err != nil {
+		return nil, err
+	}
+
+	started := c.clock.Now()
+	res, err := c.exchange(ctx, actx, tag, req, cfg)
+	observed := Attempt{Index: attempt, Err: err, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout}
+
+	if err == nil {
+		observed.Status = res.status
+		c.logger.InfoContext(actx, "onesie response",
+			"tag", tag,
+			"status", res.status,
+			"elapsed", observed.Duration,
+			"request_id", res.header.Get(c.provider.requestIDHeader),
+		)
+	}
+
+	c.observe(observed)
+
+	return res, err
+}
+
+func (c *Client) newRequest(
+	actx context.Context,
+	tag string,
+	attempt int,
+	target string,
+	payload []byte,
+	header http.Header,
+	sent call,
+) (*http.Request, error) {
 	var reader io.Reader
 	if payload != nil {
 		// A fresh reader per attempt, so a retry can send the body again.
@@ -137,7 +170,7 @@ func (c *Client) attempt(
 		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error()}
 	}
 
-	c.setHeaders(req, cfg.header, sent, attempt, payload != nil)
+	c.setHeaders(req, header, sent, attempt, payload != nil)
 
 	if c.logger.Enabled(actx, slog.LevelDebug) {
 		c.logger.DebugContext(actx, "onesie request",
@@ -150,14 +183,13 @@ func (c *Client) attempt(
 		)
 	}
 
-	started := c.clock.Now()
+	return req, nil
+}
 
+func (c *Client) exchange(ctx, actx context.Context, tag string, req *http.Request, cfg requestConfig) (*rawResponse, error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		failure := classify(ctx, actx, queryHidden(err), cfg)
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
-
-		return nil, failure
+		return nil, classify(ctx, actx, queryHidden(err), cfg)
 	}
 
 	defer func() {
@@ -169,36 +201,12 @@ func (c *Client) attempt(
 	// Read fully under the attempt deadline, so a slow body cannot outlive the timeout.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
 	if err != nil {
-		failure := classify(ctx, actx, err, cfg)
-		// Observed, since the server answered, so the attempt counts even though its body was lost.
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
-
-		return nil, failure
+		return nil, classify(ctx, actx, err, cfg)
 	}
 
 	if int64(len(data)) > c.maxResponseBytes {
-		failure := &ConnectionError{
-			Err: fmt.Errorf("response body exceeded %d bytes", c.maxResponseBytes),
-		}
-
-		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
-
-		return nil, failure
+		return nil, &ConnectionError{Err: fmt.Errorf("response body exceeded %d bytes", c.maxResponseBytes)}
 	}
-
-	c.logger.InfoContext(actx, "onesie response",
-		"tag", tag,
-		"status", resp.StatusCode,
-		"elapsed", c.clock.Now().Sub(started),
-		"request_id", resp.Header.Get(c.provider.requestIDHeader),
-	)
-
-	c.observe(Attempt{
-		Index:    attempt,
-		Status:   resp.StatusCode,
-		Duration: c.clock.Now().Sub(started),
-		Timeout:  cfg.attemptTimeout,
-	})
 
 	return &rawResponse{status: resp.StatusCode, header: resp.Header, body: data}, nil
 }
