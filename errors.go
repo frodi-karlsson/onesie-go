@@ -1,7 +1,6 @@
 package onesie
 
 import (
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -486,6 +485,8 @@ type TimeoutError struct {
 // ConnectionError is a transport failure, a cancelled call or a body that stopped arriving.
 type ConnectionError struct {
 	Err error
+
+	certificate string
 }
 
 // Error is Reason with the package prefix.
@@ -499,7 +500,7 @@ func (e *ConnectionError) Reason() string {
 	var failed *url.Error
 	if errors.As(e.Err, &failed) {
 		if parsed, err := url.Parse(failed.URL); err == nil && parsed.Host != "" {
-			return "could not reach " + parsed.Host + throughProxy(failed.Err) + ": " + causeOf(failed.Err)
+			return "could not reach " + parsed.Host + throughProxy(failed.Err) + ": " + e.cause(failed.Err)
 		}
 	}
 
@@ -512,6 +513,14 @@ func (e *ConnectionError) Reason() string {
 	}
 
 	return "connection error"
+}
+
+func (e *ConnectionError) cause(err error) string {
+	if e.certificate != "" {
+		return e.certificate
+	}
+
+	return causeOf(err)
 }
 
 func throughProxy(err error) string {
@@ -551,16 +560,6 @@ func causeOf(err error) string {
 }
 
 func certificateProblem(err error) string {
-	var invalid x509.CertificateInvalidError
-	if errors.As(err, &invalid) && invalid.Reason == x509.Expired {
-		switch {
-		case strings.Contains(invalid.Detail, " is after "):
-			return "certificate has expired"
-		case strings.Contains(invalid.Detail, " is before "):
-			return "certificate is not yet valid"
-		}
-	}
-
 	for ; err != nil; err = errors.Unwrap(err) {
 		if text, isCertificate := strings.CutPrefix(err.Error(), "x509: "); isCertificate {
 			problem, _, _ := strings.Cut(firstLine(text), ": ")

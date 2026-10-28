@@ -1001,18 +1001,11 @@ func TestConnectionErrorReason(t *testing.T) {
 			want: "could not reach api.example through a proxy: connection refused",
 		},
 		{
-			name: "should name an expired certificate in plain words",
+			name: "should name an expired certificate in general words without the time it checked",
 			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
 				Reason: x509.Expired, Detail: "current time 2026-10-28T12:00:00Z is after 2026-01-01T00:00:00Z",
 			}}),
-			want: "could not reach api.example: certificate has expired",
-		},
-		{
-			name: "should name a certificate that is not yet valid in plain words",
-			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
-				Reason: x509.Expired, Detail: "current time 2026-10-28T12:00:00Z is before 2027-01-01T00:00:00Z",
-			}}),
-			want: "could not reach api.example: certificate is not yet valid",
+			want: "could not reach api.example: certificate has expired or is not yet valid",
 		},
 		{
 			name: "should name another certificate problem without its detail",

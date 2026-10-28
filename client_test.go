@@ -3,6 +3,8 @@ package onesie_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1491,6 +1493,43 @@ func TestClientSystemOne(t *testing.T) {
 
 			if tc.timeout && timedOut.Timeout != 0 {
 				t.Errorf("Timeout = %s, want zero", timedOut.Timeout)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name      string
+		notBefore time.Time
+		notAfter  time.Time
+		detail    string
+		want      string
+	}{
+		{
+			name: "should name a certificate that expired by the client's clock", want: "onesie: could not reach api.example: certificate has expired",
+			notBefore: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), notAfter: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			detail: "current time 2026-09-20T12:00:00Z is after 2026-01-01T00:00:00Z",
+		},
+		{
+			name: "should name a certificate not yet valid by the client's clock", want: "onesie: could not reach api.example: certificate is not yet valid",
+			notBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), notAfter: time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC),
+			detail: "current time 2026-09-20T12:00:00Z is before 2027-01-01T00:00:00Z",
+		},
+		{
+			name: "should keep the general wording for a certificate valid by the client's clock", want: "onesie: could not reach api.example: certificate has expired or is not yet valid",
+			notBefore: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), notAfter: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+			detail: "current time 2027-06-01T00:00:00Z is after 2027-01-01T00:00:00Z",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			refused := &tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
+				Cert: &x509.Certificate{NotBefore: tc.notBefore, NotAfter: tc.notAfter}, Reason: x509.Expired, Detail: tc.detail,
+			}}
+			client, _, _ := newScriptedClient(t, []scriptedReply{{err: refused}})
+
+			if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err == nil || err.Error() != tc.want {
+				t.Fatalf("error = %v, want %q", err, tc.want)
 			}
 		})
 	}

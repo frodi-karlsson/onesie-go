@@ -45,7 +45,7 @@ func TestClientExchange(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			client := &Client{httpClient: &http.Client{Transport: roundTripper(tc.reply)}, maxResponseBytes: tc.maxBytes}
+			client := &Client{httpClient: &http.Client{Transport: roundTripper(tc.reply)}, maxResponseBytes: tc.maxBytes, clock: systemClock{}}
 
 			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://api.example/v1/models", http.NoBody)
 			if err != nil {

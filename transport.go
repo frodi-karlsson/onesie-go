@@ -3,6 +3,7 @@ package onesie
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -190,7 +191,7 @@ func (c *Client) newRequest(
 func (c *Client) exchange(ctx, actx context.Context, tag string, req *http.Request, cfg requestConfig) (*rawResponse, error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, classify(ctx, actx, queryHidden(err), cfg)
+		return nil, classify(ctx, actx, queryHidden(err), cfg, c.clock.Now())
 	}
 
 	defer func() {
@@ -202,7 +203,7 @@ func (c *Client) exchange(ctx, actx context.Context, tag string, req *http.Reque
 	// Read fully under the attempt deadline, so a slow body cannot outlive the timeout.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
 	if err != nil {
-		return nil, classify(ctx, actx, err, cfg)
+		return nil, classify(ctx, actx, err, cfg, c.clock.Now())
 	}
 
 	if int64(len(data)) > c.maxResponseBytes {
@@ -341,7 +342,7 @@ type rawResponse struct {
 	body   []byte
 }
 
-func classify(ctx, actx context.Context, err error, cfg requestConfig) error {
+func classify(ctx, actx context.Context, err error, cfg requestConfig, now time.Time) error {
 	if ctx.Err() != nil {
 		return interrupted(ctx, cfg.totalTimeout)
 	}
@@ -355,13 +356,29 @@ func classify(ctx, actx context.Context, err error, cfg requestConfig) error {
 		return &TimeoutError{ConnectionError: ConnectionError{Err: err}}
 	}
 
-	return &ConnectionError{Err: err}
+	return &ConnectionError{Err: err, certificate: certificateExpiry(err, now)}
 }
 
 func reportsTimeout(err error) bool {
 	var network net.Error
 
 	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &network) && network.Timeout())
+}
+
+func certificateExpiry(err error, now time.Time) string {
+	var invalid x509.CertificateInvalidError
+	if !errors.As(err, &invalid) || invalid.Reason != x509.Expired || invalid.Cert == nil {
+		return ""
+	}
+
+	switch {
+	case now.After(invalid.Cert.NotAfter):
+		return "certificate has expired"
+	case now.Before(invalid.Cert.NotBefore):
+		return "certificate is not yet valid"
+	default:
+		return ""
+	}
 }
 
 func queryHidden(err error) error {
