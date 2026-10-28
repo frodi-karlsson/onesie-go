@@ -253,7 +253,7 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 }
 
 // SendPrepared sends a body PrepareRaw prepared for this client's provider without preparing it again,
-// and returns its checked result and the response body as the route decoded it, compacted to one line.
+// and returns its checked result and the response body as the route decoded it, on one line.
 func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...RequestOption) (*Result, json.RawMessage, error) {
 	if body == nil {
 		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Provider.PrepareRaw"}
@@ -278,17 +278,12 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 		return nil, nil, err
 	}
 
-	var line bytes.Buffer
-	if err = json.Compact(&line, decoded); err != nil {
-		return nil, nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
-	}
-
-	result, err := c.checkedResult(res, line.Bytes(), body.asked)
+	result, err := c.checkedResult(res, decoded, body.asked)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return result, line.Bytes(), nil
+	return result, decoded, nil
 }
 
 func (c *Client) send(ctx context.Context, cfg requestConfig, sent encoded) (*rawResponse, json.RawMessage, error) {
@@ -384,7 +379,8 @@ type Request struct {
 }
 
 // SystemOneRaw prepares body as PrepareRaw does with the client's default model, sends it through the
-// SystemOne retry loop and returns the response body unchecked, as the route decoded it.
+// SystemOne retry loop and returns the response body unchecked, as the route decoded it, on one line.
+// A body that is empty or not JSON comes back as it is.
 func (c *Client) SystemOneRaw(
 	ctx context.Context,
 	body json.RawMessage,
@@ -406,12 +402,21 @@ func (c *Client) SystemOneRaw(
 	}
 
 	// Decoded here, not in do, so a body that is empty or not JSON comes back as it is.
-	decoded, err := prepared.sent.via.decode(res.body)
+	decoded, err := prepared.sent.via.decode(oneLineIfJSON(res.body))
 	if err != nil {
 		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
 
 	return decoded, nil
+}
+
+func oneLineIfJSON(body []byte) []byte {
+	var line bytes.Buffer
+	if json.Compact(&line, body) != nil {
+		return body
+	}
+
+	return line.Bytes()
 }
 
 // ListModels reports the model names this account may send.

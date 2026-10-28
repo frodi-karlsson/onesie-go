@@ -309,7 +309,8 @@ func decodeInto(res *rawResponse, shown string, out any, decode func([]byte) ([]
 		return &ResponseError{Status: res.status, Err: errors.New("empty response body")}
 	}
 
-	if !json.Valid(res.body) {
+	var line bytes.Buffer
+	if err := json.Compact(&line, res.body); err != nil {
 		return &ResponseError{
 			Status: res.status,
 			Body:   res.body,
@@ -317,16 +318,9 @@ func decodeInto(res *rawResponse, shown string, out any, decode func([]byte) ([]
 		}
 	}
 
-	body, err := decode(res.body)
+	body, err := decode(line.Bytes())
 	if err != nil {
 		return &ResponseError{Status: res.status, Body: res.body, Err: err}
-	}
-
-	// Assigned, since json.Unmarshal into a RawMessage drops the whitespace around the value.
-	if raw, isRaw := out.(*json.RawMessage); isRaw {
-		*raw = body
-
-		return nil
 	}
 
 	if err = json.Unmarshal(body, out); err != nil {

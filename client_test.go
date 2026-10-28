@@ -3496,7 +3496,7 @@ func TestClientSendPrepared(t *testing.T) {
 	})
 
 	for _, provider := range onesie.Providers() {
-		t.Run("should return the body SystemOneRaw returns, compacted to one line, on "+provider.Name(), func(t *testing.T) {
+		t.Run("should return the same one line body SystemOneRaw returns on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
 			const spaced = "{\n  \"model\": \"m\",\n  \"answers\": {\"q\": {\"type\": \"noul\", \"noul\": 0.1}},\n  \"usage\": {}\n}\n"
@@ -3520,13 +3520,8 @@ func TestClientSendPrepared(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			var line bytes.Buffer
-			if err := json.Compact(&line, unchecked); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if string(prepared) != shortAnswer || !bytes.Equal(prepared, line.Bytes()) {
-				t.Errorf("SendPrepared returned %q, want %s, the body SystemOneRaw returns on one line", prepared, shortAnswer)
+			if string(prepared) != shortAnswer || !bytes.Equal(prepared, unchecked) {
+				t.Errorf("SendPrepared returned %q and SystemOneRaw %q, want both %s", prepared, unchecked, shortAnswer)
 			}
 		})
 	}
