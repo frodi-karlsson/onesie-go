@@ -195,7 +195,7 @@ func statusLine(status int) string {
 func firstLine(body string) string {
 	line, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(body), byteOrderMark), "\n")
 
-	return withoutControls(line)
+	return strings.TrimSpace(withoutControls(line))
 }
 
 func printable(text string) string {
@@ -203,13 +203,13 @@ func printable(text string) string {
 }
 
 func withoutControls(text string) string {
-	return strings.TrimSpace(strings.Map(func(r rune) rune {
+	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
 		}
 
 		return r
-	}, text))
+	}, text)
 }
 
 func repeatsStatus(line string, status int) bool {

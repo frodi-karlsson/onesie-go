@@ -602,6 +602,19 @@ func TestResultCheck(t *testing.T) {
 			want: "question 'team' picked 'sales', which is not one of its options: billing, technical",
 		},
 		{
+			name: "should keep the spaces around a pick it reports", question: team, answer: choice(" billing ", 0.6, even),
+			want: "question 'team' picked ' billing ', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should keep the spaces around a key it reports", question: team,
+			answer: choice("billing", 0.6, map[string]float64{"billing": 0.6, "technical": 0.4, " sales ": 0}),
+			want:   "question 'team' has p for ' sales ', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should drop control characters from a pick it reports", question: team, answer: choice("x\ty\x00", 0.6, even),
+			want: "question 'team' picked 'xy', which is not one of its options: billing, technical",
+		},
+		{
 			name: "should refuse an extra key in p", question: team,
 			answer: choice("billing", 0.6, map[string]float64{"billing": 0.6, "technical": 0.4, "sales": 0}),
 			want:   "question 'team' has p for 'sales', which is not one of its options: billing, technical",
