@@ -845,6 +845,28 @@ func TestTimeoutError(t *testing.T) {
 		}
 	})
 
+	t.Run("should match context.DeadlineExceeded when the transport reported the timeout", func(t *testing.T) {
+		t.Parallel()
+
+		transports := map[string]*http.Transport{
+			"https": {TLSHandshakeTimeout: 20 * time.Millisecond},
+			"http":  {DialContext: (&net.Dialer{Timeout: time.Nanosecond}).DialContext},
+		}
+
+		for scheme, transport := range transports {
+			err := transportTimeout(t, scheme, transport)
+
+			var timeout *TimeoutError
+			if !errors.As(err, &timeout) {
+				t.Fatalf("%s error = %v, want a TimeoutError", scheme, err)
+			}
+
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("%s error = %v, want it to match context.DeadlineExceeded", scheme, err)
+			}
+		}
+	})
+
 	t.Run("should not report a connection error as a timeout", func(t *testing.T) {
 		t.Parallel()
 
@@ -862,6 +884,51 @@ func TestTimeoutError(t *testing.T) {
 			t.Errorf("a nil cause produced an empty message")
 		}
 	})
+}
+
+func transportTimeout(t *testing.T, scheme string, transport *http.Transport) error {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go holdConnections(listener)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, scheme+"://"+listener.Addr().String()+"/v1?key=secret", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	defer transport.CloseIdleConnections()
+
+	res, err := (&http.Client{Transport: transport}).Do(req)
+	if err == nil {
+		_ = res.Body.Close()
+		t.Fatalf("%s request succeeded, want a timeout", scheme)
+	}
+
+	return classify(context.Background(), context.Background(), err, requestConfig{}, time.Now())
+}
+
+func holdConnections(listener net.Listener) {
+	var held []net.Conn
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			for _, conn := range held {
+				_ = conn.Close()
+			}
+
+			return
+		}
+
+		held = append(held, conn)
+	}
 }
 
 func TestAnswerError(t *testing.T) {

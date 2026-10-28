@@ -1,6 +1,7 @@
 package onesie
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -134,8 +135,8 @@ func (e *RetryAfterError) Unwrap() error {
 	return &e.APIError
 }
 
-// TimeoutError is a ConnectionError whose cause was a deadline. It unwraps to
-// context.DeadlineExceeded, so errors.Is against a caller's own deadline matches it too.
+// TimeoutError is a ConnectionError whose cause was a deadline. It matches context.DeadlineExceeded
+// whichever deadline fired, the caller's, the client's or the transport's.
 type TimeoutError struct {
 	ConnectionError
 
@@ -205,9 +206,9 @@ func (e *TimeoutError) Unwrap() error {
 	return &e.ConnectionError
 }
 
-// Is matches both ErrTimeout and ErrConnection.
+// Is matches ErrTimeout, ErrConnection and context.DeadlineExceeded.
 func (e *TimeoutError) Is(target error) bool {
-	return target == ErrConnection || target == ErrTimeout
+	return target == ErrConnection || target == ErrTimeout || target == context.DeadlineExceeded
 }
 
 // ResponseError is a 2xx response this client could not use. Err holds the fault, and Usage is
