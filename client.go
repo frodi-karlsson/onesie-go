@@ -380,7 +380,8 @@ type Request struct {
 
 // SystemOneRaw prepares body as PrepareRaw does with the client's default model, sends it through the
 // SystemOne retry loop and returns the response body unchecked, as the route decoded it, on one line.
-// A body that is empty or not JSON comes back as it is.
+// A body that is empty or not JSON comes back as it is on every provider. A JSON body the cloudflare
+// route cannot unwrap is a *ResponseError.
 func (c *Client) SystemOneRaw(
 	ctx context.Context,
 	body json.RawMessage,
@@ -401,8 +402,12 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	// Decoded here, not in do, so a body that is empty or not JSON comes back as it is.
-	decoded, err := prepared.sent.via.decode(oneLineIfJSON(res.body))
+	line, isJSON := oneLine(res.body)
+	if !isJSON {
+		return res.body, nil
+	}
+
+	decoded, err := prepared.sent.via.decode(line)
 	if err != nil {
 		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
@@ -410,13 +415,13 @@ func (c *Client) SystemOneRaw(
 	return decoded, nil
 }
 
-func oneLineIfJSON(body []byte) []byte {
+func oneLine(body []byte) ([]byte, bool) {
 	var line bytes.Buffer
 	if json.Compact(&line, body) != nil {
-		return body
+		return nil, false
 	}
 
-	return line.Bytes()
+	return line.Bytes(), true
 }
 
 // ListModels reports the model names this account may send.

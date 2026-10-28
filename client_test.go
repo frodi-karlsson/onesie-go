@@ -3124,7 +3124,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 		})
 	}
 
-	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Berget(), onesie.Levanto()} {
+	for _, provider := range onesie.Providers() {
 		for _, body := range []string{"", "<!DOCTYPE html><html></html>"} {
 			t.Run("should return a 200 body it cannot read unchanged on "+provider.Name()+": "+body, func(t *testing.T) {
 				t.Parallel()
@@ -3147,6 +3147,21 @@ func TestClientSystemOneRaw(t *testing.T) {
 			})
 		}
 	}
+
+	t.Run("should refuse a JSON body the cloudflare route cannot unwrap", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: `{"success":true}`}
+		client, _ := newTestClient(t, "https://api.example",
+			onesie.WithProvider(onesie.Cloudflare()), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{}}`))
+
+		var respErr *onesie.ResponseError
+		if !errors.As(err, &respErr) || respErr.Status != http.StatusOK || !strings.Contains(err.Error(), "expected a result object") {
+			t.Fatalf("error = %v, want a 200 ResponseError saying it expected a result object", err)
+		}
+	})
 
 	withAssets := json.RawMessage(`{"state":{"photo":"r"},"model":"m","questions":{"q":{"type":"noul",` +
 		`"instructions":"q"}},"assets":{"r":{"type":"image","format":"png","data_base64":"AQ=="}}}`)
