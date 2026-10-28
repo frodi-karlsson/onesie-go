@@ -20,6 +20,7 @@ const (
 const (
 	typeSafeBaseURL = "https://api.typesafe.ai"
 	jevLatest       = "jev-latest"
+	jevPreview      = "jev-preview"
 	bergetModel     = "systemone"
 	levantoModel    = "sage-latest"
 	cloudflareJev   = "typesafe/jev"
@@ -76,6 +77,7 @@ func TypeSafe() Provider {
 		envBaseURL:      "TYPESAFE_BASE_URL",
 		envDefaultModel: "TYPESAFE_DEFAULT_MODEL",
 		defaultModel:    jevLatest,
+		boxModel:        jevPreview,
 		requestIDHeader: "X-TypeSafe-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
@@ -100,6 +102,7 @@ func OpenRouter() Provider {
 		defaultBaseURL:  "https://openrouter.ai/api",
 		envAPIKey:       "OPENROUTER_API_KEY",
 		defaultModel:    jevLatest,
+		boxModel:        jevPreview,
 		requestIDHeader: "X-Generation-Id",
 		modelsPath:      "/v1/models?output_modalities=decisions",
 		decodeModels:    decodeOpenRouterModels,
@@ -252,6 +255,7 @@ type Provider struct {
 	envDefaultModel string
 	envAccountID    string
 	defaultModel    string
+	boxModel        string
 	requestIDHeader string
 	modelsPath      string
 	decodeModels    func([]byte) ([]ModelCard, error)
@@ -291,6 +295,12 @@ func (p Provider) EnvAccountID() string {
 // DefaultModel is the model a request carries when it names none and nothing overrides it.
 func (p Provider) DefaultModel() string {
 	return p.defaultModel
+}
+
+// BoxModel names a model known to answer a box question, or is empty when none is known. Refuse
+// says whether a model takes a box at all.
+func (p Provider) BoxModel() string {
+	return p.boxModel
 }
 
 // DefaultBaseURL is the base URL used when nothing overrides it, or is empty when the base URL

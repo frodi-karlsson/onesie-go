@@ -158,6 +158,33 @@ func TestProviderPinned(t *testing.T) {
 	}
 }
 
+func TestProviderBoxModel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		want     string
+	}{
+		{name: "should name jev-preview on typesafe", provider: onesie.TypeSafe(), want: "jev-preview"},
+		{name: "should name jev-preview on openrouter", provider: onesie.OpenRouter(), want: "jev-preview"},
+		{name: "should name no model on berget", provider: onesie.Berget()},
+		{name: "should name no model on levanto", provider: onesie.Levanto()},
+		{name: "should name no model on cloudflare", provider: onesie.Cloudflare()},
+		{name: "should name no model on a zero provider"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.provider.BoxModel(); got != tc.want {
+				t.Errorf("BoxModel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProviders(t *testing.T) {
 	t.Parallel()
 
