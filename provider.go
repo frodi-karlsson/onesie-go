@@ -319,7 +319,15 @@ type keyCheckMethod int
 // ResolveModel reports the model a request carries under this provider, so a caller that prints a
 // request without a client fills the model as a client would.
 func (p Provider) ResolveModel(model string, lookupEnv func(string) (string, bool)) string {
-	return orDefault(orEnv(model, lookupEnv, p.envDefaultModel), p.defaultModel)
+	return modelOr(orEnv(model, lookupEnv, p.envDefaultModel), p.defaultModel)
+}
+
+func modelOr(model, fallback string) string {
+	if named := strings.TrimSpace(model); named != "" {
+		return named
+	}
+
+	return fallback
 }
 
 func (p Provider) route(model string) route {

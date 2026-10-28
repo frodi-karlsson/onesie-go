@@ -373,11 +373,3 @@ func orEnv(value string, lookup func(string) (string, bool), name string) string
 
 	return strings.TrimSpace(found)
 }
-
-func orDefault(value, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-
-	return value
-}

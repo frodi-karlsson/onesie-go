@@ -16,10 +16,7 @@ func (p Provider) Refuse(model string, needs Needs) error {
 		return err
 	}
 
-	model = strings.TrimSpace(model)
-	if model == "" {
-		model = p.defaultModel
-	}
+	model = modelOr(model, p.defaultModel)
 
 	return p.route(model).refuse(p.name, model, needs.capabilities())
 }
@@ -69,11 +66,7 @@ func (p Provider) Encode(req Request) ([]byte, error) {
 }
 
 func encodeRequest(p Provider, req Request, longContext bool) (encoded, error) {
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = p.defaultModel
-	}
-
+	model := modelOr(req.Model, p.defaultModel)
 	via := p.route(model)
 	needs := requestNeeds(req)
 	needs.longContext = needs.longContext || longContext

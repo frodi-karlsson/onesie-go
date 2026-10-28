@@ -34,7 +34,7 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 		return nil, &ValidationError{Message: "the request body is not valid UTF-8"}
 	}
 
-	model := orDefault(strings.TrimSpace(defaultModel), p.defaultModel)
+	model := modelOr(defaultModel, p.defaultModel)
 	b := fillModel(lastWins(parseBody(raw)), model)
 
 	bodyLongContext, err := longContextOf(b.members)
@@ -56,7 +56,7 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 	}
 
 	scan := scanMembers(b.members)
-	model = orDefault(scan.model, model)
+	model = modelOr(scan.model, model)
 	via := p.route(model)
 	needs := capabilities{images: scan.assets, box: asksBox(asked), longContext: longContext || bodyLongContext}
 

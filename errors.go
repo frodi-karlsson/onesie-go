@@ -93,7 +93,7 @@ var (
 func NewAPIError(p Provider, model string, needs Needs, status int, body []byte) *APIError {
 	var via route
 	if p.check() == nil {
-		via = p.route(orDefault(strings.TrimSpace(model), p.defaultModel))
+		via = p.route(modelOr(model, p.defaultModel))
 	}
 
 	return newAPIError(via, needs, status, http.Header{}, body, time.Time{})

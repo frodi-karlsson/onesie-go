@@ -237,10 +237,7 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	req.Model = strings.TrimSpace(req.Model)
-	if req.Model == "" {
-		req.Model = c.defaultModel
-	}
+	req.Model = modelOr(req.Model, c.defaultModel)
 
 	sent, err := c.provider.validated(req, cfg.longContext)
 	if err != nil {

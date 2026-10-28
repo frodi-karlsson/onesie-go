@@ -236,3 +236,28 @@ func TestProviderRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestModelOr(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{name: "should keep a named model", model: "jev-1.13.0", want: "jev-1.13.0"},
+		{name: "should trim a named model", model: " jev-1.13.0\t", want: "jev-1.13.0"},
+		{name: "should give the fallback for an empty model", want: "fallback"},
+		{name: "should give the fallback for a blank model", model: " \t ", want: "fallback"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := modelOr(tc.model, "fallback"); got != tc.want {
+				t.Errorf("modelOr(%q) = %q, want %q", tc.model, got, tc.want)
+			}
+		})
+	}
+}
