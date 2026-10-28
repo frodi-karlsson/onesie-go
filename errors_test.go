@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 )
@@ -870,8 +872,8 @@ func TestTimeoutError(t *testing.T) {
 		t.Parallel()
 
 		transports := map[string]*http.Transport{
-			"https": {TLSHandshakeTimeout: 20 * time.Millisecond},
-			"http":  {ResponseHeaderTimeout: 20 * time.Millisecond},
+			"https": {TLSHandshakeTimeout: 10 * time.Second},
+			"http":  {ResponseHeaderTimeout: 10 * time.Second},
 		}
 
 		for scheme, transport := range transports {
@@ -910,46 +912,38 @@ func TestTimeoutError(t *testing.T) {
 func transportTimeout(t *testing.T, scheme string, transport *http.Transport) error {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	var err error
 
-	t.Cleanup(func() { _ = listener.Close() })
+	synctest.Test(t, func(t *testing.T) {
+		transport.DialContext = func(context.Context, string, string) (net.Conn, error) {
+			client, server := net.Pipe()
+			go discardUntilClosed(server)
 
-	go holdConnections(listener)
-
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, scheme+"://"+listener.Addr().String()+"/v1?key=secret", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-
-	defer transport.CloseIdleConnections()
-
-	res, err := (&http.Client{Transport: transport}).Do(req)
-	if err == nil {
-		_ = res.Body.Close()
-		t.Fatalf("%s request succeeded, want a timeout", scheme)
-	}
-
-	return classify(context.Background(), context.Background(), err, requestConfig{}, time.Now())
-}
-
-func holdConnections(listener net.Listener) {
-	var held []net.Conn
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			for _, conn := range held {
-				_ = conn.Close()
-			}
-
-			return
+			return client, nil
 		}
 
-		held = append(held, conn)
-	}
+		defer transport.CloseIdleConnections()
+
+		req, buildErr := http.NewRequestWithContext(t.Context(), http.MethodGet, scheme+"://127.0.0.1:8443/v1?key=secret", nil)
+		if buildErr != nil {
+			t.Fatalf("new request: %v", buildErr)
+		}
+
+		res, doErr := (&http.Client{Transport: transport}).Do(req)
+		if doErr == nil {
+			_ = res.Body.Close()
+			t.Fatalf("%s request succeeded, want a timeout", scheme)
+		}
+
+		err = classify(context.Background(), context.Background(), doErr, requestConfig{}, time.Now())
+	})
+
+	return err
+}
+
+func discardUntilClosed(conn net.Conn) {
+	_, _ = io.Copy(io.Discard, conn)
+	_ = conn.Close()
 }
 
 func TestAnswerError(t *testing.T) {
@@ -1185,13 +1179,13 @@ func TestTimeoutErrorReason(t *testing.T) {
 		})
 	}
 
-	t.Run("should name the host and port of a live TLS handshake timeout", func(t *testing.T) {
+	t.Run("should name the host and port of a TLS handshake timeout from the transport", func(t *testing.T) {
 		t.Parallel()
 
-		err := transportTimeout(t, "https", &http.Transport{TLSHandshakeTimeout: 20 * time.Millisecond})
+		err := transportTimeout(t, "https", &http.Transport{TLSHandshakeTimeout: 10 * time.Second})
 
 		var timeout *TimeoutError
-		if !errors.As(err, &timeout) || !regexp.MustCompile(`^request to 127\.0\.0\.1:\d+ timed out$`).MatchString(timeout.Reason()) {
+		if !errors.As(err, &timeout) || !regexp.MustCompile(`^request to 127\.0\.0\.1:8443 timed out$`).MatchString(timeout.Reason()) {
 			t.Errorf("error = %v, want it to name the host and port", err)
 		}
 	})

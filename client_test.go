@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/frodi-karlsson/onesie-go"
@@ -1710,94 +1711,90 @@ func TestClientSystemOne(t *testing.T) {
 	t.Run("should stop a request that is cancelled or times out", func(t *testing.T) {
 		t.Parallel()
 
-		blockingServer := func(t *testing.T) *httptest.Server {
-			t.Helper()
-
-			release := make(chan struct{})
-
-			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-				<-release
-			}))
-
-			t.Cleanup(func() {
-				close(release)
-				server.Close()
-			})
-
-			return server
-		}
-
 		t.Run("should return the context error when the caller cancels", func(t *testing.T) {
 			t.Parallel()
 
-			client, _ := newTestClient(t, blockingServer(t).URL)
+			synctest.Test(t, func(t *testing.T) {
+				client, _ := newTestClient(t, "https://api.example",
+					onesie.WithHTTPClient(&http.Client{Transport: &stallingTransport{}}))
 
-			ctx, cancel := context.WithCancel(t.Context())
-			go func() {
-				time.Sleep(20 * time.Millisecond)
+				ctx, cancel := context.WithCancel(t.Context())
+				failed := make(chan error, 1)
+
+				go func() {
+					_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+					failed <- err
+				}()
+
+				synctest.Wait()
 				cancel()
-			}()
 
-			_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+				err := <-failed
 
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("error got %v, want context.Canceled", err)
-			}
+				if !errors.Is(err, context.Canceled) {
+					t.Errorf("error got %v, want context.Canceled", err)
+				}
 
-			var connection *onesie.ConnectionError
-			if !errors.As(err, &connection) || err.Error() != "onesie: connection error: context canceled" {
-				t.Errorf("error = %v, want a ConnectionError for the cancellation", err)
-			}
+				var connection *onesie.ConnectionError
+				if !errors.As(err, &connection) || err.Error() != "onesie: connection error: context canceled" {
+					t.Errorf("error = %v, want a ConnectionError for the cancellation", err)
+				}
+			})
 		})
 
 		t.Run("should report a timeout as a connection error", func(t *testing.T) {
 			t.Parallel()
 
-			policy := onesie.DefaultRetryPolicy()
-			policy.MaxRetries = 0
+			synctest.Test(t, func(t *testing.T) {
+				policy := onesie.DefaultRetryPolicy()
+				policy.MaxRetries = 0
 
-			client, _ := newTestClient(t, blockingServer(t).URL, onesie.WithRetry(policy))
+				client, _ := newTestClient(t, "https://api.example", onesie.WithRetry(policy),
+					onesie.WithHTTPClient(&http.Client{Transport: &stallingTransport{}}))
 
-			_, err := client.SystemOne(
-				t.Context(),
-				onesie.Request{State: "x", Questions: oneNoul()},
-				onesie.WithRequestAttemptTimeout(30*time.Millisecond),
-			)
+				_, err := client.SystemOne(
+					t.Context(),
+					onesie.Request{State: "x", Questions: oneNoul()},
+					onesie.WithRequestAttemptTimeout(30*time.Second),
+				)
 
-			if !errors.Is(err, onesie.ErrTimeout) {
-				t.Fatalf("error got %v, want ErrTimeout", err)
-			}
+				if !errors.Is(err, onesie.ErrTimeout) {
+					t.Fatalf("error got %v, want ErrTimeout", err)
+				}
 
-			if !errors.Is(err, onesie.ErrConnection) {
-				t.Errorf("a timeout should also match ErrConnection")
-			}
+				if !errors.Is(err, onesie.ErrConnection) {
+					t.Errorf("a timeout should also match ErrConnection")
+				}
+			})
 		})
 
-		t.Run("should give each attempt a fresh timeout rather than one budget", func(t *testing.T) {
+		t.Run("should give each attempt a fresh timeout and not one budget", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
+			synctest.Test(t, func(t *testing.T) {
+				stalling := &stallingTransport{}
+				client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: stalling}))
 
-			// Counting in the transport, not a server handler, so a slow runner cannot let an
-			// attempt time out before its request is counted.
-			stalling := &http.Client{Transport: stallingTransport{calls: &calls}}
+				started := time.Now()
 
-			client, _ := newTestClient(t, "https://api.example.com", onesie.WithHTTPClient(stalling))
+				_, err := client.SystemOne(
+					t.Context(),
+					onesie.Request{State: "x", Questions: oneNoul()},
+					onesie.WithRequestAttemptTimeout(30*time.Second),
+				)
 
-			_, err := client.SystemOne(
-				t.Context(),
-				onesie.Request{State: "x", Questions: oneNoul()},
-				onesie.WithRequestAttemptTimeout(30*time.Millisecond),
-			)
+				if !errors.Is(err, onesie.ErrTimeout) {
+					t.Fatalf("error got %v, want ErrTimeout", err)
+				}
 
-			if !errors.Is(err, onesie.ErrTimeout) {
-				t.Fatalf("error got %v, want ErrTimeout", err)
-			}
+				if calls := stalling.calls.Load(); calls != 3 {
+					t.Errorf("call count got %d, want 3", calls)
+				}
 
-			// Three attempts each got their own deadline, proving the budget is not shared.
-			if calls.Load() != 3 {
-				t.Errorf("call count got %d, want 3", calls.Load())
-			}
+				if elapsed := time.Since(started); elapsed != 90*time.Second {
+					t.Errorf("elapsed = %v, want three whole 30s attempts", elapsed)
+				}
+			})
 		})
 
 		t.Run("should abort while waiting to retry", func(t *testing.T) {
@@ -1826,24 +1823,32 @@ func TestClientSystemOne(t *testing.T) {
 		t.Run("should honour a total timeout across retries", func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				time.Sleep(20 * time.Millisecond)
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}))
-			defer server.Close()
+			synctest.Test(t, func(t *testing.T) {
+				stalling := &stallingTransport{unavailableFirst: true}
+				client, _ := newTestClient(t, "https://api.example", onesie.WithTotalTimeout(5*time.Second),
+					onesie.WithHTTPClient(&http.Client{Transport: stalling}))
 
-			client, _ := newTestClient(t, server.URL, onesie.WithTotalTimeout(30*time.Millisecond))
+				started := time.Now()
 
-			_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+				_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
 
-			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Errorf("error got %v, want context.DeadlineExceeded", err)
-			}
+				if elapsed := time.Since(started); elapsed != 5*time.Second {
+					t.Errorf("elapsed = %v, want the 5s total", elapsed)
+				}
 
-			var timeout *onesie.TimeoutError
-			if !errors.As(err, &timeout) || timeout.Timeout != 30*time.Millisecond || !errors.Is(err, onesie.ErrTimeout) {
-				t.Errorf("error = %v, want a TimeoutError naming the 30ms total", err)
-			}
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("error got %v, want context.DeadlineExceeded", err)
+				}
+
+				var timeout *onesie.TimeoutError
+				if !errors.As(err, &timeout) || timeout.Timeout != 5*time.Second || !errors.Is(err, onesie.ErrTimeout) {
+					t.Errorf("error = %v, want a TimeoutError naming the 5s total", err)
+				}
+
+				if calls := stalling.calls.Load(); calls != 2 {
+					t.Errorf("call count got %d, want a retry after the 503", calls)
+				}
+			})
 		})
 	})
 
@@ -2693,54 +2698,56 @@ func TestWithAttemptObserver(t *testing.T) {
 		cancels bool
 	}{
 		{name: "should observe a cancelled call as the ConnectionError it returns", cancels: true},
-		{name: "should observe a call past its total timeout as the TimeoutError it returns", opts: []onesie.Option{onesie.WithTotalTimeout(50 * time.Millisecond)}},
+		{name: "should observe a call past its total timeout as the TimeoutError it returns", opts: []onesie.Option{onesie.WithTotalTimeout(5 * time.Second)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
+			synctest.Test(t, func(t *testing.T) {
+				var (
+					mu       sync.Mutex
+					observed []error
+				)
 
-			release := make(chan struct{})
+				opts := append([]onesie.Option{
+					onesie.WithHTTPClient(&http.Client{Transport: &stallingTransport{}}),
+					onesie.WithAttemptObserver(func(a onesie.Attempt) {
+						mu.Lock()
+						defer mu.Unlock()
 
-			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+						observed = append(observed, a.Err)
+					}),
+				}, tc.opts...)
+				client, _ := newTestClient(t, "https://api.example", opts...)
+
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+
+				failed := make(chan error, 1)
+
+				go func() {
+					_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+					failed <- err
+				}()
+
 				if tc.cancels {
+					synctest.Wait()
 					cancel()
 				}
 
-				select {
-				case <-r.Context().Done():
-				case <-release:
-				}
-			}))
-			defer server.Close()
-			defer close(release)
+				err := <-failed
 
-			var (
-				mu       sync.Mutex
-				observed []error
-			)
-
-			opts := append([]onesie.Option{onesie.WithAttemptObserver(func(a onesie.Attempt) {
 				mu.Lock()
 				defer mu.Unlock()
 
-				observed = append(observed, a.Err)
-			})}, tc.opts...)
-			client, _ := newTestClient(t, server.URL, opts...)
+				if len(observed) != 1 || observed[0] == nil || err == nil {
+					t.Fatalf("observed = %v, error = %v, want one observed failure", observed, err)
+				}
 
-			_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			if len(observed) != 1 || observed[0] == nil || err == nil {
-				t.Fatalf("observed = %v, error = %v, want one observed failure", observed, err)
-			}
-
-			if fmt.Sprintf("%T %v", observed[0], observed[0]) != fmt.Sprintf("%T %v", err, err) {
-				t.Errorf("observed %T %v, want the returned %T %v", observed[0], observed[0], err, err)
-			}
+				if fmt.Sprintf("%T %v", observed[0], observed[0]) != fmt.Sprintf("%T %v", err, err) {
+					t.Errorf("observed %T %v, want the returned %T %v", observed[0], observed[0], err, err)
+				}
+			})
 		})
 	}
 
@@ -4200,11 +4207,19 @@ func (e netError) Temporary() bool {
 }
 
 type stallingTransport struct {
-	calls *atomic.Int32
+	unavailableFirst bool
+	calls            atomic.Int32
 }
 
-func (s stallingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	s.calls.Add(1)
+func (s *stallingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if s.calls.Add(1) == 1 && s.unavailableFirst {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       http.NoBody,
+			Request:    req,
+		}, nil
+	}
+
 	<-req.Context().Done()
 
 	return nil, req.Context().Err()
