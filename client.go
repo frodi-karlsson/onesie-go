@@ -244,17 +244,9 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	var decoded json.RawMessage
+	result, _, err := c.send(ctx, cfg, sent, req.Questions)
 
-	res, err := c.do(ctx, cfg, call{
-		method: http.MethodPost, path: sent.via.path, payload: sent.body, out: &decoded, decode: sent.via.decode,
-		via: sent.via, needs: sent.needs.asNeeds(), imagesHeader: sent.images,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return c.checkedResult(res, decoded, req.Questions)
+	return result, err
 }
 
 // SendPrepared sends a body PrepareRaw prepared for this client's provider without preparing it again,
@@ -278,17 +270,18 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw"}
 	}
 
+	return c.send(ctx, cfg, body.sent, body.asked)
+}
+
+func (c *Client) send(ctx context.Context, cfg requestConfig, sent encoded, questions Questions) (*Result, json.RawMessage, error) {
 	var decoded json.RawMessage
 
-	res, err := c.do(ctx, cfg, call{
-		method: http.MethodPost, path: body.sent.via.path, payload: body.sent.body, out: &decoded, decode: body.sent.via.decode,
-		via: body.sent.via, needs: body.sent.needs.asNeeds(), imagesHeader: body.sent.images,
-	})
+	res, err := c.do(ctx, cfg, sent.post(&decoded))
 	if err != nil {
 		return nil, nil, err
 	}
 
-	result, err := c.checkedResult(res, decoded, body.asked)
+	result, err := c.checkedResult(res, decoded, questions)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -399,18 +392,13 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	sent := prepared.sent
-
-	res, err := c.do(ctx, cfg, call{
-		method: http.MethodPost, path: sent.via.path, payload: sent.body, decode: identity,
-		via: sent.via, needs: sent.needs.asNeeds(), imagesHeader: sent.images,
-	})
+	res, err := c.do(ctx, cfg, prepared.sent.post(nil))
 	if err != nil {
 		return nil, err
 	}
 
 	// Decoded here, not in do, so a body that is empty or not JSON comes back as it is.
-	decoded, err := sent.via.decode(res.body)
+	decoded, err := prepared.sent.via.decode(res.body)
 	if err != nil {
 		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}

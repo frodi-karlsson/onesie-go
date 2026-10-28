@@ -91,6 +91,13 @@ type encoded struct {
 	images bool
 }
 
+func (e encoded) post(out any) call {
+	return call{
+		method: http.MethodPost, path: e.via.path, payload: e.body, out: out, decode: e.via.decode,
+		via: e.via, needs: e.needs.asNeeds(), imagesHeader: e.images,
+	}
+}
+
 func encodeBody(via route, needs capabilities, b jsonBody) (encoded, error) {
 	withImages := needs.images || needs.box
 

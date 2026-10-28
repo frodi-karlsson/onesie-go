@@ -1,6 +1,10 @@
 package onesie
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+)
 
 func TestScanMembers(t *testing.T) {
 	t.Parallel()
@@ -76,4 +80,23 @@ func TestRequestNeeds(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEncodedPost(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should post the encoded body on its route with its needs", func(t *testing.T) {
+		t.Parallel()
+
+		via := TypeSafe().route(jevLatest)
+		sent := encoded{via: via, body: []byte(`{}`), needs: capabilities{box: true, longContext: true}, images: true}
+
+		var out json.RawMessage
+
+		got := sent.post(&out)
+		if got.method != http.MethodPost || got.path != via.path || string(got.payload) != `{}` || got.out != &out ||
+			got.needs != (Needs{Box: true, LongContext: true}) || !got.imagesHeader || got.via.path != via.path {
+			t.Errorf("post = %+v, want a POST of the encoded body", got)
+		}
+	})
 }
