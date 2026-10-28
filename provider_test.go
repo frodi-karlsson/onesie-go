@@ -116,6 +116,48 @@ func TestProviderRefuse(t *testing.T) {
 	}
 }
 
+func TestProviderPinned(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		model    string
+		want     bool
+	}{
+		{name: "should pin a three part version on typesafe", provider: onesie.TypeSafe(), model: "jev-1.13.0", want: true},
+		{name: "should pin a two part version on typesafe", provider: onesie.TypeSafe(), model: "jev-2.0", want: true},
+		{name: "should not pin the latest alias", provider: onesie.TypeSafe(), model: "jev-latest"},
+		{name: "should not pin a one part version", provider: onesie.TypeSafe(), model: "jev-1"},
+		{name: "should not pin a prerelease", provider: onesie.TypeSafe(), model: "jev-1.13.0-rc.1"},
+		{name: "should not pin a four part version", provider: onesie.TypeSafe(), model: "jev-1.2.3.4"},
+		{name: "should not pin a bare version", provider: onesie.TypeSafe(), model: "-1.2"},
+		{name: "should not pin a name with no version", provider: onesie.TypeSafe(), model: "some-model"},
+		{name: "should not pin an empty name", provider: onesie.TypeSafe(), model: ""},
+		{name: "should not pin a version on openrouter", provider: onesie.OpenRouter(), model: "typesafe/jev-1.13"},
+		{name: "should not pin an alias on openrouter", provider: onesie.OpenRouter(), model: "typesafe/jev-latest"},
+		{name: "should not pin a typesafe name on another provider", provider: onesie.OpenRouter(), model: "jev-1.13.0"},
+		{name: "should not pin the default alias on berget", provider: onesie.Berget(), model: "systemone"},
+		{name: "should not pin a canonical id on berget", provider: onesie.Berget(), model: "Qwen/Qwen3.5-2B"},
+		{name: "should not pin a versioned name on berget", provider: onesie.Berget(), model: "jev-1.13.0"},
+		{name: "should not pin the default alias on levanto", provider: onesie.Levanto(), model: "sage-latest"},
+		{name: "should not pin a versioned name on levanto", provider: onesie.Levanto(), model: "levanto-sage-v1.4"},
+		{name: "should not pin jev on cloudflare", provider: onesie.Cloudflare(), model: "typesafe/jev"},
+		{name: "should not pin a versioned name on cloudflare", provider: onesie.Cloudflare(), model: "jev-1.13.0"},
+		{name: "should not pin anything on a zero provider", model: "jev-1.13.0"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.provider.Pinned(tc.model); got != tc.want {
+				t.Errorf("%s Pinned(%q) = %v, want %v", tc.provider.Name(), tc.model, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProviders(t *testing.T) {
 	t.Parallel()
 

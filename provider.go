@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -22,6 +23,8 @@ const (
 	levantoModel    = "sage-latest"
 	cloudflareJev   = "typesafe/jev"
 )
+
+var versionedModel = regexp.MustCompile(`^.+-[0-9]+\.[0-9]+(\.[0-9]+)?$`)
 
 // ProviderNamed returns the provider with this name, as Name reports it. An empty name is TypeSafe.
 func ProviderNamed(name string) (Provider, error) {
@@ -75,6 +78,7 @@ func TypeSafe() Provider {
 		requestIDHeader: "X-TypeSafe-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
+		pinsVersions:    true,
 		routeFor: oneRoute(route{
 			path:         systemOnePath,
 			takes:        takesEverything(),
@@ -247,6 +251,7 @@ type Provider struct {
 	routeFor        func(model string) route
 	keyCheck        keyCheck
 	accountBaseURL  func(account string) string
+	pinsVersions    bool
 }
 
 // Name is the provider's name, as ProviderNamed takes it.
@@ -285,6 +290,12 @@ func (p Provider) DefaultModel() string {
 // depends on an account.
 func (p Provider) DefaultBaseURL() string {
 	return p.defaultBaseURL
+}
+
+// Pinned reports whether model names one fixed version whose answers never change. Only a TypeSafe
+// name ending in a two or three part version, such as jev-1.13.0, is pinned.
+func (p Provider) Pinned(model string) bool {
+	return p.pinsVersions && versionedModel.MatchString(model)
 }
 
 func (p Provider) check() error {
