@@ -351,7 +351,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 			wantErr: "onesie: attempt timeout must be positive",
 		},
 		{name: "should report an encode error", body: `{"model":"broken",` + questions + `}`, wantErr: "encode failed"},
-		{name: "should refuse a model that is not a string", body: `{"model":1,` + questions + `}`, wantErr: "onesie: model must be a string"},
+		{name: "should refuse a model that is not a string", body: `{"model":1,` + questions + `}`, wantErr: "onesie: model must be a string, got a number"},
 	}
 
 	for _, tc := range refusals {
