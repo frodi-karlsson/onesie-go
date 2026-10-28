@@ -29,7 +29,7 @@ func New(opts ...Option) (*Client, error) {
 		header:           http.Header{},
 		userAgent:        "onesie-lib",
 		lookupEnv:        os.LookupEnv,
-		clock:            systemClock{},
+		clock:            SystemClock(),
 		random:           rand.Float64,
 		observe:          func(Attempt) {},
 		provider:         TypeSafe(),
