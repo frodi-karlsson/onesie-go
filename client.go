@@ -239,11 +239,7 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		req.Model = c.defaultModel
 	}
 
-	if err = ValidateRequest(req); err != nil {
-		return nil, err
-	}
-
-	sent, err := encodeRequest(c.provider, req, cfg.longContext)
+	sent, err := c.provider.validated(req, cfg.longContext)
 	if err != nil {
 		return nil, err
 	}

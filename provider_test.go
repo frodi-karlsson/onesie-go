@@ -259,6 +259,72 @@ func TestCapabilityError(t *testing.T) {
 	})
 }
 
+func TestProviderCheck(t *testing.T) {
+	t.Parallel()
+
+	square, err := onesie.NewImage(squarePNG(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	box := onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug in image-a"}}}
+	photo := onesie.Request{State: "image-a", Questions: box, Assets: onesie.Assets{"image-a": square}}
+	padded := onesie.Image{Format: "png", Data: append(squarePNG(t), bytes.Repeat([]byte{0}, onesie.MaxBodyBytes/1200)...)}
+	repeated := onesie.Request{State: strings.Repeat("img-a ", 1000), Questions: oneNoul(), Assets: onesie.Assets{"img-a": padded}}
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		req      onesie.Request
+		wantErr  string
+	}{
+		{name: "should take a request the provider takes", provider: onesie.TypeSafe(), req: photo},
+		{
+			name: "should refuse a request with no questions", provider: onesie.TypeSafe(), req: onesie.Request{State: "s"},
+			wantErr: "onesie: at least one question is required",
+		},
+		{
+			name: "should refuse a box question with no image, which Encode sends", provider: onesie.TypeSafe(),
+			req:     onesie.Request{State: "s", Questions: box},
+			wantErr: "onesie: box question 'mug' needs an image in the request",
+		},
+		{
+			name: "should refuse what the provider's route does not take", provider: onesie.Levanto(),
+			req:     onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}},
+			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do",
+		},
+		{
+			name: "should refuse a blank model as the built in default refuses it", provider: onesie.Cloudflare(),
+			req:     onesie.Request{Model: " ", State: "s", Questions: oneNoul(), LongContext: true},
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+		},
+		{
+			name: "should refuse a body openrouter would inline past the limit", provider: onesie.OpenRouter(), req: repeated,
+			wantErr: "This provider takes an image once per place it is named, so name each image once",
+		},
+		{name: "should refuse a zero provider", req: onesie.Request{State: "s", Questions: oneNoul()}, wantErr: "onesie: the provider is empty. Use ProviderNamed with typesafe, openrouter, berget, levanto or cloudflare"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tc.provider.Check(tc.req)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				return
+			}
+
+			if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestProviderEncode(t *testing.T) {
 	t.Parallel()
 

@@ -34,6 +34,26 @@ type Needs struct {
 	LongContext bool
 }
 
+// Check refuses what SystemOne refuses before it sends req, and sends nothing. It validates req, then
+// refuses what Encode refuses. A blank model is the built in default.
+func (p Provider) Check(req Request) error {
+	if err := p.check(); err != nil {
+		return err
+	}
+
+	_, err := p.validated(req, false)
+
+	return err
+}
+
+func (p Provider) validated(req Request, longContext bool) (encoded, error) {
+	if err := ValidateRequest(req); err != nil {
+		return encoded{}, err
+	}
+
+	return encodeRequest(p, req, longContext)
+}
+
 // Encode refuses a request this provider's route does not take, then returns the body SystemOne
 // sends, without the headers it adds. A blank model is the built in default. It does not validate.
 func (p Provider) Encode(req Request) ([]byte, error) {
