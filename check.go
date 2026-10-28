@@ -148,7 +148,7 @@ func checkScore(id string, levels int, answer *ScoreAnswer) *AnswerFault {
 		indexes = append(indexes, strconv.Itoa(i))
 	}
 
-	for _, key := range numericOrder(answer.Probabilities) {
+	for _, key := range NumericOrder(slices.Collect(maps.Keys(answer.Probabilities))) {
 		if !slices.Contains(indexes, key) {
 			return misfit(id, "question '%s' has p for '%s', which is not a level index from 0 to %d", printable(key), top)
 		}
@@ -163,8 +163,10 @@ func checkScore(id string, levels int, answer *ScoreAnswer) *AnswerFault {
 	return checkSpread(id, indexes, answer.Probabilities, answer.Confidence)
 }
 
-func numericOrder(probabilities map[string]float64) []string {
-	return slices.SortedFunc(maps.Keys(probabilities), func(left, right string) int {
+// NumericOrder returns a sorted copy of keys, comparing two level indexes by number and any other pair
+// by text. Check walks a score's probabilities in this order.
+func NumericOrder(keys []string) []string {
+	return slices.SortedFunc(slices.Values(keys), func(left, right string) int {
 		leftIndex, leftErr := strconv.Atoi(left)
 		rightIndex, rightErr := strconv.Atoi(right)
 

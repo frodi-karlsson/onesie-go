@@ -3,6 +3,7 @@ package onesie_test
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -782,6 +783,41 @@ func TestResultCheck(t *testing.T) {
 
 		if err := result.Check(onesie.Questions{urgent}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestNumericOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		keys []string
+		want []string
+	}{
+		{name: "should order level indexes by number", keys: []string{"10", "2", "0", "1"}, want: []string{"0", "1", "2", "10"}},
+		{name: "should order keys that are not numbers by text", keys: []string{"b", "10", "a"}, want: []string{"10", "a", "b"}},
+		{name: "should return nothing for no keys"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := onesie.NumericOrder(tc.keys); !slices.Equal(got, tc.want) {
+				t.Errorf("NumericOrder(%q) = %q, want %q", tc.keys, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("should leave the keys it was given in their order", func(t *testing.T) {
+		t.Parallel()
+
+		keys := []string{"2", "1"}
+		onesie.NumericOrder(keys)
+
+		if !slices.Equal(keys, []string{"2", "1"}) {
+			t.Errorf("keys = %q, want them unchanged", keys)
 		}
 	})
 }
