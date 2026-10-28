@@ -1,6 +1,7 @@
 package onesie
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -184,19 +185,30 @@ func checkScore(id string, levels int, answer *ScoreAnswer) *AnswerFault {
 	return checkSpread(id, indexes, answer.Probabilities, answer.Confidence)
 }
 
-// NumericOrder returns a sorted copy of keys, comparing two level indexes by number and any other pair
-// by text. Check walks a score's probabilities in this order.
+// NumericOrder returns a sorted copy of keys with level indexes first by number, then every other key
+// by text. A key counts as an index only when written as strconv.Itoa writes it, so 01 and +1 are text.
 func NumericOrder(keys []string) []string {
 	return slices.SortedFunc(slices.Values(keys), func(left, right string) int {
-		leftIndex, leftErr := strconv.Atoi(left)
-		rightIndex, rightErr := strconv.Atoi(right)
+		leftIndex, leftIsIndex := levelIndex(left)
+		rightIndex, rightIsIndex := levelIndex(right)
 
-		if leftErr != nil || rightErr != nil {
+		switch {
+		case leftIsIndex && rightIsIndex:
+			return cmp.Compare(leftIndex, rightIndex)
+		case leftIsIndex:
+			return -1
+		case rightIsIndex:
+			return 1
+		default:
 			return strings.Compare(left, right)
 		}
-
-		return leftIndex - rightIndex
 	})
+}
+
+func levelIndex(key string) (int, bool) {
+	index, err := strconv.Atoi(key)
+
+	return index, err == nil && strconv.Itoa(index) == key
 }
 
 func checkSpread(id string, keys []string, probabilities map[string]float64, confidence float64) *AnswerFault {
