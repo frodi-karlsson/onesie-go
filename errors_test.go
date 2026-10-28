@@ -871,7 +871,7 @@ func TestTimeoutError(t *testing.T) {
 
 		transports := map[string]*http.Transport{
 			"https": {TLSHandshakeTimeout: 20 * time.Millisecond},
-			"http":  {DialContext: (&net.Dialer{Timeout: time.Nanosecond}).DialContext},
+			"http":  {ResponseHeaderTimeout: 20 * time.Millisecond},
 		}
 
 		for scheme, transport := range transports {
