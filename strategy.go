@@ -21,11 +21,7 @@ func (p Provider) Refuse(model string, needs Needs) error {
 		model = p.defaultModel
 	}
 
-	return p.route(model).refuse(p.name, model, capabilities{
-		images:      needs.Images,
-		box:         needs.Box,
-		longContext: needs.LongContext,
-	})
+	return p.route(model).refuse(p.name, model, needs.capabilities())
 }
 
 // Needs is what a request asks of the model it is sent to.
@@ -123,15 +119,25 @@ func encodeBody(via route, needs capabilities, b jsonBody) (encoded, error) {
 }
 
 func requestNeeds(req Request) capabilities {
-	return capabilities{
-		images: len(req.Assets) > 0,
-		box: slices.ContainsFunc(req.Questions, func(named NamedQuestion) bool {
+	return req.Needs().capabilities()
+}
+
+// Needs is what req asks of the model, the value Provider.Refuse takes: images for assets, a box for
+// a box question, and long context when LongContext is set.
+func (req Request) Needs() Needs {
+	return Needs{
+		Images: len(req.Assets) > 0,
+		Box: slices.ContainsFunc(req.Questions, func(named NamedQuestion) bool {
 			_, isBox := named.Question.(Box)
 
 			return isBox
 		}),
-		longContext: req.LongContext,
+		LongContext: req.LongContext,
 	}
+}
+
+func (n Needs) capabilities() capabilities {
+	return capabilities{images: n.Images, box: n.Box, longContext: n.LongContext}
 }
 
 func scanMembers(members []member) bodyScan {

@@ -40,3 +40,41 @@ func TestScanMembers(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestNeeds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  Request
+		want Needs
+	}{
+		{name: "should need nothing of a text request", req: Request{Questions: Questions{{ID: "q", Question: Noul{}}}}},
+		{name: "should need images when the request holds assets", req: Request{Assets: Assets{"r": {}}}, want: Needs{Images: true}},
+		{
+			name: "should need a box for a box question",
+			req:  Request{Questions: Questions{{ID: "q", Question: Noul{}}, {ID: "b", Question: Box{}}}},
+			want: Needs{Box: true},
+		},
+		{name: "should need long context when the request asks for it", req: Request{LongContext: true}, want: Needs{LongContext: true}},
+		{
+			name: "should need everything at once",
+			req:  Request{Assets: Assets{"r": {}}, Questions: Questions{{ID: "b", Question: Box{}}}, LongContext: true},
+			want: Needs{Images: true, Box: true, LongContext: true},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.req.Needs(); got != tc.want {
+				t.Errorf("Needs() = %+v, want %+v", got, tc.want)
+			}
+
+			if got := requestNeeds(tc.req).asNeeds(); got != tc.want {
+				t.Errorf("requestNeeds() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}

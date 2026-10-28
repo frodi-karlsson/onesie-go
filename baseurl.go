@@ -38,22 +38,28 @@ func ValidateBaseURL(raw string) error {
 }
 
 func checkBaseURL(raw string, source BaseURLSource) *BaseURLError {
+	refused, _ := checkedBaseURL(raw, source)
+
+	return refused
+}
+
+func checkedBaseURL(raw string, source BaseURLSource) (*BaseURLError, *url.URL) {
 	// Checked before parsing, since url.Parse reads a password holding a slash as a host and a path.
 	if strings.ContainsAny(raw, "@?#") {
-		return newBaseURLError("", source, ruleUnsafe, userInfoKind(raw))
+		return newBaseURLError("", source, ruleUnsafe, userInfoKind(raw)), nil
 	}
 
 	parsed, err := url.Parse(raw)
 
 	switch {
 	case err != nil:
-		return newBaseURLError("", source, ruleUnparsed, nil)
+		return newBaseURLError("", source, ruleUnparsed, nil), nil
 	case parsed.Scheme != "http" && parsed.Scheme != "https":
-		return newBaseURLError(shownOf(parsed), source, ruleScheme, nil)
+		return newBaseURLError(shownOf(parsed), source, ruleScheme, nil), nil
 	case parsed.Host == "":
-		return newBaseURLError(shownOf(parsed), source, ruleNoHost, nil)
+		return newBaseURLError(shownOf(parsed), source, ruleNoHost, nil), nil
 	default:
-		return nil
+		return nil, parsed
 	}
 }
 
@@ -80,11 +86,35 @@ func newBaseURLError(shown string, source BaseURLSource, rule string, kind error
 	return refused
 }
 
+// RefuseInsecureBaseURL returns the refusal New gives raw without WithInsecureHTTP, or nil, with no
+// client. A URL ValidateBaseURL refuses gets that refusal instead.
+func RefuseInsecureBaseURL(raw string) error {
+	if refused := refuseInsecureBaseURL(raw, BaseURLSourceUnknown); refused != nil {
+		return refused
+	}
+
+	return nil
+}
+
+func refuseInsecureBaseURL(raw string, source BaseURLSource) *BaseURLError {
+	refused, parsed := checkedBaseURL(raw, source)
+	if refused != nil || !insecure(parsed) {
+		return refused
+	}
+
+	return newBaseURLError(shownOf(parsed), source, ruleInsecure, ErrInsecureBaseURL)
+}
+
 // InsecureBaseURL reports whether raw is plain http to a host other than this machine. Only
 // localhost and loopback addresses count as this machine.
 func InsecureBaseURL(raw string) bool {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "http" {
+
+	return err == nil && insecure(parsed)
+}
+
+func insecure(parsed *url.URL) bool {
+	if parsed.Scheme != "http" {
 		return false
 	}
 
@@ -98,15 +128,6 @@ func InsecureBaseURL(raw string) bool {
 	ip := net.ParseIP(host)
 
 	return ip == nil || !ip.IsLoopback()
-}
-
-func refuseInsecure(raw string, source BaseURLSource) *BaseURLError {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return newBaseURLError("", source, ruleInsecure, ErrInsecureBaseURL)
-	}
-
-	return newBaseURLError(shownOf(parsed), source, ruleInsecure, ErrInsecureBaseURL)
 }
 
 // BaseURLSource is one of the BaseURLFrom constants, or BaseURLSourceUnknown.

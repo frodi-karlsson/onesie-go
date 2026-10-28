@@ -134,3 +134,98 @@ func TestInsecureBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestRefuseInsecureBaseURL(t *testing.T) {
+	t.Parallel()
+
+	const insecure = "is plain http to a host other than this machine"
+
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr string
+		shown   string
+		rule    string
+		secret  string
+	}{
+		{name: "should accept https to another host", raw: "https://api.example"},
+		{name: "should accept plain http to localhost", raw: "http://localhost:8080/v1"},
+		{name: "should accept plain http to a loopback address", raw: "http://127.0.0.1"},
+		{
+			name: "should refuse plain http to another host", raw: "http://proxy.example",
+			wantErr: "onesie: base URL http://proxy.example " + insecure, shown: "http://proxy.example", rule: insecure,
+		},
+		{
+			name: "should show only the scheme, host and port", raw: "http://proxy.example:8080/v1/",
+			wantErr: "onesie: base URL http://proxy.example:8080 " + insecure, shown: "http://proxy.example:8080",
+			rule: insecure,
+		},
+		{
+			name: "should refuse localhost with a trailing dot", raw: "http://localhost.",
+			wantErr: "onesie: base URL http://localhost. " + insecure, shown: "http://localhost.", rule: insecure,
+		},
+		{
+			name: "should return the shape refusal for userinfo", raw: "http://user:secret@proxy.example",
+			wantErr: "onesie: the base URL must not hold @, ? or #", rule: "must not hold @, ? or #", secret: "secret",
+		},
+		{
+			name: "should return the shape refusal for a query", raw: "http://proxy.example/?key=sk-secret",
+			wantErr: "onesie: the base URL must not hold @, ? or #", rule: "must not hold @, ? or #", secret: "sk-secret",
+		},
+		{
+			name: "should return the shape refusal for a fragment", raw: "http://proxy.example/#sk-secret",
+			wantErr: "onesie: the base URL must not hold @, ? or #", rule: "must not hold @, ? or #", secret: "sk-secret",
+		},
+		{
+			name: "should return the shape refusal for another scheme", raw: "ftp://proxy.example",
+			wantErr: "onesie: base URL ftp://proxy.example is not an http or https URL", shown: "ftp://proxy.example",
+			rule: "is not an http or https URL",
+		},
+		{
+			name: "should return the shape refusal for a URL that does not parse", raw: "http://[::1",
+			wantErr: "onesie: the base URL does not parse", rule: "does not parse",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := onesie.RefuseInsecureBaseURL(tc.raw)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				return
+			}
+
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+
+			var refused *onesie.BaseURLError
+			if !errors.As(err, &refused) {
+				t.Fatalf("err = %T, want a *BaseURLError", err)
+			}
+
+			if refused.Shown != tc.shown || refused.Rule() != tc.rule || refused.Source != onesie.BaseURLSourceUnknown {
+				t.Errorf("Shown, Rule, Source = %q, %q, %v, want %q, %q, unknown",
+					refused.Shown, refused.Rule(), refused.Source, tc.shown, tc.rule)
+			}
+
+			if strings.ContainsAny(refused.Shown, "@?#") || (tc.secret != "" && strings.Contains(err.Error(), tc.secret)) {
+				t.Errorf("the refusal shows more than the scheme and host: %v", err)
+			}
+
+			wantInsecure := tc.rule == insecure
+			if got := errors.Is(err, onesie.ErrInsecureBaseURL); got != wantInsecure {
+				t.Errorf("errors.Is(err, ErrInsecureBaseURL) = %v, want %v", got, wantInsecure)
+			}
+
+			if !errors.Is(err, onesie.ErrValidation) {
+				t.Errorf("err does not match ErrValidation")
+			}
+		})
+	}
+}
