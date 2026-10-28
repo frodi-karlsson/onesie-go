@@ -539,6 +539,14 @@ func TestNewAPIError(t *testing.T) {
 			name: "should unwrap a forwarded body on openrouter", via: openrouter,
 			body: `{"error":{"message":"HTTP 400: {\"detail\":\"x\"}"}}`, message: "onesie: 400 x",
 		},
+		{
+			name: "should unwrap a forwarded body with no space after the status", via: openrouter,
+			body: `{"error":{"message":"HTTP 422:{\"detail\":\"x\"}"}}`, message: "onesie: 400 x",
+		},
+		{
+			name: "should leave a forwarded status that is not a number alone", via: openrouter,
+			body: `{"error":{"message":"HTTP abc: {\"detail\":\"x\"}"}}`, message: `onesie: 400 HTTP abc: {"detail":"x"}`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

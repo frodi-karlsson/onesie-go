@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -155,11 +156,14 @@ func openRouterMessage(body any) (string, bool) {
 
 func forwardedText(text string) (string, bool) {
 	// OpenRouter forwards a TypeSafe error as the text HTTP 400: followed by TypeSafe's body.
-	if rest, ok := strings.CutPrefix(text, "HTTP "); ok && len(rest) > 5 && rest[3] == ':' {
-		return strings.TrimSpace(rest[4:]), true
+	rest, isForwarded := strings.CutPrefix(text, "HTTP ")
+	code, body, hasColon := strings.Cut(rest, ":")
+
+	if status, err := strconv.Atoi(code); !isForwarded || !hasColon || err != nil || status < 100 || status > 599 {
+		return "", false
 	}
 
-	return "", false
+	return strings.TrimSpace(body), true
 }
 
 func firstIssue(text string) string {
