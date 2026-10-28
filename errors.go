@@ -80,6 +80,9 @@ var (
 	// ErrInsecureBaseURL matches the BaseURLError New returns for plain http to a host other than
 	// this machine.
 	ErrInsecureBaseURL = errors.New("insecure base URL")
+	// ErrBaseURLUserInfo matches the BaseURLError for a base URL holding @, where a key pasted into
+	// the URL would sit.
+	ErrBaseURLUserInfo = errors.New("base URL holds userinfo")
 )
 
 // NewAPIError builds an APIError from a status and a message, for fakes and mocks. The message
