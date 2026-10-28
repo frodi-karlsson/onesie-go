@@ -1868,24 +1868,40 @@ func TestClientSystemOne(t *testing.T) {
 		t.Run("should abort while waiting to retry", func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}))
-			defer server.Close()
+			synctest.Test(t, func(t *testing.T) {
+				transport := &scriptedTransport{replies: []scriptedReply{{status: http.StatusServiceUnavailable}}}
 
-			ctx, cancel := context.WithCancel(t.Context())
+				client, err := onesie.New(
+					onesie.WithEnv(func(string) (string, bool) { return "", false }),
+					onesie.WithAPIKey("sk-test"),
+					onesie.WithBaseURL("https://api.example"),
+					onesie.WithRandom(func() float64 { return 0 }),
+					onesie.WithHTTPClient(&http.Client{Transport: transport}),
+				)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
 
-			// The mock clock returns immediately, so cancel before the call to make the wait the
-			// first thing that observes the cancellation.
-			cancel()
+				ctx, cancel := context.WithCancel(t.Context())
+				failed := make(chan error, 1)
+				started := time.Now()
 
-			client, _ := newTestClient(t, server.URL)
+				go func() {
+					_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+					failed <- err
+				}()
 
-			_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+				synctest.Wait()
+				cancel()
 
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("error got %v, want context.Canceled", err)
-			}
+				if err := <-failed; !errors.Is(err, context.Canceled) {
+					t.Errorf("error got %v, want context.Canceled", err)
+				}
+
+				if elapsed := time.Since(started); elapsed != 0 || transport.calls() != 1 {
+					t.Errorf("returned after %v and %d calls, want at once during the first backoff", elapsed, transport.calls())
+				}
+			})
 		})
 
 		t.Run("should honour a total timeout across retries", func(t *testing.T) {
