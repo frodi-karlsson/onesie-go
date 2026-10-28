@@ -105,12 +105,12 @@ func refuseInsecureBaseURL(raw string, source BaseURLSource) *BaseURLError {
 	return newBaseURLError(shownOf(parsed), source, ruleInsecure, ErrInsecureBaseURL)
 }
 
-// InsecureBaseURL reports whether raw is plain http to a host other than this machine. Only
-// localhost and loopback addresses count as this machine.
+// InsecureBaseURL reports whether raw passes ValidateBaseURL and is plain http to a host other than
+// this machine. Only localhost and loopback addresses count as this machine.
 func InsecureBaseURL(raw string) bool {
-	parsed, err := url.Parse(raw)
+	refused, parsed := checkedBaseURL(raw, BaseURLSourceUnknown)
 
-	return err == nil && insecure(parsed)
+	return refused == nil && insecure(parsed)
 }
 
 func insecure(parsed *url.URL) bool {
