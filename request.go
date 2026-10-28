@@ -73,7 +73,7 @@ func checkBoxes(req Request) error {
 	}
 
 	for _, named := range req.Questions {
-		if _, isBox := named.Question.(Box); isBox {
+		if _, isBox := dereferenced(named.Question).(Box); isBox {
 			return &ValidationError{
 				Question: named.ID,
 				Message:  fmt.Sprintf("box question '%s' needs an image in the request", printable(named.ID)),

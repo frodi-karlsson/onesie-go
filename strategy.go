@@ -134,7 +134,7 @@ func (req Request) Needs() Needs {
 
 func asksBox(questions Questions) bool {
 	return slices.ContainsFunc(questions, func(named NamedQuestion) bool {
-		_, isBox := named.Question.(Box)
+		_, isBox := dereferenced(named.Question).(Box)
 
 		return isBox
 	})

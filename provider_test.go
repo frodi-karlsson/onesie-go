@@ -523,6 +523,11 @@ func TestProviderEncode(t *testing.T) {
 			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do",
 		},
 		{
+			name: "should refuse a pointer to a box question on cloudflare", provider: onesie.Cloudflare(),
+			req:     photo("clef-flash", onesie.Questions{{ID: "mug", Question: &onesie.Box{Instructions: "the mug in `photo`"}}}),
+			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do",
+		},
+		{
 			name: "should refuse a valid image on levanto", provider: onesie.Levanto(), req: photo("", oneNoul()),
 			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do",
 		},

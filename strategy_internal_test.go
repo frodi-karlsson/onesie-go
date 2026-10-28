@@ -59,6 +59,15 @@ func TestRequestNeeds(t *testing.T) {
 			req:  Request{Questions: Questions{{ID: "q", Question: Noul{}}, {ID: "b", Question: Box{}}}},
 			want: Needs{Box: true},
 		},
+		{
+			name: "should need a box for a pointer to a box question",
+			req:  Request{Questions: Questions{{ID: "b", Question: &Box{}}}},
+			want: Needs{Box: true},
+		},
+		{
+			name: "should need nothing for a nil pointer to a box question",
+			req:  Request{Questions: Questions{{ID: "b", Question: (*Box)(nil)}}},
+		},
 		{name: "should need long context when the request asks for it", req: Request{LongContext: true}, want: Needs{LongContext: true}},
 		{
 			name: "should need everything at once",
