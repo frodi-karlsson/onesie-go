@@ -2120,6 +2120,21 @@ func TestClientListModels(t *testing.T) {
 			t.Errorf("error got %v, want ErrResponse", err)
 		}
 	})
+
+	t.Run("should send no long context header on a models listing", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: `{"models":[]}`}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		if _, err := client.ListModels(t.Context(), onesie.WithLongContext()); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "" {
+			t.Errorf("long context header = %q, want none on a GET that sends no question", got)
+		}
+	})
 }
 
 func TestClientVerifyKey(t *testing.T) {

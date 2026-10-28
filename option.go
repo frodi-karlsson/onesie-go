@@ -343,7 +343,6 @@ type requestConfig struct {
 	retry          RetryPolicy
 	header         http.Header
 	longContext    bool
-	images         bool
 }
 
 func applyOptions(cfg requestConfig, opts []RequestOption) (requestConfig, error) {

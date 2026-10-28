@@ -233,12 +233,11 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	cfg.longContext, cfg.images = sent.needs.longContext, sent.images
 	result := &Result{}
 
 	res, err := c.do(ctx, cfg, call{
 		method: http.MethodPost, path: sent.via.path, payload: sent.body, out: result, decode: sent.via.decode,
-		via: sent.via, needs: sent.needs.asNeeds(),
+		via: sent.via, needs: sent.needs.asNeeds(), imagesHeader: sent.images,
 	})
 	if err != nil {
 		return nil, withUsage(err, &result.Usage)
@@ -271,13 +270,14 @@ func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
 }
 
 type call struct {
-	method  string
-	path    string
-	payload []byte
-	out     any
-	decode  func([]byte) ([]byte, error)
-	via     route
-	needs   Needs
+	method       string
+	path         string
+	payload      []byte
+	out          any
+	decode       func([]byte) ([]byte, error)
+	via          route
+	needs        Needs
+	imagesHeader bool
 }
 
 func withUsage(err error, usage *Usage) error {
@@ -337,11 +337,9 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	cfg.longContext, cfg.images = sent.needs.longContext, sent.images
-
 	res, err := c.do(ctx, cfg, call{
 		method: http.MethodPost, path: sent.via.path, payload: sent.body, decode: identity,
-		via: sent.via, needs: sent.needs.asNeeds(),
+		via: sent.via, needs: sent.needs.asNeeds(), imagesHeader: sent.images,
 	})
 	if err != nil {
 		return nil, err

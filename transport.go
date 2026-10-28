@@ -47,7 +47,7 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 	for attempt := 0; ; attempt++ {
 		retriesLeft := cfg.retry.MaxRetries - attempt
 
-		res, err := c.attempt(ctx, tag, attempt, req.method, target, payload, cfg)
+		res, err := c.attempt(ctx, tag, attempt, target, payload, cfg, req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, interrupted(ctx, cfg.totalTimeout)
@@ -118,9 +118,10 @@ func (c *Client) attempt(
 	ctx context.Context,
 	tag string,
 	attempt int,
-	method, target string,
+	target string,
 	payload []byte,
 	cfg requestConfig,
+	sent call,
 ) (*rawResponse, error) {
 	actx, cancel := context.WithTimeout(ctx, cfg.attemptTimeout)
 	defer cancel()
@@ -131,12 +132,12 @@ func (c *Client) attempt(
 		reader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequestWithContext(actx, method, target, reader)
+	req, err := http.NewRequestWithContext(actx, sent.method, target, reader)
 	if err != nil {
 		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error()}
 	}
 
-	c.setHeaders(req, cfg, attempt, payload != nil)
+	c.setHeaders(req, cfg.header, sent, attempt, payload != nil)
 
 	if c.logger.Enabled(actx, slog.LevelDebug) {
 		c.logger.DebugContext(actx, "onesie request",
@@ -214,19 +215,19 @@ type Attempt struct {
 	Timeout  time.Duration
 }
 
-func (c *Client) setHeaders(req *http.Request, cfg requestConfig, attempt int, hasBody bool) {
+func (c *Client) setHeaders(req *http.Request, header http.Header, sent call, attempt int, hasBody bool) {
 	// Caller headers first, so the ones set below cannot be clobbered.
-	for name, values := range cfg.header {
+	for name, values := range header {
 		for _, value := range values {
 			req.Header.Add(name, value)
 		}
 	}
 
-	if cfg.images {
+	if sent.imagesHeader {
 		req.Header.Set(HeaderImages, "true")
 	}
 
-	if cfg.longContext {
+	if sent.needs.LongContext {
 		req.Header.Set(HeaderLongContext, "true")
 	}
 
