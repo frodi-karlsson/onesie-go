@@ -12,12 +12,13 @@ func TestClientExchange(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		maxBytes int64
-		reply    func(*http.Request) (*http.Response, error)
-		status   int
-		body     string
-		wantErr  string
+		name      string
+		maxBytes  int64
+		reply     func(*http.Request) (*http.Response, error)
+		status    int
+		body      string
+		oversized bool
+		wantErr   string
 	}{
 		{
 			name: "should return the status, header and body the server sent", maxBytes: 64, status: http.StatusTeapot, body: `{"a":1}`,
@@ -26,11 +27,10 @@ func TestClientExchange(t *testing.T) {
 			},
 		},
 		{
-			name: "should refuse a body over the limit", maxBytes: 3,
+			name: "should keep the status of a body over the limit and drop the body", maxBytes: 3, status: http.StatusUnauthorized, oversized: true,
 			reply: func(req *http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"a":1}`)), Request: req}, nil
+				return &http.Response{StatusCode: http.StatusUnauthorized, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"a":1}`)), Request: req}, nil
 			},
-			wantErr: "onesie: connection error: response body exceeded 3 bytes",
 		},
 		{
 			name: "should report a transport failure as a connection error", maxBytes: 64,
@@ -61,7 +61,7 @@ func TestClientExchange(t *testing.T) {
 				return
 			}
 
-			if err != nil || got.status != tc.status || string(got.body) != tc.body {
+			if err != nil || got.status != tc.status || string(got.body) != tc.body || got.oversized != tc.oversized {
 				t.Errorf("exchange = %+v, %v, want %d and %s", got, err, tc.status, tc.body)
 			}
 		})

@@ -27,16 +27,16 @@ func (b jsonBody) with(members []member) jsonBody {
 	return jsonBody{members: members, object: true, raw: b.raw, changed: true}
 }
 
+func encodeAsIs(b jsonBody) ([]byte, error) {
+	return b.bytes()
+}
+
 func (b jsonBody) bytes() ([]byte, error) {
 	if !b.object || !b.changed {
 		return b.raw, nil
 	}
 
 	return writeMembers(b.members)
-}
-
-func encodeAsIs(b jsonBody) ([]byte, error) {
-	return b.bytes()
 }
 
 func readMembers(body []byte) ([]member, error) {

@@ -374,7 +374,7 @@ func TestCapabilityError(t *testing.T) {
 		}
 	})
 
-	t.Run("should still be a ValidationError", func(t *testing.T) {
+	t.Run("should be a ValidationError as well", func(t *testing.T) {
 		t.Parallel()
 
 		err := onesie.Levanto().Refuse("", onesie.Needs{Images: true})
@@ -520,6 +520,11 @@ func TestProviderEncode(t *testing.T) {
 		{
 			name: "should refuse a box question on cloudflare with the error Refuse gives", provider: onesie.Cloudflare(),
 			req:     photo("clef-flash", box),
+			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do",
+		},
+		{
+			name: "should refuse a pointer to a box question on cloudflare", provider: onesie.Cloudflare(),
+			req:     photo("clef-flash", onesie.Questions{{ID: "mug", Question: &onesie.Box{Instructions: "the mug in `photo`"}}}),
 			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do",
 		},
 		{

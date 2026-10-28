@@ -10,8 +10,8 @@ import (
 	"unicode/utf8"
 )
 
-// PrepareRaw prepares body as SystemOneRaw sends it, refusing what a send refuses. Repeated keys
-// resolve to the last, a blank model to defaultModel, and WithLongContext to long_context.
+// PrepareRaw prepares body as SystemOneRaw sends it, refusing what a send refuses and a model that is not
+// a string. Repeated keys resolve to the last, a blank model to defaultModel and WithLongContext to long_context.
 func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...RequestOption) (*PreparedBody, error) {
 	if err := p.check(); err != nil {
 		return nil, err
@@ -36,6 +36,10 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 
 	model := modelOr(defaultModel, p.defaultModel)
 	b := fillModel(lastWins(parseBody(raw)), model)
+
+	if err := checkModel(b.members); err != nil {
+		return nil, err
+	}
 
 	bodyLongContext, err := longContextOf(b.members)
 	if err != nil {
@@ -92,6 +96,16 @@ func checkJSON(body []byte) error {
 	_, err := compactBody(body)
 
 	return err
+}
+
+func checkModel(members []member) error {
+	for _, m := range members {
+		if kind := rawKind(m.value); m.name == "model" && kind != kindString {
+			return &ValidationError{Message: "model must be a string, got " + kind.phrase()}
+		}
+	}
+
+	return nil
 }
 
 // PreparedBody is a raw body PrepareRaw checked and encoded for one provider, which SendPrepared

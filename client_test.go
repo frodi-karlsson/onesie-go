@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/frodi-karlsson/onesie-go"
@@ -1441,25 +1442,93 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
-	t.Run("should cap an oversized response body", func(t *testing.T) {
+	t.Run("should classify an oversized response body by its status", func(t *testing.T) {
 		t.Parallel()
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			for range 200 {
-				_, _ = io.WriteString(w, `{"padding":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
-			}
-		}))
-		defer server.Close()
+		const note = ", and the response body is over the 256 byte limit, which WithMaxResponseBytes raises"
 
-		policy := onesie.DefaultRetryPolicy()
-		policy.MaxRetries = 0
+		oversized := "<html>" + strings.Repeat("a", 300) + "</html>"
 
-		client, _ := newTestClient(t, server.URL, onesie.WithMaxResponseBytes(256), onesie.WithRetry(policy))
+		tests := []struct {
+			name      string
+			status    int
+			header    http.Header
+			wantCalls int
+			wantSlept []time.Duration
+			wantErr   string
+			sentinel  error
+			tooLong   bool
+		}{
+			{
+				name: "should keep a 401 an authentication error", status: http.StatusUnauthorized, wantCalls: 1,
+				wantErr: "onesie: 401 Unauthorized" + note, sentinel: onesie.ErrAuthentication,
+			},
+			{
+				name: "should retry a retryable status", status: http.StatusServiceUnavailable, wantCalls: 3,
+				wantSlept: []time.Duration{500 * time.Millisecond, time.Second},
+				wantErr:   "onesie: 503 Service Unavailable" + note, sentinel: onesie.ErrServer,
+			},
+			{
+				name: "should wait the Retry-After of an oversized 429", status: http.StatusTooManyRequests,
+				header: http.Header{"Retry-After": {"3"}}, wantCalls: 3, wantSlept: []time.Duration{3 * time.Second, 3 * time.Second},
+				wantErr: "onesie: 429 Too Many Requests" + note, sentinel: onesie.ErrRateLimit,
+			},
+			{
+				name: "should give up on an oversized 429 whose Retry-After passes the cap", status: http.StatusTooManyRequests,
+				header: http.Header{"Retry-After": {"3600"}}, wantCalls: 1, sentinel: onesie.ErrRateLimit, tooLong: true,
+				wantErr: "onesie: status 429, the server asked to retry after 1h0m0s, above the 1m0s cap",
+			},
+			{
+				name: "should keep the redirect message of an oversized redirect", status: http.StatusFound,
+				header: http.Header{"Location": {"https://elsewhere.example/v1"}}, wantCalls: 1,
+				wantErr: "onesie: 302 redirect to https://elsewhere.example, which onesie does not follow, since the request carries " +
+					"the API key. Point the base URL at where the API is" + note,
+			},
+			{
+				name: "should refuse a 2xx as a response error without retrying", status: http.StatusOK, wantCalls: 1,
+				wantErr:  "onesie: 200 response could not be used: the response body is over the 256 byte limit, which WithMaxResponseBytes raises",
+				sentinel: onesie.ErrResponse,
+			},
+		}
 
-		_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
 
-		if !errors.Is(err, onesie.ErrConnection) {
-			t.Errorf("error got %v, want ErrConnection", err)
+				header := tc.header.Clone()
+				if header == nil {
+					header = http.Header{}
+				}
+
+				header.Set("X-TypeSafe-Request-Id", "req_big")
+
+				client, clock, transport := newScriptedClient(t, []scriptedReply{{status: tc.status, header: header, body: oversized}},
+					onesie.WithMaxResponseBytes(256))
+
+				_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+
+				if err == nil || err.Error() != tc.wantErr || (tc.sentinel != nil && !errors.Is(err, tc.sentinel)) || errors.Is(err, onesie.ErrConnection) {
+					t.Errorf("error = %v, want %q matching %v", err, tc.wantErr, tc.sentinel)
+				}
+
+				if transport.calls() != tc.wantCalls {
+					t.Errorf("call count got %d, want %d, %s", transport.calls(), tc.wantCalls, transport.attempts())
+				}
+
+				if slept := clock.Slept(); !slices.Equal(slept, tc.wantSlept) {
+					t.Errorf("slept %v, want %v", slept, tc.wantSlept)
+				}
+
+				var tooLong *onesie.RetryAfterError
+				if errors.As(err, &tooLong) != tc.tooLong {
+					t.Errorf("error = %T %v, want a RetryAfterError: %v", err, err, tc.tooLong)
+				}
+
+				var apiErr *onesie.APIError
+				if tc.status != http.StatusOK && (!errors.As(err, &apiErr) || apiErr.RequestID != "req_big") {
+					t.Errorf("request id = %q, want req_big", apiErr.RequestID)
+				}
+			})
 		}
 	})
 
@@ -1710,140 +1779,160 @@ func TestClientSystemOne(t *testing.T) {
 	t.Run("should stop a request that is cancelled or times out", func(t *testing.T) {
 		t.Parallel()
 
-		blockingServer := func(t *testing.T) *httptest.Server {
-			t.Helper()
-
-			release := make(chan struct{})
-
-			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-				<-release
-			}))
-
-			t.Cleanup(func() {
-				close(release)
-				server.Close()
-			})
-
-			return server
-		}
-
 		t.Run("should return the context error when the caller cancels", func(t *testing.T) {
 			t.Parallel()
 
-			client, _ := newTestClient(t, blockingServer(t).URL)
+			synctest.Test(t, func(t *testing.T) {
+				client, _ := newTestClient(t, "https://api.example",
+					onesie.WithHTTPClient(&http.Client{Transport: &stallingTransport{}}))
 
-			ctx, cancel := context.WithCancel(t.Context())
-			go func() {
-				time.Sleep(20 * time.Millisecond)
+				ctx, cancel := context.WithCancel(t.Context())
+				failed := make(chan error, 1)
+
+				go func() {
+					_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+					failed <- err
+				}()
+
+				synctest.Wait()
 				cancel()
-			}()
 
-			_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+				err := <-failed
 
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("error got %v, want context.Canceled", err)
-			}
+				if !errors.Is(err, context.Canceled) {
+					t.Errorf("error got %v, want context.Canceled", err)
+				}
 
-			var connection *onesie.ConnectionError
-			if !errors.As(err, &connection) || err.Error() != "onesie: connection error: context canceled" {
-				t.Errorf("error = %v, want a ConnectionError for the cancellation", err)
-			}
+				var connection *onesie.ConnectionError
+				if !errors.As(err, &connection) || err.Error() != "onesie: connection error: context canceled" {
+					t.Errorf("error = %v, want a ConnectionError for the cancellation", err)
+				}
+			})
 		})
 
 		t.Run("should report a timeout as a connection error", func(t *testing.T) {
 			t.Parallel()
 
-			policy := onesie.DefaultRetryPolicy()
-			policy.MaxRetries = 0
+			synctest.Test(t, func(t *testing.T) {
+				policy := onesie.DefaultRetryPolicy()
+				policy.MaxRetries = 0
 
-			client, _ := newTestClient(t, blockingServer(t).URL, onesie.WithRetry(policy))
+				client, _ := newTestClient(t, "https://api.example", onesie.WithRetry(policy),
+					onesie.WithHTTPClient(&http.Client{Transport: &stallingTransport{}}))
 
-			_, err := client.SystemOne(
-				t.Context(),
-				onesie.Request{State: "x", Questions: oneNoul()},
-				onesie.WithRequestAttemptTimeout(30*time.Millisecond),
-			)
+				_, err := client.SystemOne(
+					t.Context(),
+					onesie.Request{State: "x", Questions: oneNoul()},
+					onesie.WithRequestAttemptTimeout(30*time.Second),
+				)
 
-			if !errors.Is(err, onesie.ErrTimeout) {
-				t.Fatalf("error got %v, want ErrTimeout", err)
-			}
+				if !errors.Is(err, onesie.ErrTimeout) {
+					t.Fatalf("error got %v, want ErrTimeout", err)
+				}
 
-			if !errors.Is(err, onesie.ErrConnection) {
-				t.Errorf("a timeout should also match ErrConnection")
-			}
+				if !errors.Is(err, onesie.ErrConnection) {
+					t.Errorf("a timeout should also match ErrConnection")
+				}
+			})
 		})
 
-		t.Run("should give each attempt a fresh timeout rather than one budget", func(t *testing.T) {
+		t.Run("should give each attempt a fresh timeout and not one budget", func(t *testing.T) {
 			t.Parallel()
 
-			var calls atomic.Int32
+			synctest.Test(t, func(t *testing.T) {
+				stalling := &stallingTransport{}
+				client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: stalling}))
 
-			// Counting in the transport, not a server handler, so a slow runner cannot let an
-			// attempt time out before its request is counted.
-			stalling := &http.Client{Transport: stallingTransport{calls: &calls}}
+				started := time.Now()
 
-			client, _ := newTestClient(t, "https://api.example.com", onesie.WithHTTPClient(stalling))
+				_, err := client.SystemOne(
+					t.Context(),
+					onesie.Request{State: "x", Questions: oneNoul()},
+					onesie.WithRequestAttemptTimeout(30*time.Second),
+				)
 
-			_, err := client.SystemOne(
-				t.Context(),
-				onesie.Request{State: "x", Questions: oneNoul()},
-				onesie.WithRequestAttemptTimeout(30*time.Millisecond),
-			)
+				if !errors.Is(err, onesie.ErrTimeout) {
+					t.Fatalf("error got %v, want ErrTimeout", err)
+				}
 
-			if !errors.Is(err, onesie.ErrTimeout) {
-				t.Fatalf("error got %v, want ErrTimeout", err)
-			}
+				if calls := stalling.calls.Load(); calls != 3 {
+					t.Errorf("call count got %d, want 3", calls)
+				}
 
-			// Three attempts each got their own deadline, proving the budget is not shared.
-			if calls.Load() != 3 {
-				t.Errorf("call count got %d, want 3", calls.Load())
-			}
+				if elapsed := time.Since(started); elapsed != 90*time.Second {
+					t.Errorf("elapsed = %v, want three whole 30s attempts", elapsed)
+				}
+			})
 		})
 
 		t.Run("should abort while waiting to retry", func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}))
-			defer server.Close()
+			synctest.Test(t, func(t *testing.T) {
+				transport := &scriptedTransport{replies: []scriptedReply{{status: http.StatusServiceUnavailable}}}
 
-			ctx, cancel := context.WithCancel(t.Context())
+				client, err := onesie.New(
+					onesie.WithEnv(func(string) (string, bool) { return "", false }),
+					onesie.WithAPIKey("sk-test"),
+					onesie.WithBaseURL("https://api.example"),
+					onesie.WithRandom(func() float64 { return 0 }),
+					onesie.WithHTTPClient(&http.Client{Transport: transport}),
+				)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
 
-			// The mock clock returns immediately, so cancel before the call to make the wait the
-			// first thing that observes the cancellation.
-			cancel()
+				ctx, cancel := context.WithCancel(t.Context())
+				failed := make(chan error, 1)
+				started := time.Now()
 
-			client, _ := newTestClient(t, server.URL)
+				go func() {
+					_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+					failed <- err
+				}()
 
-			_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+				synctest.Wait()
+				cancel()
 
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("error got %v, want context.Canceled", err)
-			}
+				if err := <-failed; !errors.Is(err, context.Canceled) {
+					t.Errorf("error got %v, want context.Canceled", err)
+				}
+
+				if elapsed := time.Since(started); elapsed != 0 || transport.calls() != 1 {
+					t.Errorf("returned after %v and %d calls, want at once during the first backoff", elapsed, transport.calls())
+				}
+			})
 		})
 
 		t.Run("should honour a total timeout across retries", func(t *testing.T) {
 			t.Parallel()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				time.Sleep(20 * time.Millisecond)
-				w.WriteHeader(http.StatusServiceUnavailable)
-			}))
-			defer server.Close()
+			synctest.Test(t, func(t *testing.T) {
+				stalling := &stallingTransport{unavailableFirst: true}
+				client, _ := newTestClient(t, "https://api.example", onesie.WithTotalTimeout(5*time.Second),
+					onesie.WithHTTPClient(&http.Client{Transport: stalling}))
 
-			client, _ := newTestClient(t, server.URL, onesie.WithTotalTimeout(30*time.Millisecond))
+				started := time.Now()
 
-			_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+				_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
 
-			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Errorf("error got %v, want context.DeadlineExceeded", err)
-			}
+				if elapsed := time.Since(started); elapsed != 5*time.Second {
+					t.Errorf("elapsed = %v, want the 5s total", elapsed)
+				}
 
-			var timeout *onesie.TimeoutError
-			if !errors.As(err, &timeout) || timeout.Timeout != 30*time.Millisecond || !errors.Is(err, onesie.ErrTimeout) {
-				t.Errorf("error = %v, want a TimeoutError naming the 30ms total", err)
-			}
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("error got %v, want context.DeadlineExceeded", err)
+				}
+
+				var timeout *onesie.TimeoutError
+				if !errors.As(err, &timeout) || timeout.Timeout != 5*time.Second || !errors.Is(err, onesie.ErrTimeout) {
+					t.Errorf("error = %v, want a TimeoutError naming the 5s total", err)
+				}
+
+				if calls := stalling.calls.Load(); calls != 2 {
+					t.Errorf("call count got %d, want a retry after the 503", calls)
+				}
+			})
 		})
 	})
 
@@ -2693,54 +2782,56 @@ func TestWithAttemptObserver(t *testing.T) {
 		cancels bool
 	}{
 		{name: "should observe a cancelled call as the ConnectionError it returns", cancels: true},
-		{name: "should observe a call past its total timeout as the TimeoutError it returns", opts: []onesie.Option{onesie.WithTotalTimeout(50 * time.Millisecond)}},
+		{name: "should observe a call past its total timeout as the TimeoutError it returns", opts: []onesie.Option{onesie.WithTotalTimeout(5 * time.Second)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
+			synctest.Test(t, func(t *testing.T) {
+				var (
+					mu       sync.Mutex
+					observed []error
+				)
 
-			release := make(chan struct{})
+				opts := append([]onesie.Option{
+					onesie.WithHTTPClient(&http.Client{Transport: &stallingTransport{}}),
+					onesie.WithAttemptObserver(func(a onesie.Attempt) {
+						mu.Lock()
+						defer mu.Unlock()
 
-			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+						observed = append(observed, a.Err)
+					}),
+				}, tc.opts...)
+				client, _ := newTestClient(t, "https://api.example", opts...)
+
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+
+				failed := make(chan error, 1)
+
+				go func() {
+					_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
+					failed <- err
+				}()
+
 				if tc.cancels {
+					synctest.Wait()
 					cancel()
 				}
 
-				select {
-				case <-r.Context().Done():
-				case <-release:
-				}
-			}))
-			defer server.Close()
-			defer close(release)
+				err := <-failed
 
-			var (
-				mu       sync.Mutex
-				observed []error
-			)
-
-			opts := append([]onesie.Option{onesie.WithAttemptObserver(func(a onesie.Attempt) {
 				mu.Lock()
 				defer mu.Unlock()
 
-				observed = append(observed, a.Err)
-			})}, tc.opts...)
-			client, _ := newTestClient(t, server.URL, opts...)
+				if len(observed) != 1 || observed[0] == nil || err == nil {
+					t.Fatalf("observed = %v, error = %v, want one observed failure", observed, err)
+				}
 
-			_, err := client.SystemOne(ctx, onesie.Request{State: "x", Questions: oneNoul()})
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			if len(observed) != 1 || observed[0] == nil || err == nil {
-				t.Fatalf("observed = %v, error = %v, want one observed failure", observed, err)
-			}
-
-			if fmt.Sprintf("%T %v", observed[0], observed[0]) != fmt.Sprintf("%T %v", err, err) {
-				t.Errorf("observed %T %v, want the returned %T %v", observed[0], observed[0], err, err)
-			}
+				if fmt.Sprintf("%T %v", observed[0], observed[0]) != fmt.Sprintf("%T %v", err, err) {
+					t.Errorf("observed %T %v, want the returned %T %v", observed[0], observed[0], err, err)
+				}
+			})
 		})
 	}
 
@@ -3124,29 +3215,42 @@ func TestClientSystemOneRaw(t *testing.T) {
 		})
 	}
 
-	for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter(), onesie.Berget(), onesie.Levanto()} {
-		for _, body := range []string{"", "<!DOCTYPE html><html></html>"} {
-			t.Run("should return a 200 body it cannot read unchanged on "+provider.Name()+": "+body, func(t *testing.T) {
+	for _, provider := range onesie.Providers() {
+		for _, body := range []string{"", " \n ", "<!DOCTYPE html><html></html>"} {
+			t.Run(fmt.Sprintf("should refuse a 200 body that is not JSON without retrying on %s: %q", provider.Name(), body), func(t *testing.T) {
 				t.Parallel()
 
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					_, _ = io.WriteString(w, body)
-				}))
-				defer server.Close()
+				client, _, transport := newScriptedClient(t, []scriptedReply{{status: http.StatusOK, body: body}},
+					onesie.WithProvider(provider))
 
-				client, _ := newTestClient(t, server.URL, onesie.WithProvider(provider))
+				got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{}}`))
 
-				got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","model":"m","questions":{}}`))
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
+				var respErr *onesie.ResponseError
+				if !errors.As(err, &respErr) || respErr.Status != http.StatusOK || got != nil {
+					t.Fatalf("SystemOneRaw = %q, %v, want a 200 ResponseError", got, err)
 				}
 
-				if string(got) != body {
-					t.Errorf("body = %q, want %q", got, body)
+				if transport.calls() != 1 {
+					t.Errorf("call count got %d, want 1", transport.calls())
 				}
 			})
 		}
 	}
+
+	t.Run("should refuse a JSON body the cloudflare route cannot unwrap", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: `{"success":true}`}
+		client, _ := newTestClient(t, "https://api.example",
+			onesie.WithProvider(onesie.Cloudflare()), onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{}}`))
+
+		var respErr *onesie.ResponseError
+		if !errors.As(err, &respErr) || respErr.Status != http.StatusOK || err.Error() != "onesie: 200 response could not be used: the cloudflare response has no result object, since its result is missing or null" {
+			t.Fatalf("error = %v, want a 200 ResponseError saying the result is missing", err)
+		}
+	})
 
 	withAssets := json.RawMessage(`{"state":{"photo":"r"},"model":"m","questions":{"q":{"type":"noul",` +
 		`"instructions":"q"}},"assets":{"r":{"type":"image","format":"png","data_base64":"AQ=="}}}`)
@@ -4185,11 +4289,19 @@ func (e netError) Temporary() bool {
 }
 
 type stallingTransport struct {
-	calls *atomic.Int32
+	unavailableFirst bool
+	calls            atomic.Int32
 }
 
-func (s stallingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	s.calls.Add(1)
+func (s *stallingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if s.calls.Add(1) == 1 && s.unavailableFirst {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       http.NoBody,
+			Request:    req,
+		}, nil
+	}
+
 	<-req.Context().Done()
 
 	return nil, req.Context().Err()

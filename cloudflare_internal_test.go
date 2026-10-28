@@ -101,12 +101,16 @@ func TestUnwrapResult(t *testing.T) {
 			body:    `{"result":{"state":"Running","result":{}},"success":true}`,
 			wantErr: "the cloudflare run is Running",
 		},
-		{name: "should refuse a body with no result", body: `{"success":true}`, wantErr: "expected a result object"},
-		{name: "should refuse a result that is not an object", body: `{"result":[1]}`, wantErr: "expected a result object"},
+		{name: "should refuse a body with no result", body: `{"success":true}`, wantErr: "the cloudflare response has no result object, since its result is missing or null"},
+		{name: "should refuse a null result", body: `{"result":null}`, wantErr: "the cloudflare response has no result object, since its result is missing or null"},
+		{name: "should refuse a result that is not an object", body: `{"result":[1]}`, wantErr: "the cloudflare response has no result object, since its result is an array"},
+		{name: "should name the kind of a body that is not an envelope", body: `"challenge"`, wantErr: "the cloudflare response has no result object, since it is a string"},
+		{name: "should name the kind of a run state that is not a string", body: `{"result":{"state":3,"result":{}}}`, wantErr: "the cloudflare run has no state, since its state is a number"},
+		{name: "should take a null run state as a direct answer", body: `{"result":{"state":null,"answers":{}}}`, want: `{"state":null,"answers":{}}`},
 		{
 			name:    "should refuse a completed run with no inner result",
 			body:    `{"result":{"state":"Completed"}}`,
-			wantErr: "expected a result object",
+			wantErr: "the completed cloudflare run has no result object, since its result is missing or null",
 		},
 	}
 

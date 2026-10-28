@@ -12,6 +12,11 @@ type Clock interface {
 	Sleep(ctx context.Context, d time.Duration) error
 }
 
+// SystemClock returns the Clock a client uses by default, the real time and a timer.
+func SystemClock() Clock {
+	return systemClock{}
+}
+
 type systemClock struct{}
 
 func (systemClock) Now() time.Time {

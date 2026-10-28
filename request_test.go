@@ -111,6 +111,16 @@ func TestValidateRequest(t *testing.T) {
 			wantErr: "box question 'mug' needs an image in the request",
 		},
 		{
+			name: "should refuse a pointer to a box without an image",
+			req: func(*testing.T) onesie.Request {
+				return onesie.Request{
+					State:     "s",
+					Questions: onesie.Questions{{ID: "mug", Question: &onesie.Box{Instructions: "the mug"}}},
+				}
+			},
+			wantErr: "box question 'mug' needs an image in the request",
+		},
+		{
 			name: "should refuse an image narrower than 280 pixels",
 			req: func(t *testing.T) onesie.Request {
 				img, err := onesie.NewImage(sizedPNG(t, 200, 400))

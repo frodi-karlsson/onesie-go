@@ -23,7 +23,7 @@ const (
 	calmState   = "Thanks, that fixed it! Great service."
 )
 
-func TestLiveSystemOne(t *testing.T) {
+func TestLiveClientSystemOne(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should answer all three question types in one request", func(t *testing.T) {
@@ -629,7 +629,7 @@ func TestLiveSystemOne(t *testing.T) {
 	}
 }
 
-func TestLiveListModels(t *testing.T) {
+func TestLiveClientListModels(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should list at least one named model", func(t *testing.T) {
@@ -712,7 +712,7 @@ func TestLiveListModels(t *testing.T) {
 	})
 }
 
-func TestLiveVerifyKey(t *testing.T) {
+func TestLiveClientVerifyKey(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should accept the configured key under openrouter", func(t *testing.T) {
@@ -749,7 +749,7 @@ func TestLiveVerifyKey(t *testing.T) {
 	})
 }
 
-func TestLiveErrors(t *testing.T) {
+func TestLiveAPIError(t *testing.T) {
 	t.Parallel()
 
 	t.Run("should return ErrAuthentication for a bad key", func(t *testing.T) {
@@ -948,26 +948,27 @@ func TestLiveErrors(t *testing.T) {
 
 		tests := []struct {
 			name     string
+			fixture  string
 			client   func(*testing.T) *onesie.Client
 			req      func(*testing.T) onesie.Request
 			sentinel error
 			mayServe bool
 		}{
-			{name: "typesafe-unknown-model", client: typesafe, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
-			{name: "openrouter-unknown-model", client: liveOpenRouterClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
-			{name: "berget-unknown-model", client: liveBergetClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
-			{name: "levanto-unknown-model", client: liveLevantoClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
-			{name: "gateway-unknown-model", client: liveCloudflareClient, req: ask("typesafe/jev-nope", "x"), sentinel: onesie.ErrUnknownModel},
-			{name: "workers-unknown-model", client: liveCloudflareClient, req: ask("clef-nope", "x"), sentinel: onesie.ErrUnknownModel},
-			{name: "typesafe-context-too-long", client: typesafe, req: ask("", long), sentinel: onesie.ErrContextTooLong},
-			{name: "openrouter-context-too-long", client: liveOpenRouterClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
-			{name: "gateway-context-too-long", client: liveCloudflareClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
-			{name: "typesafe-box-not-served", client: typesafe, req: boxOnLatest, sentinel: onesie.ErrNotServed, mayServe: true},
-			{name: "openrouter-box-not-served", client: liveOpenRouterClient, req: boxOnLatest, sentinel: onesie.ErrNotServed, mayServe: true},
+			{name: "should match ErrUnknownModel for an unknown model on typesafe", fixture: "typesafe-unknown-model", client: typesafe, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "should match ErrUnknownModel for an unknown model on openrouter", fixture: "openrouter-unknown-model", client: liveOpenRouterClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "should match ErrUnknownModel for an unknown model on berget", fixture: "berget-unknown-model", client: liveBergetClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "should match ErrUnknownModel for an unknown model on levanto", fixture: "levanto-unknown-model", client: liveLevantoClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "should match ErrUnknownModel for an unknown model on the cloudflare gateway", fixture: "gateway-unknown-model", client: liveCloudflareClient, req: ask("typesafe/jev-nope", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "should match ErrUnknownModel for an unknown model on cloudflare workers", fixture: "workers-unknown-model", client: liveCloudflareClient, req: ask("clef-nope", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "should match ErrContextTooLong for a long state on typesafe", fixture: "typesafe-context-too-long", client: typesafe, req: ask("", long), sentinel: onesie.ErrContextTooLong},
+			{name: "should match ErrContextTooLong for a long state on openrouter", fixture: "openrouter-context-too-long", client: liveOpenRouterClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
+			{name: "should match ErrContextTooLong for a long state on the cloudflare gateway", fixture: "gateway-context-too-long", client: liveCloudflareClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
+			{name: "should match ErrNotServed for a box on typesafe's latest model", fixture: "typesafe-box-not-served", client: typesafe, req: boxOnLatest, sentinel: onesie.ErrNotServed, mayServe: true},
+			{name: "should match ErrNotServed for a box on openrouter's latest model", fixture: "openrouter-box-not-served", client: liveOpenRouterClient, req: boxOnLatest, sentinel: onesie.ErrNotServed, mayServe: true},
 		}
 
 		for _, tc := range tests {
-			t.Run("should match the sentinel for "+tc.name, func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 
 				_, err := tc.client(t).SystemOne(liveContext(t, time.Minute), tc.req(t))
@@ -977,7 +978,7 @@ func TestLiveErrors(t *testing.T) {
 
 				var api *onesie.APIError
 				if errors.As(err, &api) {
-					t.Logf("fixture %s.json, status %d: %s", tc.name, api.Status, api.RawBody)
+					t.Logf("fixture %s.json, status %d: %s", tc.fixture, api.Status, api.RawBody)
 				}
 
 				if !errors.Is(err, tc.sentinel) {
@@ -994,26 +995,26 @@ func TestLiveErrors(t *testing.T) {
 			`"criteria":["0","1","2","3","4","5","6","7","8","9","10"]}}`
 
 		for _, tc := range []struct {
-			name     string
+			fixture  string
 			provider onesie.Provider
 			target   func(t *testing.T) (url, key, body string)
 		}{
 			{
-				name:     "typesafe-question-limit",
+				fixture:  "typesafe-question-limit",
 				provider: onesie.TypeSafe(),
 				target: func(t *testing.T) (string, string, string) {
 					return "https://api.typesafe.ai/v1/systemone", apiKey(t), `{"state":"x","model":"jev-latest",` + questions + `}`
 				},
 			},
 			{
-				name:     "openrouter-question-limit",
+				fixture:  "openrouter-question-limit",
 				provider: onesie.OpenRouter(),
 				target: func(t *testing.T) (string, string, string) {
 					return "https://openrouter.ai/api/v1/systemone", openRouterKey(t), `{"state":"x","model":"jev-latest",` + questions + `}`
 				},
 			},
 			{
-				name:     "gateway-question-limit",
+				fixture:  "gateway-question-limit",
 				provider: onesie.Cloudflare(),
 				target: func(t *testing.T) (string, string, string) {
 					token, account := cloudflareCredentials(t)
@@ -1024,13 +1025,13 @@ func TestLiveErrors(t *testing.T) {
 				},
 			},
 		} {
-			t.Run("should refuse eleven levels for "+tc.name, func(t *testing.T) {
+			t.Run("should refuse eleven levels for "+tc.fixture, func(t *testing.T) {
 				t.Parallel()
 
 				url, key, body := tc.target(t)
 
 				status, raw := postLive(t, url, key, body)
-				t.Logf("fixture %s.json, status %d: %s", tc.name, status, raw)
+				t.Logf("fixture %s.json, status %d: %s", tc.fixture, status, raw)
 
 				if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
 					t.Errorf("status = %d, want 400 or 422", status)

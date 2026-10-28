@@ -39,6 +39,29 @@ func newAPIError(via route, needs Needs, status int, header http.Header, body []
 	}
 }
 
+func oversizedAPIError(via route, needs Needs, status int, header http.Header, limit int64, now time.Time) *APIError {
+	retryAfter, _ := parseRetryAfter(header, now)
+
+	lead := statusLine(status)
+	if redirected(status, header) {
+		lead = describeRedirect(status, header.Get("Location"))
+	}
+
+	return &APIError{
+		Status:     status,
+		RequestID:  header.Get(via.requestIDHeader),
+		Header:     header,
+		RetryAfter: retryAfter,
+		message:    lead + ", and " + overLimit(limit),
+		// Classified on the status alone, since the note is onesie's own text and no text rule may match it.
+		sentinel: via.classify(status, nil, "", needs),
+	}
+}
+
+func overLimit(limit int64) string {
+	return fmt.Sprintf("the response body is over the %d byte limit, which WithMaxResponseBytes raises", limit)
+}
+
 func describe(status int, header http.Header, body any, raw []byte, read func(any) string) description {
 	switch {
 	case redirected(status, header):

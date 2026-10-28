@@ -1,7 +1,6 @@
 package onesie
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,7 +29,7 @@ func New(opts ...Option) (*Client, error) {
 		header:           http.Header{},
 		userAgent:        "onesie-lib",
 		lookupEnv:        os.LookupEnv,
-		clock:            systemClock{},
+		clock:            SystemClock(),
 		random:           rand.Float64,
 		observe:          func(Attempt) {},
 		provider:         TypeSafe(),
@@ -378,9 +377,8 @@ type Request struct {
 	LongContext bool
 }
 
-// SystemOneRaw prepares body as PrepareRaw does with the client's default model, sends it through the
-// SystemOne retry loop and returns the response body unchecked, as the route decoded it, on one line.
-// A body that is empty or not JSON comes back as it is.
+// SystemOneRaw prepares body as PrepareRaw does with the default model, sends it as SystemOne does and
+// returns the decoded body unchecked, on one line. A 2xx body that is not JSON is a *ResponseError.
 func (c *Client) SystemOneRaw(
 	ctx context.Context,
 	body json.RawMessage,
@@ -396,27 +394,9 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	res, err := c.do(ctx, cfg, prepared.sent.post(nil))
-	if err != nil {
-		return nil, err
-	}
+	_, decoded, err := c.send(ctx, cfg, prepared.sent)
 
-	// Decoded here, not in do, so a body that is empty or not JSON comes back as it is.
-	decoded, err := prepared.sent.via.decode(oneLineIfJSON(res.body))
-	if err != nil {
-		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
-	}
-
-	return decoded, nil
-}
-
-func oneLineIfJSON(body []byte) []byte {
-	var line bytes.Buffer
-	if json.Compact(&line, body) != nil {
-		return body
-	}
-
-	return line.Bytes()
+	return decoded, err
 }
 
 // ListModels reports the model names this account may send.

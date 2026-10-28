@@ -277,30 +277,6 @@ func (e *ResponseError) Is(target error) bool {
 	return target == ErrResponse
 }
 
-// ValidationError is a request this package rejected before sending it. Question names the
-// offending question when one is to blame.
-type ValidationError struct {
-	Question string
-	Message  string
-
-	kind error
-}
-
-// Error is Reason with the package prefix.
-func (e *ValidationError) Error() string {
-	return "onesie: " + e.Reason()
-}
-
-// Reason returns Message.
-func (e *ValidationError) Reason() string {
-	return e.Message
-}
-
-// Is matches ErrValidation, and the more specific sentinel the rejection carries.
-func (e *ValidationError) Is(target error) bool {
-	return target == ErrValidation || (e.kind != nil && target == e.kind)
-}
-
 func newCapabilityError(provider, model string, missing Needs, takers []string) *CapabilityError {
 	var lacking []string
 
@@ -346,6 +322,30 @@ type CapabilityError struct {
 // Unwrap returns the embedded ValidationError, so errors.As reaches it.
 func (e *CapabilityError) Unwrap() error {
 	return &e.ValidationError
+}
+
+// ValidationError is a request this package rejected before sending it. Question names the
+// offending question when one is to blame.
+type ValidationError struct {
+	Question string
+	Message  string
+
+	kind error
+}
+
+// Error is Reason with the package prefix.
+func (e *ValidationError) Error() string {
+	return "onesie: " + e.Reason()
+}
+
+// Reason returns Message.
+func (e *ValidationError) Reason() string {
+	return e.Message
+}
+
+// Is matches ErrValidation, and the more specific sentinel the rejection carries.
+func (e *ValidationError) Is(target error) bool {
+	return target == ErrValidation || (e.kind != nil && target == e.kind)
 }
 
 // AnswerError reports an answer that is absent or of another type.
