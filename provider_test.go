@@ -374,7 +374,7 @@ func TestCapabilityError(t *testing.T) {
 		}
 	})
 
-	t.Run("should still be a ValidationError", func(t *testing.T) {
+	t.Run("should be a ValidationError as well", func(t *testing.T) {
 		t.Parallel()
 
 		err := onesie.Levanto().Refuse("", onesie.Needs{Images: true})
