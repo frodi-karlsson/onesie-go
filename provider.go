@@ -470,8 +470,8 @@ func decodeBergetModels(body []byte) ([]ModelCard, error) {
 		return nil, errors.New("expected a models list")
 	}
 
-	// The list holds every model Berget serves, chat and speech included, and only the system-one
-	// ones answer the System One endpoint.
+	// The list holds every model Berget serves, chat and speech included, and only a model whose
+	// model_type is system-one answers the System One endpoint.
 	cards := []ModelCard{}
 
 	for _, model := range wire.Data {

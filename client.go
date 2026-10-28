@@ -153,8 +153,8 @@ func (c *Client) SystemOneURL() string {
 	return c.baseURL + c.provider.route(c.defaultModel).path
 }
 
-// BaseURLRepeatsPath reports the segment a base URL ending in /v1 repeats, when the base URL's last
-// segment is the first segment of the default model's API path.
+// BaseURLRepeatsPath reports the segment a base URL repeats when its last segment is the first
+// segment of the default model's API path, which the client appends.
 func (c *Client) BaseURLRepeatsPath() (string, bool) {
 	first, _, _ := strings.Cut(strings.TrimPrefix(c.provider.route(c.defaultModel).path, "/"), "/")
 

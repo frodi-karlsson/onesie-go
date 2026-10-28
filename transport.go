@@ -92,8 +92,8 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 }
 
 func compactBody(body []byte) ([]byte, error) {
-	// Compacted rather than re-marshalled. json.Marshal HTML escapes, and a caller that prepared its
-	// own body is entitled to have it forwarded as written.
+	// Compacted, not marshalled again. json.Marshal HTML escapes, and a caller that prepared its own
+	// body is entitled to have it forwarded as written.
 	var flat bytes.Buffer
 
 	if err := json.Compact(&flat, body); err != nil {

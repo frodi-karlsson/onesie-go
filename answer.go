@@ -424,7 +424,7 @@ func (*NoulAnswer) Kind() string {
 	return "noul"
 }
 
-// MarshalJSON re-emits the wire shape, including the type discriminator.
+// MarshalJSON writes the wire shape back out, including the type discriminator.
 func (a *NoulAnswer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type string  `json:"type"`
@@ -452,7 +452,7 @@ func (a *ChoiceAnswer) Probability(option string) (float64, bool) {
 	return value, ok
 }
 
-// MarshalJSON re-emits the wire shape, including the type discriminator.
+// MarshalJSON writes the wire shape back out, including the type discriminator.
 func (a *ChoiceAnswer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type          string             `json:"type"`
@@ -479,7 +479,7 @@ func (*ScoreAnswer) Kind() string {
 	return "score"
 }
 
-// MarshalJSON re-emits the wire shape, including the type discriminator.
+// MarshalJSON writes the wire shape back out, including the type discriminator.
 func (a *ScoreAnswer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type          string             `json:"type"`
@@ -505,7 +505,7 @@ func (*BoxAnswer) Kind() string {
 	return "box"
 }
 
-// MarshalJSON re-emits the wire shape, including the type discriminator.
+// MarshalJSON writes the wire shape back out, including the type discriminator.
 func (a *BoxAnswer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type       string  `json:"type"`
