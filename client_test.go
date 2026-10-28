@@ -3200,24 +3200,22 @@ func TestClientSystemOneRaw(t *testing.T) {
 	}
 
 	for _, provider := range onesie.Providers() {
-		for _, body := range []string{"", "<!DOCTYPE html><html></html>"} {
-			t.Run("should return a 200 body it cannot read unchanged on "+provider.Name()+": "+body, func(t *testing.T) {
+		for _, body := range []string{"", " \n ", "<!DOCTYPE html><html></html>"} {
+			t.Run(fmt.Sprintf("should refuse a 200 body that is not JSON without retrying on %s: %q", provider.Name(), body), func(t *testing.T) {
 				t.Parallel()
 
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-					_, _ = io.WriteString(w, body)
-				}))
-				defer server.Close()
+				client, _, transport := newScriptedClient(t, []scriptedReply{{status: http.StatusOK, body: body}},
+					onesie.WithProvider(provider))
 
-				client, _ := newTestClient(t, server.URL, onesie.WithProvider(provider))
+				got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{}}`))
 
-				got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","model":"m","questions":{}}`))
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
+				var respErr *onesie.ResponseError
+				if !errors.As(err, &respErr) || respErr.Status != http.StatusOK || got != nil {
+					t.Fatalf("SystemOneRaw = %q, %v, want a 200 ResponseError", got, err)
 				}
 
-				if string(got) != body {
-					t.Errorf("body = %q, want %q", got, body)
+				if transport.calls() != 1 {
+					t.Errorf("call count got %d, want 1", transport.calls())
 				}
 			})
 		}
