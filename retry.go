@@ -85,9 +85,7 @@ func exponential(attempt int, policy RetryPolicy) time.Duration {
 }
 
 func jitter(delay time.Duration, policy RetryPolicy, random func() float64) time.Duration {
-	// Subtracted, so a delay never exceeds the value it was computed from, which holds because
-	// random returns a value at or above zero. The upper bound does the work at the other edge,
-	// since random staying below one keeps a fully jittered delay off zero.
+	// Subtracted, so a delay never exceeds its base, and random staying below one keeps it above zero.
 	return time.Duration(math.Round(float64(delay) * (1 - random()*policy.BackoffJitter)))
 }
 

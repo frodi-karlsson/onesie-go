@@ -170,9 +170,7 @@ func (c *Client) attempt(
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
 	if err != nil {
 		failure := classify(ctx, actx, err, cfg)
-		// Observed like any other failed round trip. The request was sent and the server answered,
-		// so an observer that skipped it would under count attempts and would see a failure it
-		// never saw an attempt for.
+		// Observed, since the server answered, so the attempt counts even though its body was lost.
 		c.observe(Attempt{Index: attempt, Err: failure, Duration: c.clock.Now().Sub(started), Timeout: cfg.attemptTimeout})
 
 		return nil, failure
