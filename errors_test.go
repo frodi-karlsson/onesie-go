@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -772,6 +773,36 @@ func TestNewAPIError(t *testing.T) {
 		got := newAPIError(typesafe, boxed, 400, http.Header{}, []byte(`{"detail":"Unknown model, max_tokens_exceeded, Invalid request"}`), time.Now())
 		if !errors.Is(got, ErrUnknownModel) || errors.Is(got, ErrContextTooLong) || errors.Is(got, ErrNotServed) {
 			t.Errorf("error = %v, want ErrUnknownModel alone", got)
+		}
+	})
+}
+
+func TestOversizedAPIError(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should classify on the status alone, so no text rule sees the note", func(t *testing.T) {
+		t.Parallel()
+
+		var messages []string
+
+		via := route{classifyError: func(r reply) error {
+			messages = append(messages, r.message)
+
+			if r.message != "" {
+				return ErrContextTooLong
+			}
+
+			return nil
+		}}
+
+		got := oversizedAPIError(via, Needs{}, http.StatusBadRequest, http.Header{}, 256, time.Now())
+
+		if errors.Is(got, ErrContextTooLong) || !slices.Equal(messages, []string{""}) {
+			t.Errorf("error = %v after classifying %q, want one classification with no message", got, messages)
+		}
+
+		if !errors.Is(got, ErrBadRequest) {
+			t.Errorf("error = %v, want ErrBadRequest from the status", got)
 		}
 	})
 }

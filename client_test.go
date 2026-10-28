@@ -1445,26 +1445,49 @@ func TestClientSystemOne(t *testing.T) {
 	t.Run("should classify an oversized response body by its status", func(t *testing.T) {
 		t.Parallel()
 
+		const note = ", and the response body is over the 256 byte limit, which WithMaxResponseBytes raises"
+
 		oversized := "<html>" + strings.Repeat("a", 300) + "</html>"
 
 		tests := []struct {
 			name      string
 			status    int
+			header    http.Header
 			wantCalls int
+			wantSlept []time.Duration
 			wantErr   string
 			sentinel  error
+			tooLong   bool
 		}{
 			{
 				name: "should keep a 401 an authentication error", status: http.StatusUnauthorized, wantCalls: 1,
-				wantErr: "onesie: 401 Unauthorized, with a response body over the 256 byte limit", sentinel: onesie.ErrAuthentication,
+				wantErr: "onesie: 401 Unauthorized" + note, sentinel: onesie.ErrAuthentication,
 			},
 			{
 				name: "should retry a retryable status", status: http.StatusServiceUnavailable, wantCalls: 3,
-				wantErr: "onesie: 503 Service Unavailable, with a response body over the 256 byte limit", sentinel: onesie.ErrServer,
+				wantSlept: []time.Duration{500 * time.Millisecond, time.Second},
+				wantErr:   "onesie: 503 Service Unavailable" + note, sentinel: onesie.ErrServer,
+			},
+			{
+				name: "should wait the Retry-After of an oversized 429", status: http.StatusTooManyRequests,
+				header: http.Header{"Retry-After": {"3"}}, wantCalls: 3, wantSlept: []time.Duration{3 * time.Second, 3 * time.Second},
+				wantErr: "onesie: 429 Too Many Requests" + note, sentinel: onesie.ErrRateLimit,
+			},
+			{
+				name: "should give up on an oversized 429 whose Retry-After passes the cap", status: http.StatusTooManyRequests,
+				header: http.Header{"Retry-After": {"3600"}}, wantCalls: 1, sentinel: onesie.ErrRateLimit, tooLong: true,
+				wantErr: "onesie: status 429, the server asked to retry after 1h0m0s, above the 1m0s cap",
+			},
+			{
+				name: "should keep the redirect message of an oversized redirect", status: http.StatusFound,
+				header: http.Header{"Location": {"https://elsewhere.example/v1"}}, wantCalls: 1,
+				wantErr: "onesie: 302 redirect to https://elsewhere.example, which onesie does not follow, since the request carries " +
+					"the API key. Point the base URL at where the API is" + note,
 			},
 			{
 				name: "should refuse a 2xx as a response error without retrying", status: http.StatusOK, wantCalls: 1,
-				wantErr: "onesie: 200 response could not be used: the response body exceeded 256 bytes", sentinel: onesie.ErrResponse,
+				wantErr:  "onesie: 200 response could not be used: the response body is over the 256 byte limit, which WithMaxResponseBytes raises",
+				sentinel: onesie.ErrResponse,
 			},
 		}
 
@@ -1472,17 +1495,38 @@ func TestClientSystemOne(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 
-				client, _, transport := newScriptedClient(t, []scriptedReply{{status: tc.status, body: oversized}},
+				header := tc.header.Clone()
+				if header == nil {
+					header = http.Header{}
+				}
+
+				header.Set("X-TypeSafe-Request-Id", "req_big")
+
+				client, clock, transport := newScriptedClient(t, []scriptedReply{{status: tc.status, header: header, body: oversized}},
 					onesie.WithMaxResponseBytes(256))
 
 				_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
 
-				if err == nil || err.Error() != tc.wantErr || !errors.Is(err, tc.sentinel) || errors.Is(err, onesie.ErrConnection) {
+				if err == nil || err.Error() != tc.wantErr || (tc.sentinel != nil && !errors.Is(err, tc.sentinel)) || errors.Is(err, onesie.ErrConnection) {
 					t.Errorf("error = %v, want %q matching %v", err, tc.wantErr, tc.sentinel)
 				}
 
 				if transport.calls() != tc.wantCalls {
 					t.Errorf("call count got %d, want %d, %s", transport.calls(), tc.wantCalls, transport.attempts())
+				}
+
+				if slept := clock.Slept(); !slices.Equal(slept, tc.wantSlept) {
+					t.Errorf("slept %v, want %v", slept, tc.wantSlept)
+				}
+
+				var tooLong *onesie.RetryAfterError
+				if errors.As(err, &tooLong) != tc.tooLong {
+					t.Errorf("error = %T %v, want a RetryAfterError: %v", err, err, tc.tooLong)
+				}
+
+				var apiErr *onesie.APIError
+				if tc.status != http.StatusOK && (!errors.As(err, &apiErr) || apiErr.RequestID != "req_big") {
+					t.Errorf("request id = %q, want req_big", apiErr.RequestID)
 				}
 			})
 		}

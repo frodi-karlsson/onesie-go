@@ -68,7 +68,7 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 
 		if res.status >= 200 && res.status < 300 {
 			if res.oversized {
-				return nil, &ResponseError{Status: res.status, Err: fmt.Errorf("the response body exceeded %d bytes", c.maxResponseBytes)}
+				return nil, &ResponseError{Status: res.status, Err: errors.New(overLimit(c.maxResponseBytes))}
 			}
 
 			return res, decodeInto(res, withoutQuery(target), req.out, req.decode)
