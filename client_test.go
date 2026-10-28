@@ -3824,6 +3824,58 @@ func TestMarshalBody(t *testing.T) {
 	}
 }
 
+func TestMarshalQuestionsBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  onesie.Request
+		want string
+	}{
+		{
+			name: "should write the model and questions and leave out the state and assets",
+			req: onesie.Request{
+				State: "s", Model: "m", Questions: oneNoul(),
+				Assets: onesie.Assets{"r": {Format: "png", Data: []byte{1}}},
+			},
+			want: `{"model":"m","questions":{"q":{"type":"noul","instructions":"Urgent?"}}}`,
+		},
+		{
+			name: "should write long_context after the questions when it is on",
+			req:  onesie.Request{Model: "m", Questions: oneNoul(), LongContext: true},
+			want: `{"model":"m","questions":{"q":{"type":"noul","instructions":"Urgent?"}},"long_context":true}`,
+		},
+		{
+			name: "should write a blank model and no questions as they are",
+			req:  onesie.Request{},
+			want: `{"model":"","questions":{}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := onesie.MarshalQuestionsBody(tc.req)
+			if err != nil || string(got) != tc.want {
+				t.Errorf("MarshalQuestionsBody = %s, %v, want %s", got, err, tc.want)
+			}
+		})
+	}
+
+	t.Run("should fail when a question cannot be marshalled", func(t *testing.T) {
+		t.Parallel()
+
+		req := onesie.Request{Questions: onesie.Questions{{ID: "c", Question: onesie.Choice{
+			Criteria: onesie.Criteria{{Name: "a", Desc: make(chan int)}},
+		}}}}
+
+		if _, err := onesie.MarshalQuestionsBody(req); err == nil || !strings.Contains(err.Error(), "unsupported type: chan int") {
+			t.Fatalf("error = %v, want an unsupported type", err)
+		}
+	})
+}
+
 func TestProviderResolveModel(t *testing.T) {
 	t.Parallel()
 

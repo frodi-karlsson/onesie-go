@@ -359,6 +359,16 @@ func MarshalBody(req Request) ([]byte, error) {
 	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
 }
 
+// MarshalQuestionsBody encodes req's model and questions with no state key, since a null state is a
+// state. LongContext adds long_context, and the assets are left out.
+func MarshalQuestionsBody(req Request) ([]byte, error) {
+	return json.Marshal(struct {
+		Model       string    `json:"model"`
+		Questions   Questions `json:"questions"`
+		LongContext bool      `json:"long_context,omitempty"`
+	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext})
+}
+
 // Request is one evaluation, whose questions all see the same state and are answered independently.
 // Assets holds the images they reference, and LongContext raises the context limits.
 type Request struct {
