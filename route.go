@@ -7,6 +7,7 @@ type route struct {
 	imagesHeader    bool
 	encode          func(body jsonBody) ([]byte, error)
 	decode          func(body []byte) ([]byte, error)
+	wrapResult      func(result []byte) ([]byte, error)
 	requestIDHeader string
 	describeError   func(body any) string
 	forwarded       func(body any) any

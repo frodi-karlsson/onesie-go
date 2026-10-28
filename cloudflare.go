@@ -12,11 +12,12 @@ import (
 func cloudflareRoute(model string) route {
 	if wireID, isClef := clefWireID(model); isClef {
 		return route{
-			path:   "/run",
-			takes:  capabilities{images: true},
-			images: assetsToImages,
-			encode: encodeClef(wireID),
-			decode: unwrapResult,
+			path:       "/run",
+			takes:      capabilities{images: true},
+			images:     assetsToImages,
+			encode:     encodeClef(wireID),
+			decode:     unwrapResult,
+			wrapResult: resultEnvelope,
 
 			describeError: readCloudflareMessage,
 			forwarded:     gatewayForwarded,
@@ -25,10 +26,11 @@ func cloudflareRoute(model string) route {
 	}
 
 	return route{
-		path:   "/run",
-		takes:  capabilities{images: true},
-		encode: envelope(model),
-		decode: unwrapResult,
+		path:       "/run",
+		takes:      capabilities{images: true},
+		encode:     envelope(model),
+		decode:     unwrapResult,
+		wrapResult: resultEnvelope,
 
 		describeError: readCloudflareMessage,
 		forwarded:     gatewayForwarded,
@@ -152,6 +154,10 @@ func unwrapResult(body []byte) ([]byte, error) {
 	}
 
 	return resultObject(result)
+}
+
+func resultEnvelope(result []byte) ([]byte, error) {
+	return writeMembers([]member{{name: "result", value: result}})
 }
 
 func resultObject(body []byte) ([]byte, error) {

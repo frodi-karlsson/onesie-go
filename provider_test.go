@@ -185,6 +185,98 @@ func TestProviderBoxModel(t *testing.T) {
 	}
 }
 
+func TestProviderResponseBody(t *testing.T) {
+	t.Parallel()
+
+	const answered = `{"model":"m","answers":{"q":{"type":"noul","noul":0.1}},"usage":{"input_tokens":0,"output_tokens":0}}`
+
+	result := &onesie.Result{Model: "m", Answers: map[string]onesie.Answer{"q": &onesie.NoulAnswer{Noul: 0.1}}}
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		model    string
+		want     string
+	}{
+		{name: "should write the result as it is on typesafe", provider: onesie.TypeSafe(), want: answered},
+		{name: "should write the result as it is on berget", provider: onesie.Berget(), want: answered},
+		{name: "should wrap the result for jev on cloudflare", provider: onesie.Cloudflare(), want: `{"result":` + answered + `}`},
+		{name: "should wrap the result for clef on cloudflare", provider: onesie.Cloudflare(), model: "clef", want: `{"result":` + answered + `}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := tc.provider.ResponseBody(tc.model, result)
+			if err != nil || string(got) != tc.want {
+				t.Errorf("ResponseBody = %s, %v, want %s", got, err, tc.want)
+			}
+		})
+	}
+
+	for _, provider := range onesie.Providers() {
+		for model, shown := range map[string]string{"": "the default model", "clef": "clef"} {
+			t.Run("should answer a send for "+shown+" on "+provider.Name(), func(t *testing.T) {
+				t.Parallel()
+
+				body, err := provider.ResponseBody(model, result)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				transport := &recordingTransport{body: string(body)}
+				client, _ := newTestClient(t, "https://api.example", onesie.WithProvider(provider),
+					onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+				got, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Model: model, Questions: oneNoul()})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if noul, _ := got.Noul("q"); noul == nil || noul.Noul != 0.1 || got.Model != "m" {
+					t.Errorf("result = %+v, want q at 0.1 from m", got)
+				}
+			})
+		}
+	}
+
+	t.Run("should write a result with no answers as one a send refuses", func(t *testing.T) {
+		t.Parallel()
+
+		body, err := onesie.Cloudflare().ResponseBody("", &onesie.Result{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		transport := &recordingTransport{body: string(body)}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithProvider(onesie.Cloudflare()),
+			onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, err = client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()})
+		if want := "onesie: 200 response could not be used: the response is not a System One result, since it has no answers"; err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
+
+	for _, tc := range []struct {
+		name     string
+		provider onesie.Provider
+		result   *onesie.Result
+	}{
+		{name: "should refuse a zero provider", result: result},
+		{name: "should refuse a nil result", provider: onesie.TypeSafe()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := tc.provider.ResponseBody("", tc.result); !errors.Is(err, onesie.ErrValidation) {
+				t.Fatalf("error = %v, want ErrValidation", err)
+			}
+		})
+	}
+}
+
 func TestProviders(t *testing.T) {
 	t.Parallel()
 

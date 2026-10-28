@@ -303,6 +303,29 @@ func (p Provider) BoxModel() string {
 	return p.boxModel
 }
 
+// ResponseBody encodes result as the route for model returns it, a blank model being the default, so
+// a fake server answers as this provider does.
+func (p Provider) ResponseBody(model string, result *Result) ([]byte, error) {
+	if err := p.check(); err != nil {
+		return nil, err
+	}
+
+	if result == nil {
+		return nil, &ValidationError{Message: "the result is nil"}
+	}
+
+	body, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+
+	if via := p.route(modelOr(model, p.defaultModel)); via.wrapResult != nil {
+		return via.wrapResult(body)
+	}
+
+	return body, nil
+}
+
 // DefaultBaseURL is the base URL used when nothing overrides it, or is empty when the base URL
 // depends on an account.
 func (p Provider) DefaultBaseURL() string {

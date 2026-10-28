@@ -11,7 +11,7 @@ import (
 )
 
 // NewAPIError builds the APIError a live response with this status and body gets from p's route for
-// model, sentinels included, for fakes and mocks. A blank model is p's built in default.
+// model, sentinels included, for a fake server or transport. A blank model is p's built in default.
 func NewAPIError(p Provider, model string, needs Needs, status int, body []byte) *APIError {
 	var via route
 	if p.check() == nil {
