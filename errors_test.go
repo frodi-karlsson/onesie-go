@@ -2,11 +2,13 @@ package onesie
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -998,4 +1000,30 @@ func TestResultShapeError(t *testing.T) {
 			t.Errorf("error = %v, want a resultShapeError with no cause", err)
 		}
 	})
+}
+
+func TestDescribeShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "should read an array body's kind from the body", raw: `[1]`, want: "the response is not a System One result, since it is an array"},
+		{name: "should read a number body's kind from the body", raw: `5`, want: "the response is not a System One result, since it is a number"},
+		{name: "should read a string body's kind from the body", raw: `"x"`, want: "the response is not a System One result, since it is a string"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mistyped := &json.UnmarshalTypeError{Type: reflect.TypeFor[struct{}]()}
+
+			if got := describeShape([]byte(tc.raw), mistyped).Error(); got != tc.want {
+				t.Errorf("describeShape = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

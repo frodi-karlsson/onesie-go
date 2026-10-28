@@ -93,7 +93,7 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	}
 
 	if err := json.Unmarshal(data, &wire); err != nil {
-		return describeShape(err)
+		return describeShape(data, err)
 	}
 
 	r.Model = wire.Model
@@ -112,19 +112,45 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func describeShape(err error) error {
+func describeShape(raw []byte, err error) error {
 	var mistyped *json.UnmarshalTypeError
 	if !errors.As(err, &mistyped) {
 		return err
 	}
 
+	field := strings.TrimPrefix(mistyped.Field, ".")
+
 	return &resultShapeError{
-		field: strings.TrimPrefix(mistyped.Field, "."),
+		field: field,
 		fault: faultWrongKind,
 		want:  wantedKind(mistyped.Type),
-		got:   foundKind(mistyped.Value),
+		got:   kindAt(raw, field),
 		cause: err,
 	}
+}
+
+func kindAt(raw []byte, field string) jsonKind {
+	if field == "" {
+		return rawKind(raw)
+	}
+
+	parent, key, nested := strings.Cut(field, ".")
+
+	value := memberOf(raw, parent)
+	if nested {
+		value = memberOf(value, key)
+	}
+
+	return rawKind(value)
+}
+
+func memberOf(raw []byte, name string) json.RawMessage {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return nil
+	}
+
+	return members[name]
 }
 
 func wantedKind(wanted reflect.Type) jsonKind {
@@ -148,25 +174,6 @@ func wantedKind(wanted reflect.Type) jsonKind {
 		return kindArray
 	default:
 		return kindObject
-	}
-}
-
-func foundKind(value string) jsonKind {
-	kind, _, _ := strings.Cut(value, " ")
-
-	switch kind {
-	case "string":
-		return kindString
-	case "number":
-		return kindNumber
-	case "bool":
-		return kindBoolean
-	case "array":
-		return kindArray
-	case "object":
-		return kindObject
-	default:
-		return kindNothing
 	}
 }
 
@@ -207,7 +214,7 @@ func decodeAnswer(raw json.RawMessage) (Answer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &probe); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if probe.Type == nil {
@@ -258,7 +265,7 @@ func decodeNoul(raw json.RawMessage) (*NoulAnswer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if wire.Noul == nil {
@@ -276,7 +283,7 @@ func decodeChoice(raw json.RawMessage) (*ChoiceAnswer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if wire.Choice == nil {
@@ -304,7 +311,7 @@ func decodeScore(raw json.RawMessage) (*ScoreAnswer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if wire.Score == nil {
@@ -333,7 +340,7 @@ func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if wire.Box == nil {
