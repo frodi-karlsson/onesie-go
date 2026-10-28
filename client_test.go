@@ -90,6 +90,67 @@ func TestClientSystemOneURL(t *testing.T) {
 	}
 }
 
+func TestClientBaseURLRepeatsPath(t *testing.T) {
+	t.Parallel()
+
+	const account = "0123456789abcdef0123456789abcdef"
+
+	tests := []struct {
+		name        string
+		options     []onesie.Option
+		wantSegment string
+		wantRepeats bool
+	}{
+		{name: "should find no repeat in the default base URL"},
+		{
+			name:        "should find v1 at the end of a typesafe base URL",
+			options:     []onesie.Option{onesie.WithBaseURL("https://proxy.example/v1/")},
+			wantSegment: "v1", wantRepeats: true,
+		},
+		{
+			name:        "should find v1 at the end of an openrouter base URL",
+			options:     []onesie.Option{onesie.WithProvider(onesie.OpenRouter()), onesie.WithBaseURL("https://openrouter.ai/api/v1")},
+			wantSegment: "v1", wantRepeats: true,
+		},
+		{
+			name:    "should find no repeat in a v1 that is only part of the last segment",
+			options: []onesie.Option{onesie.WithBaseURL("https://proxy.example/apiv1")},
+		},
+		{
+			name: "should find no repeat in a cloudflare base URL ending in v1, since cloudflare posts to run",
+			options: []onesie.Option{
+				onesie.WithProvider(onesie.Cloudflare()), onesie.WithBaseURL("https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/v1"),
+			},
+		},
+		{
+			name: "should find run at the end of a cloudflare base URL",
+			options: []onesie.Option{
+				onesie.WithProvider(onesie.Cloudflare()), onesie.WithBaseURL("https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run"),
+			},
+			wantSegment: "run", wantRepeats: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			options := append([]onesie.Option{
+				onesie.WithAPIKey("k"), onesie.WithEnv(func(string) (string, bool) { return "", false }),
+			}, tc.options...)
+
+			client, err := onesie.New(options...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if segment, repeats := client.BaseURLRepeatsPath(); segment != tc.wantSegment || repeats != tc.wantRepeats {
+				t.Errorf("BaseURLRepeatsPath() = %q, %v, want %q, %v", segment, repeats, tc.wantSegment, tc.wantRepeats)
+			}
+		})
+	}
+}
+
 func TestNew(t *testing.T) {
 	t.Parallel()
 

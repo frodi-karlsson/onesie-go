@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -149,6 +151,19 @@ func (c *Client) DefaultModel() string {
 // that model's API path added.
 func (c *Client) SystemOneURL() string {
 	return c.baseURL + c.provider.route(c.defaultModel).path
+}
+
+// BaseURLRepeatsPath reports the segment a base URL ending in /v1 repeats, when the base URL's last
+// segment is the first segment of the default model's API path.
+func (c *Client) BaseURLRepeatsPath() (string, bool) {
+	first, _, _ := strings.Cut(strings.TrimPrefix(c.provider.route(c.defaultModel).path, "/"), "/")
+
+	parsed, err := url.Parse(c.baseURL)
+	if err != nil || first == "" || path.Base(parsed.Path) != first {
+		return "", false
+	}
+
+	return first, true
 }
 
 // RetryPolicy returns a copy, so a caller can modify one field and pass it to WithRequestRetry.
