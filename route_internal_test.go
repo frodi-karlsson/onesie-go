@@ -237,7 +237,7 @@ func TestClientSystemOne(t *testing.T) {
 		_, err := client.SystemOne(t.Context(), ask(""))
 
 		var unusable *ResponseError
-		if !errors.As(err, &unusable) || err.Error() != "onesie: 200 response could not be used: no answer for question 'q'" {
+		if !errors.As(err, &unusable) || err.Error() != "onesie: 200 response could not be used: question 'q' has no answer" {
 			t.Fatalf("error = %v, want the missing answer named", err)
 		}
 

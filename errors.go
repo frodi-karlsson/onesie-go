@@ -24,7 +24,6 @@ const (
 	faultMissing
 	faultEmpty
 	faultUnknownType
-	faultNoAnswer
 )
 
 const (
@@ -548,7 +547,7 @@ func (e *TimeoutError) Is(target error) bool {
 }
 
 // ResponseError is a 2xx response this client could not use. Err holds the fault, and Usage is
-// what the response billed when its answers failed to decode, nil otherwise.
+// what the response billed whenever its usage member decoded, nil otherwise.
 type ResponseError struct {
 	Status int
 	Body   []byte
@@ -563,6 +562,11 @@ func (e *ResponseError) Error() string {
 
 // Reason describes what could not be read.
 func (e *ResponseError) Reason() string {
+	var fault *AnswerFault
+	if errors.As(e.Err, &fault) {
+		return fmt.Sprintf("%d response could not be used: %s", e.Status, fault.Reason())
+	}
+
 	return fmt.Sprintf("%d response could not be used: %v", e.Status, e.Err)
 }
 
@@ -669,13 +673,17 @@ func (e *AnswerError) Reason() string {
 	return fmt.Sprintf("answer '%s' is a %s, not a %s", printable(e.Name), e.Got, e.Want)
 }
 
-type resultShapeError struct {
-	answer  string
+// AnswerFault is a 2xx response that is not a System One result, or whose answer does not fit the
+// question asked. Question names the answer to blame, and is empty when the whole response is.
+type AnswerFault struct {
+	Question string
+
 	field   string
 	fault   shapeFault
 	want    jsonKind
 	got     jsonKind
 	gotType string
+	text    string
 	cause   error
 }
 
@@ -683,22 +691,24 @@ type shapeFault int
 
 type jsonKind int
 
-func (e *resultShapeError) Unwrap() error {
-	return e.cause
+// Error is Reason with the package prefix.
+func (e *AnswerFault) Error() string {
+	return "onesie: " + e.Reason()
 }
 
-func (e *resultShapeError) Error() string {
-	field := printable(e.field)
-
-	if e.fault == faultNoAnswer {
-		return "no answer for question '" + printable(e.answer) + "'"
+// Reason names the answer and what is wrong with it, or what is wrong with the whole response.
+func (e *AnswerFault) Reason() string {
+	if e.text != "" {
+		return e.text
 	}
 
-	if e.answer == "" {
+	field := printable(e.field)
+
+	if e.Question == "" {
 		return resultSentence(field, e.fault, e.want, e.got)
 	}
 
-	name := "answer '" + printable(e.answer) + "'"
+	name := "answer '" + printable(e.Question) + "'"
 	if field == "" {
 		return fmt.Sprintf("%s is %s, not %s", name, e.got.phrase(), e.want.phrase())
 	}
@@ -715,6 +725,11 @@ func (e *resultShapeError) Error() string {
 	default:
 		return fmt.Sprintf("%s has %s that %s not %s", name, phrase, verb, e.want.phrase())
 	}
+}
+
+// Unwrap returns the decoder's error behind a value of the wrong JSON type, or nil.
+func (e *AnswerFault) Unwrap() error {
+	return e.cause
 }
 
 func resultSentence(field string, fault shapeFault, want, got jsonKind) string {

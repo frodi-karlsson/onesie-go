@@ -3,7 +3,6 @@ package onesie
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -244,31 +243,17 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	result := &Result{}
+	var decoded json.RawMessage
 
 	res, err := c.do(ctx, cfg, call{
-		method: http.MethodPost, path: sent.via.path, payload: sent.body, out: result, decode: sent.via.decode,
+		method: http.MethodPost, path: sent.via.path, payload: sent.body, out: &decoded, decode: sent.via.decode,
 		via: sent.via, needs: sent.needs.asNeeds(), imagesHeader: sent.images,
 	})
 	if err != nil {
-		return nil, withUsage(err, &result.Usage)
+		return nil, err
 	}
 
-	result.RequestID = res.header.Get(c.provider.requestIDHeader)
-	result.Header = res.header
-
-	for _, named := range req.Questions {
-		if _, ok := result.Answers[named.ID]; !ok {
-			return nil, &ResponseError{
-				Status: res.status,
-				Body:   res.body,
-				Err:    &resultShapeError{answer: named.ID, fault: faultNoAnswer},
-				Usage:  &result.Usage,
-			}
-		}
-	}
-
-	return result, nil
+	return c.checkedResult(res, decoded, req.Questions)
 }
 
 func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
@@ -291,18 +276,34 @@ type call struct {
 	imagesHeader bool
 }
 
-func withUsage(err error, usage *Usage) error {
-	var (
-		unusable *ResponseError
-		shape    *resultShapeError
-	)
+func (c *Client) checkedResult(res *rawResponse, decoded json.RawMessage, questions Questions) (*Result, error) {
+	result := &Result{}
 
-	// An answer is decoded only after the usage, so a fault in one means the usage was read.
-	if errors.As(err, &unusable) && errors.As(err, &shape) && shape.answer != "" {
-		unusable.Usage = usage
+	err := json.Unmarshal(decoded, result)
+	if err == nil {
+		err = result.Check(questions)
 	}
 
-	return err
+	if err != nil {
+		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err, Usage: billedUsage(decoded)}
+	}
+
+	result.RequestID = res.header.Get(c.provider.requestIDHeader)
+	result.Header = res.header
+
+	return result, nil
+}
+
+func billedUsage(decoded []byte) *Usage {
+	var billed struct {
+		Usage *Usage `json:"usage"`
+	}
+
+	if json.Unmarshal(decoded, &billed) != nil {
+		return nil
+	}
+
+	return billed.Usage
 }
 
 // MarshalBody encodes a request as a raw body SystemOneRaw accepts.

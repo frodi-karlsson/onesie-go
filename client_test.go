@@ -1317,6 +1317,89 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
+	t.Run("should refuse an answer that does not fit its question", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"model":"m","answers":{"q":{"type":"noul","noul":1.5}},"usage":{"input_tokens":7,"output_tokens":3}}`)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL)
+
+		_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+
+		var (
+			unusable *onesie.ResponseError
+			fault    *onesie.AnswerFault
+		)
+
+		const want = "onesie: 200 response could not be used: question 'q' answered 1.5, which lies outside [0,1]"
+		if !errors.As(err, &unusable) || !errors.As(err, &fault) || fault.Question != "q" || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+
+		if unusable.Usage == nil || unusable.Usage.InputTokens != 7 {
+			t.Errorf("usage = %+v, want the 7 input tokens billed", unusable.Usage)
+		}
+	})
+
+	usages := []struct {
+		name     string
+		response string
+		want     *onesie.Usage
+	}{
+		{
+			name:     "should carry the usage of a response whose answers are not an object",
+			response: `{"model":"m","answers":[],"usage":{"input_tokens":3,"output_tokens":1}}`,
+			want:     &onesie.Usage{InputTokens: 3, OutputTokens: 1},
+		},
+		{name: "should carry no usage when the response has none", response: `{"model":"m","answers":{}}`},
+		{name: "should carry no usage when the usage does not decode", response: `{"answers":{},"usage":{"input_tokens":"7"}}`},
+	}
+
+	for _, tc := range usages {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.response)
+			}))
+			defer server.Close()
+
+			client, _ := newTestClient(t, server.URL)
+
+			_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+
+			var unusable *onesie.ResponseError
+			if !errors.As(err, &unusable) {
+				t.Fatalf("error = %v, want a ResponseError", err)
+			}
+
+			if (unusable.Usage == nil) != (tc.want == nil) || (tc.want != nil && *unusable.Usage != *tc.want) {
+				t.Errorf("usage = %+v, want %+v", unusable.Usage, tc.want)
+			}
+		})
+	}
+
+	t.Run("should refuse a response with no answers member", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"model":"m","usage":{}}`)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL)
+
+		_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+
+		const want = "onesie: 200 response could not be used: the response is not a System One result, since it has no answers"
+		if err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
+
 	t.Run("should reject an empty body on a 200", func(t *testing.T) {
 		t.Parallel()
 

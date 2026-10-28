@@ -905,6 +905,14 @@ func TestResponseErrorReason(t *testing.T) {
 
 		checkReason(t, &ResponseError{Status: 200, Err: errors.New("empty response body")}, "200 response could not be used: empty response body")
 	})
+
+	t.Run("should give an answer fault without its prefix", func(t *testing.T) {
+		t.Parallel()
+
+		fault := (&Result{}).Check(Questions{{ID: "q", Question: Noul{}}})
+
+		checkReason(t, &ResponseError{Status: 200, Err: fault}, "200 response could not be used: question 'q' has no answer")
+	})
 }
 
 func TestConnectionErrorReason(t *testing.T) {
@@ -1015,33 +1023,28 @@ type reasoner interface {
 	Reason() string
 }
 
-func TestResultShapeError(t *testing.T) {
+func TestAnswerFault(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
-		err  *resultShapeError
+		err  *AnswerFault
 		want string
 	}{
 		{
 			name: "should report a body that is not an object",
-			err:  &resultShapeError{want: kindObject, got: kindString},
+			err:  &AnswerFault{want: kindObject, got: kindString},
 			want: "the response is not a System One result, since it is a string",
 		},
 		{
 			name: "should report a missing top level field",
-			err:  &resultShapeError{field: "model", fault: faultMissing, want: kindString},
+			err:  &AnswerFault{field: "model", fault: faultMissing, want: kindString},
 			want: "the response is not a System One result, since it has no model, or it is null",
 		},
 		{
 			name: "should report a missing answer field",
-			err:  &resultShapeError{answer: "x", field: "score", fault: faultMissing, want: kindNumber},
+			err:  &AnswerFault{Question: "x", field: "score", fault: faultMissing, want: kindNumber},
 			want: "answer 'x' has no score, or it is null",
-		},
-		{
-			name: "should report a question the response did not answer",
-			err:  &resultShapeError{answer: "q", fault: faultNoAnswer},
-			want: "no answer for question 'q'",
 		},
 	}
 
@@ -1049,9 +1052,7 @@ func TestResultShapeError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := tc.err.Error(); got != tc.want {
-				t.Errorf("\n got: %s\nwant: %s", got, tc.want)
-			}
+			checkReason(t, tc.err, tc.want)
 		})
 	}
 
@@ -1062,9 +1063,9 @@ func TestResultShapeError(t *testing.T) {
 
 		err := result.UnmarshalJSON([]byte(`{"answers":{"x":{"type":"noul"}}}`))
 
-		var shape *resultShapeError
-		if !errors.As(err, &shape) || shape.Unwrap() != nil {
-			t.Errorf("error = %v, want a resultShapeError with no cause", err)
+		var fault *AnswerFault
+		if !errors.As(err, &fault) || fault.Unwrap() != nil {
+			t.Errorf("error = %v, want an AnswerFault with no cause", err)
 		}
 	})
 }
@@ -1077,9 +1078,9 @@ func TestDescribeShape(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{name: "should read an array body's kind from the body", raw: `[1]`, want: "the response is not a System One result, since it is an array"},
-		{name: "should read a number body's kind from the body", raw: `5`, want: "the response is not a System One result, since it is a number"},
-		{name: "should read a string body's kind from the body", raw: `"x"`, want: "the response is not a System One result, since it is a string"},
+		{name: "should read an array body's kind from the body", raw: `[1]`, want: "onesie: the response is not a System One result, since it is an array"},
+		{name: "should read a number body's kind from the body", raw: `5`, want: "onesie: the response is not a System One result, since it is a number"},
+		{name: "should read a string body's kind from the body", raw: `"x"`, want: "onesie: the response is not a System One result, since it is a string"},
 	}
 
 	for _, tc := range tests {
