@@ -3571,6 +3571,20 @@ func TestClientSendPrepared(t *testing.T) {
 		}
 	})
 
+	t.Run("should check the answers of a body that repeats a question id", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: `{"model":"m","answers":{"b":{"type":"noul","noul":0.5}},"usage":{}}`}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		body := `{"state":"s","questions":{"a":{"type":"noul"},"b":{"type":"noul"},"a":{"type":"noul"}}}`
+		_, _, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, body))
+
+		if want := "onesie: 200 response could not be used: question 'a' has no answer"; err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
+
 	t.Run("should run only the decoding checks when the prepared questions do not read", func(t *testing.T) {
 		t.Parallel()
 

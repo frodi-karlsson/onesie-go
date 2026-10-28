@@ -181,8 +181,8 @@ func TestProviderPrepareRaw(t *testing.T) {
 			body: `{"state":"r","questions":{"b":{"type":"box"}},"assets":{"r":{"format":"png","data_base64":"AQ=="}}}`,
 		},
 		{
-			name: "should count each question id once", model: "jev-latest", questionCount: 2,
-			body: `{"questions":{"a":{"type":"noul"},"b":{"type":"noul"},"a":{"type":"noul"}}}`,
+			name: "should count each question id once and read the last of a repeated one", model: "jev-latest", box: true, questionCount: 2,
+			body: `{"questions":{"a":{"type":"noul"},"b":{"type":"noul"},"a":{"type":"box"}}}`,
 		},
 		{name: "should count no questions in a member that is not an object", body: `{"questions":[1]}`, model: "jev-latest"},
 		{name: "should report the default model for an array", body: `[1]`, model: "jev-latest"},

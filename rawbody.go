@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -43,7 +42,8 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 		return nil, err
 	}
 
-	if err = checkQuestionCounts(b.members); err != nil {
+	asked, count := questionsIn(b.members)
+	if err = checkQuestionCounts(asked); err != nil {
 		return nil, err
 	}
 
@@ -54,7 +54,7 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 	scan := scanMembers(b.members)
 	model = orDefault(scan.model, model)
 	via := p.route(model)
-	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext || bodyLongContext}
+	needs := capabilities{images: scan.assets, box: asksBox(asked), longContext: longContext || bodyLongContext}
 
 	if needs.images || needs.box {
 		if fault := checkBodyImages(b.members); fault != nil {
@@ -75,8 +75,6 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 	if err != nil {
 		return nil, err
 	}
-
-	asked, count := questionsIn(b.members)
 
 	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked, count: count}, nil
 }
@@ -119,88 +117,23 @@ func (b *PreparedBody) QuestionCount() int {
 }
 
 func questionsIn(members []member) (Questions, int) {
-	for _, m := range members {
-		if m.name != "questions" {
-			continue
-		}
-
-		var ids map[string]json.RawMessage
-		if json.Unmarshal(m.value, &ids) != nil {
-			return nil, 0
-		}
-
-		asked, err := readQuestions(m.value)
-		if err != nil {
-			return nil, len(ids)
-		}
-
-		return asked, len(ids)
+	at := slices.IndexFunc(members, named("questions"))
+	if at < 0 {
+		return nil, 0
 	}
 
-	return nil, 0
-}
-
-func readQuestions(value jsontext.Value) (Questions, error) {
-	entries, err := readMembers(value)
+	entries, err := readMembers(members[at].value)
 	if err != nil {
-		return nil, err
+		return nil, 0
 	}
 
-	asked := make(Questions, 0, len(entries))
-
-	for _, entry := range entries {
-		if slices.ContainsFunc(asked, func(named NamedQuestion) bool { return named.ID == entry.name }) {
-			return nil, errors.New("a question id is repeated")
-		}
-
-		question, err := readQuestion(entry.value)
-		if err != nil {
-			return nil, err
-		}
-
-		asked = append(asked, NamedQuestion{ID: entry.name, Question: question})
+	// A body whose questions do not read is forwarded, so the server reports it.
+	var asked Questions
+	if asked.UnmarshalJSON(members[at].value) != nil {
+		return nil, len(lastOf(entries))
 	}
 
-	return asked, nil
-}
-
-func readQuestion(value jsontext.Value) (Question, error) {
-	var wire struct {
-		Type     string          `json:"type"`
-		Criteria json.RawMessage `json:"criteria"`
-	}
-
-	if err := json.Unmarshal(value, &wire); err != nil {
-		return nil, err
-	}
-
-	switch wire.Type {
-	case "noul":
-		return Noul{}, nil
-	case "box":
-		return Box{}, nil
-	case "choice":
-		options, err := readMembers(wire.Criteria)
-		if err != nil {
-			return nil, err
-		}
-
-		criteria := make(Criteria, 0, len(options))
-		for _, option := range options {
-			criteria = append(criteria, NamedCriterion{Name: option.name})
-		}
-
-		return Choice{Criteria: criteria}, nil
-	case "score":
-		var levels []json.RawMessage
-		if err := json.Unmarshal(wire.Criteria, &levels); err != nil {
-			return nil, err
-		}
-
-		return Score{Criteria: make([]any, len(levels))}, nil
-	default:
-		return nil, errors.New("the question type is not noul, choice, score or box")
-	}
+	return asked, len(asked)
 }
 
 func lastWins(b jsonBody) jsonBody {
@@ -208,24 +141,33 @@ func lastWins(b jsonBody) jsonBody {
 		return b
 	}
 
-	last := make(map[string]int, len(b.members))
-	for i, m := range b.members {
+	kept := lastOf(b.members)
+	if len(kept) == len(b.members) {
+		return b
+	}
+
+	return b.with(kept)
+}
+
+func lastOf(members []member) []member {
+	last := make(map[string]int, len(members))
+	for i, m := range members {
 		last[m.name] = i
 	}
 
-	if len(last) == len(b.members) {
-		return b
+	if len(last) == len(members) {
+		return members
 	}
 
 	kept := make([]member, 0, len(last))
 
-	for i, m := range b.members {
+	for i, m := range members {
 		if last[m.name] == i {
 			kept = append(kept, m)
 		}
 	}
 
-	return b.with(kept)
+	return kept
 }
 
 func fillModel(b jsonBody, model string) jsonBody {

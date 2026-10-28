@@ -3,6 +3,7 @@ package onesie_test
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -159,6 +160,128 @@ func TestQuestionsMarshalJSON(t *testing.T) {
 
 			if string(got) != tc.want {
 				t.Errorf("Marshal = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestQuestionsUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+		want onesie.Questions
+	}{
+		{
+			name: "should read each kind in order with its instructions and criteria",
+			body: `{"u":{"type":"noul","instructions":"Urgent?","criteria":{"true":"now","false":{"z":1,"a":2}}},` +
+				`"t":{"type":"choice","instructions":["a","b"],"criteria":{"billing":"Money","other":null}},` +
+				`"r":{"type":"score","criteria":["low",{"k":"v"},3,true]},` +
+				`"b":{"type":"box","instructions":"The cat"}}`,
+			want: onesie.Questions{
+				{ID: "u", Question: onesie.Noul{
+					Instructions: "Urgent?",
+					Criteria:     &onesie.NoulCriteria{True: "now", False: json.RawMessage(`{"z":1,"a":2}`)},
+				}},
+				{ID: "t", Question: onesie.Choice{
+					Instructions: json.RawMessage(`["a","b"]`),
+					Criteria:     onesie.Criteria{{Name: "billing", Desc: "Money"}, {Name: "other"}},
+				}},
+				{ID: "r", Question: onesie.Score{Criteria: []any{"low", json.RawMessage(`{"k":"v"}`), 3.0, true}}},
+				{ID: "b", Question: onesie.Box{Instructions: "The cat"}},
+			},
+		},
+		{
+			name: "should keep the last of a repeated id at the last one's position",
+			body: `{"a":{"type":"noul"},"b":{"type":"box"},"a":{"type":"box"}}`,
+			want: onesie.Questions{{ID: "b", Question: onesie.Box{}}, {ID: "a", Question: onesie.Box{}}},
+		},
+		{
+			name: "should keep the last of a repeated option at the last one's position",
+			body: `{"t":{"type":"choice","criteria":{"x":"1","y":"2","x":"3"}}}`,
+			want: onesie.Questions{{ID: "t", Question: onesie.Choice{Criteria: onesie.Criteria{{Name: "y", Desc: "2"}, {Name: "x", Desc: "3"}}}}},
+		},
+		{
+			name: "should keep the last of a repeated field",
+			body: `{"q":{"type":"box","type":"noul"}}`,
+			want: onesie.Questions{{ID: "q", Question: onesie.Noul{}}},
+		},
+		{
+			name: "should read a noul with null criteria as one with none",
+			body: `{"q":{"type":"noul","criteria":null}}`,
+			want: onesie.Questions{{ID: "q", Question: onesie.Noul{}}},
+		},
+		{name: "should read an empty object as no questions", body: `{}`, want: onesie.Questions{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got onesie.Questions
+			if err := json.Unmarshal([]byte(tc.body), &got); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Unmarshal = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("should write an object it read back in its written key order", func(t *testing.T) {
+		t.Parallel()
+
+		const body = `{"q":{"type":"noul","instructions":{"z":1,"a":[2,1]}}}`
+
+		var read onesie.Questions
+		if err := json.Unmarshal([]byte(body), &read); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if written, err := json.Marshal(read); err != nil || string(written) != body {
+			t.Errorf("Marshal = %s, %v, want %s", written, err, body)
+		}
+	})
+
+	refusals := []struct {
+		name     string
+		body     string
+		question string
+		want     string
+	}{
+		{name: "should refuse questions that are not an object", body: `[1]`, want: "onesie: questions must be an object"},
+		{name: "should refuse a question that is not an object", body: `{"q":"noul"}`, question: "q", want: "onesie: question 'q' is not an object"},
+		{name: "should refuse a question with no type", body: `{"q":{"instructions":"x"}}`, question: "q", want: "onesie: question 'q' has no type"},
+		{name: "should match the type name exactly", body: `{"q":{"Type":"noul"}}`, question: "q", want: "onesie: question 'q' has no type"},
+		{name: "should refuse a type that is not a string", body: `{"q":{"type":1}}`, question: "q", want: "onesie: question 'q' has a type that is not a string"},
+		{
+			name: "should refuse an unknown type", body: `{"q":{"type":"tarot"}}`, question: "q",
+			want: "onesie: question 'q' has the type 'tarot', which is not noul, choice, score or box",
+		},
+		{name: "should refuse a choice with no criteria", body: `{"t":{"type":"choice"}}`, question: "t", want: "onesie: choice question 't' needs criteria as an object"},
+		{name: "should refuse a choice whose criteria are a list", body: `{"t":{"type":"choice","criteria":["a"]}}`, question: "t", want: "onesie: choice question 't' needs criteria as an object"},
+		{name: "should refuse a score whose criteria are an object", body: `{"r":{"type":"score","criteria":{"a":1}}}`, question: "r", want: "onesie: score question 'r' needs criteria as an array"},
+		{name: "should refuse a score with null criteria", body: `{"r":{"type":"score","criteria":null}}`, question: "r", want: "onesie: score question 'r' needs criteria as an array"},
+		{name: "should refuse a noul whose criteria are text", body: `{"u":{"type":"noul","criteria":"yes"}}`, question: "u", want: "onesie: noul question 'u' needs criteria as an object, or none"},
+		{
+			name: "should refuse a number too large to read", body: `{"q":{"type":"noul","instructions":1e400}}`, question: "q",
+			want: "onesie: question 'q' has a value that cannot be read: json: cannot unmarshal number 1e400 into Go value of type float64",
+		},
+	}
+
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got onesie.Questions
+
+			err := json.Unmarshal([]byte(tc.body), &got)
+
+			var refused *onesie.ValidationError
+			if !errors.As(err, &refused) || err.Error() != tc.want || refused.Question != tc.question {
+				t.Fatalf("error = %v, want %q naming question %q", err, tc.want, tc.question)
 			}
 		})
 	}
