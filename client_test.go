@@ -3422,12 +3422,14 @@ func TestClientSendPrepared(t *testing.T) {
 	})
 
 	for _, provider := range onesie.Providers() {
-		t.Run("should return the response body as SystemOneRaw does on "+provider.Name(), func(t *testing.T) {
+		t.Run("should return the body SystemOneRaw returns, compacted to one line, on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
-			response := shortAnswer + "\n"
+			const spaced = "{\n  \"model\": \"m\",\n  \"answers\": {\"q\": {\"type\": \"noul\", \"noul\": 0.1}},\n  \"usage\": {}\n}\n"
+
+			response := spaced
 			if provider.Name() == "cloudflare" {
-				response = `{"result":` + shortAnswer + "\n}\n"
+				response = `{"result":` + spaced + "}\n"
 			}
 
 			transport := &recordingTransport{body: response}
@@ -3444,8 +3446,13 @@ func TestClientSendPrepared(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if !bytes.Equal(prepared, unchecked) {
-				t.Errorf("SendPrepared returned %q, want %q as SystemOneRaw returns it", prepared, unchecked)
+			var line bytes.Buffer
+			if err := json.Compact(&line, unchecked); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if string(prepared) != shortAnswer || !bytes.Equal(prepared, line.Bytes()) {
+				t.Errorf("SendPrepared returned %q, want %s, the body SystemOneRaw returns on one line", prepared, shortAnswer)
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package onesie
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -260,7 +261,7 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 }
 
 // SendPrepared sends a body PrepareRaw prepared for this client's provider without preparing it again,
-// and returns its checked result and the response body as SystemOneRaw returns it.
+// and returns its checked result and the response body as the route decoded it, compacted to one line.
 func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...RequestOption) (*Result, json.RawMessage, error) {
 	if body == nil {
 		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Provider.PrepareRaw"}
@@ -295,7 +296,12 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 		return nil, nil, err
 	}
 
-	return result, decoded, nil
+	var line bytes.Buffer
+	if err := json.Compact(&line, decoded); err != nil {
+		return nil, nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
+	}
+
+	return result, line.Bytes(), nil
 }
 
 func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
