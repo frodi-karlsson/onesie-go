@@ -37,6 +37,10 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 	model := modelOr(defaultModel, p.defaultModel)
 	b := fillModel(lastWins(parseBody(raw)), model)
 
+	if err := checkModel(b.members); err != nil {
+		return nil, err
+	}
+
 	bodyLongContext, err := longContextOf(b.members)
 	if err != nil {
 		return nil, err
@@ -92,6 +96,16 @@ func checkJSON(body []byte) error {
 	_, err := compactBody(body)
 
 	return err
+}
+
+func checkModel(members []member) error {
+	for _, m := range members {
+		if m.name == "model" && m.value.Kind() != '"' {
+			return &ValidationError{Message: "model must be a string"}
+		}
+	}
+
+	return nil
 }
 
 // PreparedBody is a raw body PrepareRaw checked and encoded for one provider, which SendPrepared

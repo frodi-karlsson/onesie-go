@@ -292,7 +292,6 @@ func TestClientSystemOneRaw(t *testing.T) {
 		{name: "should route a trimmed model", body: `{"model":" wrapped ",` + questions + `}`, want: "/wrapped"},
 		{name: "should route a body with no model on the default model", body: `{` + questions + `}`, want: "/plain"},
 		{name: "should route a blank model on the default model", body: `{"model":"  ",` + questions + `}`, want: "/plain"},
-		{name: "should route a model that is not a string on the default model", body: `{"model":1,` + questions + `}`, want: "/plain"},
 		{name: "should route a top level that is not an object on the default model", body: `[1]`, want: "/plain"},
 	}
 
@@ -352,6 +351,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 			wantErr: "onesie: attempt timeout must be positive",
 		},
 		{name: "should report an encode error", body: `{"model":"broken",` + questions + `}`, wantErr: "encode failed"},
+		{name: "should refuse a model that is not a string", body: `{"model":1,` + questions + `}`, wantErr: "onesie: model must be a string"},
 	}
 
 	for _, tc := range refusals {
