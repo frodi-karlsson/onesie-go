@@ -56,9 +56,7 @@ func retryDelay(
 ) time.Duration {
 	if policy.RespectRetryAfter && header != nil {
 		if delay, ok := parseRetryAfter(header, now); ok && delay <= policy.MaxRetryAfter {
-			// Floor and jitter the server delay. A Retry-After of zero, or a date already in the
-			// past, would otherwise release every waiting client at the same instant, which is the
-			// stampede the jitter exists to prevent.
+			// A zero or past Retry-After would otherwise release every waiting client at once.
 			if delay < policy.BackoffInitial {
 				delay = policy.BackoffInitial
 			}

@@ -12,7 +12,8 @@ import (
 	"strings"
 )
 
-// Result is one response from the evaluation endpoint.
+// Result is one System One response. SystemOne and SendPrepared return only a Result that
+// passed Check.
 type Result struct {
 	Model     string            `json:"model"`
 	Answers   map[string]Answer `json:"answers"`
@@ -409,7 +410,7 @@ type NoulAnswer struct {
 	Noul float64 `json:"noul"`
 }
 
-// Kind reports the wire type.
+// Kind returns noul.
 func (*NoulAnswer) Kind() string {
 	return "noul"
 }
@@ -429,7 +430,7 @@ type ChoiceAnswer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-// Kind reports the wire type.
+// Kind returns choice.
 func (*ChoiceAnswer) Kind() string {
 	return "choice"
 }
@@ -464,7 +465,7 @@ type ScoreAnswer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-// Kind reports the wire type.
+// Kind returns score.
 func (*ScoreAnswer) Kind() string {
 	return "score"
 }
@@ -490,7 +491,7 @@ type BoxAnswer struct {
 	Confidence float64 `json:"confidence"`
 }
 
-// Kind reports the wire type.
+// Kind returns box.
 func (*BoxAnswer) Kind() string {
 	return "box"
 }

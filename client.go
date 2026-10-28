@@ -131,12 +131,13 @@ func (c *Client) BaseURL() string {
 	return c.baseURL
 }
 
-// BaseURLSource reports where the client's base URL came from.
+// BaseURLSource reports whether the base URL came from an option, the environment, an account or
+// the default.
 func (c *Client) BaseURLSource() BaseURLSource {
 	return c.baseURLSource
 }
 
-// Provider returns the provider this client talks to.
+// Provider returns the provider passed to WithProvider, or TypeSafe when none was.
 func (c *Client) Provider() Provider {
 	return c.provider
 }
@@ -427,7 +428,8 @@ func (c *Client) ListModels(ctx context.Context, opts ...RequestOption) ([]Model
 	return models, nil
 }
 
-// ModelCard describes one model or alias.
+// ModelCard is one model or alias a provider lists. ReleaseDate is a day such as 2026-08-01, or
+// empty when the provider gives none.
 type ModelCard struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`

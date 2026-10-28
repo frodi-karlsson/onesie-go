@@ -26,8 +26,6 @@ const (
 func TestLiveSystemOne(t *testing.T) {
 	t.Parallel()
 
-	// One request carrying every question type. Questions are evaluated in parallel and in
-	// isolation, so batching costs almost nothing over a single question.
 	t.Run("should answer all three question types in one request", func(t *testing.T) {
 		t.Parallel()
 

@@ -111,7 +111,8 @@ func WithUserAgent(name string) Option {
 	}
 }
 
-// WithHTTPClient replaces the transport.
+// WithHTTPClient replaces the HTTP client. New uses a copy that refuses redirects, and leaves the one
+// passed in as it was.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) error {
 		if hc == nil {
@@ -137,7 +138,8 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
-// WithRetry replaces the retry policy.
+// WithRetry replaces the retry policy. It refuses a negative count or duration, a jitter outside 0
+// to 1 and a nil RetryStatus.
 func WithRetry(p RetryPolicy) Option {
 	return func(c *Client) error {
 		if err := p.validate(); err != nil {

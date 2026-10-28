@@ -7,7 +7,7 @@ import (
 	"reflect"
 )
 
-// The question limits the API documents. ValidateQuestions checks them, and SystemOneRaw checks a raw body.
+// The question limits the API documents. ValidateQuestions checks them, and PrepareRaw checks a raw body.
 const (
 	// MaxChoiceOptions is the most options a choice question may have.
 	MaxChoiceOptions = 255
