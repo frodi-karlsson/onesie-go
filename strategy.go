@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"net/http"
 	"slices"
 	"strings"
 )
@@ -34,14 +35,19 @@ type Needs struct {
 	LongContext bool
 }
 
-// Check refuses what SystemOne refuses before it sends req, and sends nothing. It validates req, then
-// refuses what Encode refuses. A blank model is the built in default.
-func (p Provider) Check(req Request) error {
+// Check refuses what SystemOne refuses before it sends req with opts, and sends nothing. It
+// validates req, then refuses what Encode refuses. A blank model is the built in default.
+func (p Provider) Check(req Request, opts ...RequestOption) error {
 	if err := p.check(); err != nil {
 		return err
 	}
 
-	_, err := p.validated(req, false)
+	cfg, err := applyOptions(requestConfig{header: http.Header{}}, opts)
+	if err != nil {
+		return err
+	}
+
+	_, err = p.validated(req, cfg.longContext)
 
 	return err
 }

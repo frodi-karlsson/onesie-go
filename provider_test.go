@@ -276,6 +276,7 @@ func TestProviderCheck(t *testing.T) {
 		name     string
 		provider onesie.Provider
 		req      onesie.Request
+		opts     []onesie.RequestOption
 		wantErr  string
 	}{
 		{name: "should take a request the provider takes", provider: onesie.TypeSafe(), req: photo},
@@ -302,6 +303,19 @@ func TestProviderCheck(t *testing.T) {
 			name: "should refuse a body openrouter would inline past the limit", provider: onesie.OpenRouter(), req: repeated,
 			wantErr: "This provider takes an image once per place it is named, so name each image once",
 		},
+		{
+			name: "should refuse long context from WithLongContext as SystemOne does", provider: onesie.Cloudflare(),
+			req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()},
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+		},
+		{
+			name: "should take WithLongContext on a provider that takes long context", provider: onesie.TypeSafe(),
+			req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()},
+		},
+		{
+			name: "should refuse a failing option", provider: onesie.TypeSafe(), req: onesie.Request{State: "s", Questions: oneNoul()},
+			opts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(0)}, wantErr: "onesie: attempt timeout must be positive",
+		},
 		{name: "should refuse a zero provider", req: onesie.Request{State: "s", Questions: oneNoul()}, wantErr: "onesie: the provider is empty. Use ProviderNamed with typesafe, openrouter, berget, levanto or cloudflare"},
 	}
 
@@ -309,7 +323,7 @@ func TestProviderCheck(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tc.provider.Check(tc.req)
+			err := tc.provider.Check(tc.req, tc.opts...)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
