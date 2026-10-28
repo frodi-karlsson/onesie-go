@@ -714,6 +714,14 @@ func TestNewAPIError(t *testing.T) {
 		{name: "should not read a count refusal from a server error", via: typesafe, status: 500, body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`},
 		{name: "should not read a structured count refusal on berget", via: Berget().route(bergetModel), status: 422, body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`},
 		{
+			name: "should read a count refusal openrouter sends unwrapped", via: openrouter, status: 422, want: true,
+			body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`,
+		},
+		{
+			name: "should read a count refusal the gateway sends unwrapped", via: gateway, status: 400, want: true,
+			body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`,
+		},
+		{
 			name: "should read the gateway's forwarded count refusal", via: gateway, status: 400, want: true,
 			body: `{"errors":[{"message":"Model execution failed (User Input Error): {\"detail\":[{\"type\":\"too_long\",\"loc\":[\"body\",\"questions\",\"rate\",\"score\",\"criteria\"],\"msg\":\"List should have at most 10 items\"}]}","code":7003}]}`,
 		},

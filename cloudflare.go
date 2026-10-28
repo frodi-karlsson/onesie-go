@@ -19,6 +19,7 @@ func cloudflareRoute(model string) route {
 			decode: unwrapResult,
 
 			describeError: readCloudflareMessage,
+			forwarded:     gatewayForwarded,
 			classifyError: classifyBy(cloudflareAuth, unknownModel("No such model")),
 		}
 	}
@@ -30,9 +31,10 @@ func cloudflareRoute(model string) route {
 		decode: unwrapResult,
 
 		describeError: readCloudflareMessage,
+		forwarded:     gatewayForwarded,
 		classifyError: classifyBy(
 			cloudflareAuth, unknownModel("Unknown model"), unknownModel("Model not found"),
-			contextTooLong, boxNotServed, countDetail(gatewayForwarded), questionLimit,
+			contextTooLong, boxNotServed, countDetail, questionLimit,
 		),
 	}
 }
@@ -40,24 +42,26 @@ func cloudflareRoute(model string) route {
 func readCloudflareMessage(body any) string {
 	if fields, isObject := body.(map[string]any); isObject {
 		if text := firstError(fields); text != "" {
-			return trimCloudflare(text)
+			return withoutCloudflarePrefixes(text)
 		}
 	}
 
 	return readMessage(body)
 }
 
-func trimCloudflare(text string) string {
-	text = withoutCloudflarePrefixes(text)
-
-	// AI Gateway forwards TypeSafe's own error body as the rest of the message.
-	if strings.HasPrefix(text, "{") {
-		if inner := readMessage(decodeBody([]byte(text))); inner != "" {
-			return inner
-		}
+func gatewayForwarded(body any) any {
+	fields, isObject := body.(map[string]any)
+	if !isObject {
+		return nil
 	}
 
-	return text
+	// AI Gateway forwards TypeSafe's own error body as the rest of the message.
+	text := withoutCloudflarePrefixes(firstError(fields))
+	if !strings.HasPrefix(text, "{") {
+		return nil
+	}
+
+	return decodeBody([]byte(text))
 }
 
 func withoutCloudflarePrefixes(text string) string {
@@ -71,15 +75,6 @@ func withoutCloudflarePrefixes(text string) string {
 	}
 
 	return strings.TrimPrefix(text, "Model execution failed (User Input Error): ")
-}
-
-func gatewayForwarded(body any) any {
-	fields, isObject := body.(map[string]any)
-	if !isObject {
-		return nil
-	}
-
-	return decodeBody([]byte(withoutCloudflarePrefixes(firstError(fields))))
 }
 
 func clefWireID(model string) (string, bool) {

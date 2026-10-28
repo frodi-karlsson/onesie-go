@@ -86,7 +86,7 @@ func TypeSafe() Provider {
 			encode:       encodeAsIs,
 			decode:       identity,
 			classifyError: classifyBy(
-				unknownModel("Unknown model"), contextTooLong, boxNotServed, countDetail(asSent), questionLimit,
+				unknownModel("Unknown model"), contextTooLong, boxNotServed, countDetail, questionLimit,
 			),
 		}),
 	}
@@ -110,38 +110,47 @@ func OpenRouter() Provider {
 			encode:        encodeAsIs,
 			decode:        identity,
 			describeError: readOpenRouterMessage,
+			forwarded:     openRouterForwarded,
 			classifyError: classifyBy(
 				unknownModel("Unknown model"), unknownModel("does not exist"), contextTooLong, boxNotServed,
-				countDetail(forwardedBody), questionLimit,
+				countDetail, questionLimit,
 			),
 		}),
 	}
 }
 
 func readOpenRouterMessage(body any) string {
-	if fields, isObject := body.(map[string]any); isObject {
-		if nested, isNested := fields["error"].(map[string]any); isNested {
-			if text, isText := nested["message"].(string); isText {
-				return unwrapForwarded(text)
-			}
-		}
+	if text, found := openRouterMessage(body); found {
+		return firstIssue(text)
 	}
 
 	return readMessage(body)
 }
 
-func forwardedBody(body any) any {
-	if fields, isObject := body.(map[string]any); isObject {
-		if nested, isNested := fields["error"].(map[string]any); isNested {
-			if text, isText := nested["message"].(string); isText {
-				if forwarded, ok := forwardedText(text); ok {
-					return decodeBody([]byte(forwarded))
-				}
-			}
+func openRouterForwarded(body any) any {
+	if text, found := openRouterMessage(body); found {
+		if forwarded, ok := forwardedText(text); ok {
+			return decodeBody([]byte(forwarded))
 		}
 	}
 
 	return nil
+}
+
+func openRouterMessage(body any) (string, bool) {
+	fields, isObject := body.(map[string]any)
+	if !isObject {
+		return "", false
+	}
+
+	nested, isNested := fields["error"].(map[string]any)
+	if !isNested {
+		return "", false
+	}
+
+	text, isText := nested["message"].(string)
+
+	return text, isText
 }
 
 func forwardedText(text string) (string, bool) {
@@ -153,13 +162,7 @@ func forwardedText(text string) (string, bool) {
 	return "", false
 }
 
-func unwrapForwarded(text string) string {
-	if forwarded, ok := forwardedText(text); ok {
-		if inner := readMessage(decodeBody([]byte(forwarded))); inner != "" {
-			return inner
-		}
-	}
-
+func firstIssue(text string) string {
 	// OpenRouter's validation puts its issue list in the message as a JSON string.
 	var issues []struct {
 		Path    any    `json:"path"`

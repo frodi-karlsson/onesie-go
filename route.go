@@ -9,7 +9,8 @@ type route struct {
 	decode          func(body []byte) ([]byte, error)
 	requestIDHeader string
 	describeError   func(body any) string
-	classifyError   func(status int, body any, message string, needs Needs) error
+	forwarded       func(body any) any
+	classifyError   func(r reply) error
 }
 
 func (r route) refuse(provider, model string, needs capabilities) error {
@@ -68,12 +69,18 @@ func identity(body []byte) ([]byte, error) {
 	return body, nil
 }
 
-func (r route) reader() func(any) string {
-	if r.describeError == nil {
-		return readMessage
+func (r route) read(body any) string {
+	if r.forwarded != nil {
+		if text := readMessage(r.forwarded(body)); text != "" {
+			return text
+		}
 	}
 
-	return r.describeError
+	if r.describeError != nil {
+		return r.describeError(body)
+	}
+
+	return readMessage(body)
 }
 
 func (r route) classify(status int, body any, message string, needs Needs) error {
@@ -81,5 +88,15 @@ func (r route) classify(status int, body any, message string, needs Needs) error
 		return nil
 	}
 
-	return r.classifyError(status, body, message, needs)
+	return r.classifyError(reply{status: status, body: body, inner: r.inner(body), message: message, needs: needs})
+}
+
+func (r route) inner(body any) any {
+	if r.forwarded != nil {
+		if forwarded := r.forwarded(body); forwarded != nil {
+			return forwarded
+		}
+	}
+
+	return body
 }

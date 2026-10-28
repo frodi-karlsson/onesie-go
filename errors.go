@@ -102,7 +102,6 @@ func NewAPIError(p Provider, model string, needs Needs, status int, body []byte)
 func newAPIError(via route, needs Needs, status int, header http.Header, body []byte, now time.Time) *APIError {
 	parsed := decodeBody(body)
 	retryAfter, _ := parseRetryAfter(header, now)
-	read := via.reader()
 
 	return &APIError{
 		Status:     status,
@@ -112,8 +111,8 @@ func newAPIError(via route, needs Needs, status int, header http.Header, body []
 		RawBody:    body,
 		RetryAfter: retryAfter,
 		Code:       codeOf(parsed),
-		message:    describe(status, header, parsed, body, read, truncate),
-		sentinel:   via.classify(status, parsed, describe(status, header, parsed, body, read, whole), needs),
+		message:    describe(status, header, parsed, body, via.read, truncate),
+		sentinel:   via.classify(status, parsed, describe(status, header, parsed, body, via.read, whole), needs),
 	}
 }
 
