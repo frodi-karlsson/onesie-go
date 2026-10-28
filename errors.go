@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -191,14 +192,45 @@ func (e *TimeoutError) Error() string {
 	return "onesie: " + e.Reason()
 }
 
-// Reason reports the client's deadline that fired, or only that one fired when it was the caller's or
-// the transport's own.
+// Reason reports the client's deadline that fired, or else the host and port the request went to,
+// and never a URL. A failure with no request reads request timed out.
 func (e *TimeoutError) Reason() string {
-	if e.Timeout <= 0 {
-		return "request timed out"
+	if e.Timeout > 0 {
+		return fmt.Sprintf("request timed out after %s", e.Timeout)
 	}
 
-	return fmt.Sprintf("request timed out after %s", e.Timeout)
+	if address := requestAddress(e.Err); address != "" {
+		return "request to " + address + " timed out"
+	}
+
+	return "request timed out"
+}
+
+func requestAddress(err error) string {
+	var failed *url.Error
+	if !errors.As(err, &failed) {
+		return ""
+	}
+
+	parsed, parseErr := url.Parse(failed.URL)
+	if parseErr != nil || parsed.Hostname() == "" {
+		return ""
+	}
+
+	port := parsed.Port()
+	if port == "" {
+		port = defaultPort(parsed.Scheme)
+	}
+
+	return net.JoinHostPort(parsed.Hostname(), port)
+}
+
+func defaultPort(scheme string) string {
+	if scheme == "http" {
+		return "80"
+	}
+
+	return "443"
 }
 
 // Unwrap returns the embedded ConnectionError, so errors.As reaches it.

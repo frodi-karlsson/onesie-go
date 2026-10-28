@@ -1469,9 +1469,9 @@ func TestClientSystemOne(t *testing.T) {
 		timeout bool
 		want    string
 	}{
-		{name: "should read a deadline the transport reports as a timeout", err: context.DeadlineExceeded, timeout: true, want: "onesie: request timed out"},
+		{name: "should read a deadline the transport reports as a timeout", err: context.DeadlineExceeded, timeout: true, want: "onesie: request to api.example:443 timed out"},
 		{
-			name: "should read a dial the network timed out as a timeout", timeout: true, want: "onesie: request timed out",
+			name: "should read a dial the network timed out as a timeout", timeout: true, want: "onesie: request to api.example:443 timed out",
 			err: &net.OpError{Op: "dial", Net: "tcp", Err: netError{timeout: true}},
 		},
 		{

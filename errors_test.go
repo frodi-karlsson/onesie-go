@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1140,6 +1141,20 @@ func TestTimeoutErrorReason(t *testing.T) {
 	}{
 		{name: "should give the timeout", err: &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}, Timeout: time.Second}, want: "request timed out after 1s"},
 		{name: "should say only that a deadline fired when the timeout is unknown", err: &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}}, want: "request timed out"},
+		{
+			name: "should name the host and default port of a request the transport timed out",
+			err:  transportTimedOut("https://user:pass@api.example.com/v1/answer?key=secret"), want: "request to api.example.com:443 timed out",
+		},
+		{name: "should name the port a request gave", err: transportTimedOut("http://localhost:8080/v1"), want: "request to localhost:8080 timed out"},
+		{name: "should bracket an IPv6 host", err: transportTimedOut("https://[::1]/v1"), want: "request to [::1]:443 timed out"},
+		{
+			name: "should give the attempt deadline rather than the host",
+			err: &TimeoutError{
+				ConnectionError: ConnectionError{Err: &url.Error{Op: "Post", URL: "https://api.example.com/v1", Err: context.DeadlineExceeded}},
+				Timeout:         2 * time.Second,
+			},
+			want: "request timed out after 2s",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1149,6 +1164,21 @@ func TestTimeoutErrorReason(t *testing.T) {
 			checkReason(t, tc.err, tc.want)
 		})
 	}
+
+	t.Run("should name the host and port of a live TLS handshake timeout", func(t *testing.T) {
+		t.Parallel()
+
+		err := transportTimeout(t, "https", &http.Transport{TLSHandshakeTimeout: 20 * time.Millisecond})
+
+		var timeout *TimeoutError
+		if !errors.As(err, &timeout) || !regexp.MustCompile(`^request to 127\.0\.0\.1:\d+ timed out$`).MatchString(timeout.Reason()) {
+			t.Errorf("error = %v, want it to name the host and port", err)
+		}
+	})
+}
+
+func transportTimedOut(target string) *TimeoutError {
+	return &TimeoutError{ConnectionError: ConnectionError{Err: &url.Error{Op: "Post", URL: target, Err: os.ErrDeadlineExceeded}}}
 }
 
 func TestAnswerErrorReason(t *testing.T) {
