@@ -1956,7 +1956,7 @@ func TestClientListModels(t *testing.T) {
 		}
 	})
 
-	t.Run("should show the URL without its query when the connection fails", func(t *testing.T) {
+	t.Run("should name only the host when the connection fails", func(t *testing.T) {
 		t.Parallel()
 
 		server := httptest.NewServer(http.NotFoundHandler())
@@ -1968,9 +1968,11 @@ func TestClientListModels(t *testing.T) {
 		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.OpenRouter()), onesie.WithRetry(noRetry))
 
 		_, err := client.ListModels(t.Context())
-		if !errors.Is(err, onesie.ErrConnection) || !strings.Contains(err.Error(), server.URL+"/v1/models") ||
-			strings.Contains(err.Error(), "?") {
-			t.Errorf("error = %v, want it to name %s/v1/models without a query", err, server.URL)
+
+		host := strings.TrimPrefix(server.URL, "http://")
+		if !errors.Is(err, onesie.ErrConnection) || !strings.HasPrefix(err.Error(), "onesie: could not reach "+host+": ") ||
+			strings.Contains(err.Error(), "/v1/models") {
+			t.Errorf("error = %v, want it to name %s and the cause, without the path or query", err, host)
 		}
 	})
 

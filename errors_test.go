@@ -2,10 +2,14 @@ package onesie
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -883,11 +887,51 @@ func TestResponseErrorReason(t *testing.T) {
 func TestConnectionErrorReason(t *testing.T) {
 	t.Parallel()
 
-	t.Run("should give the cause", func(t *testing.T) {
-		t.Parallel()
+	proxy := &net.TCPAddr{IP: net.ParseIP("10.0.0.1"), Port: 8080}
 
-		checkReason(t, &ConnectionError{Err: errors.New("dial failed")}, "connection error: dial failed")
-	})
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "should give the cause of an error with no URL", err: errors.New("dial failed"), want: "connection error: dial failed"},
+		{
+			name: "should name the host and port and the refusal, without the URL or its query",
+			err: &url.Error{Op: "Post", URL: "https://api.example:8443/v1/systemone?key=1", Err: &net.OpError{
+				Op: "dial", Net: "tcp", Err: errors.New("connection refused"),
+			}},
+			want: "could not reach api.example:8443: connection refused",
+		},
+		{
+			name: "should give a failed lookup without the name it looked up",
+			err: &url.Error{Op: "Post", URL: "https://nothing.invalid/v1/systemone", Err: &net.OpError{
+				Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "nothing.invalid", IsNotFound: true},
+			}},
+			want: "could not reach nothing.invalid: no such host",
+		},
+		{
+			name: "should give an unknown certificate authority without its package",
+			err: &url.Error{Op: "Get", URL: "https://api.example/v1/models", Err: &tls.CertificateVerificationError{
+				Err: x509.UnknownAuthorityError{},
+			}},
+			want: "could not reach api.example: certificate signed by unknown authority",
+		},
+		{
+			name: "should never print a proxy address",
+			err: &url.Error{Op: "Get", URL: "https://api.example/v1/models", Err: &net.OpError{
+				Op: "proxyconnect", Net: "tcp", Err: &net.OpError{Op: "dial", Net: "tcp", Addr: proxy, Err: errors.New("connection refused")},
+			}},
+			want: "could not reach api.example: connection refused",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			checkReason(t, &ConnectionError{Err: tc.err}, tc.want)
+		})
+	}
 }
 
 func TestTimeoutErrorReason(t *testing.T) {

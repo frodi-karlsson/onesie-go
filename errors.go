@@ -473,13 +473,36 @@ func (e *ConnectionError) Error() string {
 	return "onesie: " + e.Reason()
 }
 
-// Reason describes the transport failure.
+// Reason names the host and the innermost cause of a failed request, and never its URL or a proxy
+// address. A failure with no request reads connection error.
 func (e *ConnectionError) Reason() string {
+	var failed *url.Error
+	if errors.As(e.Err, &failed) {
+		if parsed, err := url.Parse(failed.URL); err == nil && parsed.Host != "" {
+			return "could not reach " + parsed.Host + ": " + innermostCause(failed.Err)
+		}
+	}
+
 	if e.Err == nil {
 		return "connection error"
 	}
 
 	return "connection error: " + e.Err.Error()
+}
+
+func innermostCause(err error) string {
+	for next := errors.Unwrap(err); next != nil; next = errors.Unwrap(err) {
+		err = next
+	}
+
+	// The text after the last colon, since the net package writes the address it dialled or the
+	// name it looked up before one.
+	text := err.Error()
+	if at := strings.LastIndex(text, ": "); at >= 0 {
+		return text[at+len(": "):]
+	}
+
+	return text
 }
 
 // Unwrap returns the underlying transport error.
