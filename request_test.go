@@ -1,6 +1,7 @@
 package onesie_test
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -215,6 +216,14 @@ func TestUnreferencedAssets(t *testing.T) {
 				Assets:    onesie.Assets{"image-q": img, "img": img, "img2": img},
 			},
 			want: []string{"img"},
+		},
+		{
+			name: "should read a raw state's repeated keys as a raw body's are read",
+			req: onesie.Request{
+				State:     json.RawMessage(`{"photo":"image-s","photo":"none"}`),
+				Questions: questions,
+				Assets:    onesie.Assets{"image-q": img, "image-s": img},
+			},
 		},
 	}
 

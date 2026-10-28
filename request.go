@@ -136,8 +136,7 @@ func UnreferencedAssets(req Request) ([]string, error) {
 }
 
 func stringValues(req Request) ([]string, error) {
-	// Through JSON, so a state of any Go type, a json.RawMessage included, is walked the same way.
-	// Only values are collected, since the API never replaces a reference in an object key.
+	// Through JSON, so a state of any Go type, a json.RawMessage included, is walked as a raw body is.
 	encoded, err := json.Marshal(struct {
 		State     any       `json:"state"`
 		Questions Questions `json:"questions"`
@@ -146,22 +145,17 @@ func stringValues(req Request) ([]string, error) {
 		return nil, unencodable(err)
 	}
 
-	var decoded struct {
-		State     any                       `json:"state"`
-		Questions map[string]map[string]any `json:"questions"`
-	}
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
+	members, err := readMembers(encoded)
+	if err != nil {
 		return nil, unencodable(err)
 	}
 
 	var texts []string
 
-	collectStrings(decoded.State, &texts)
-
-	for _, question := range decoded.Questions {
-		// The type is onesie's own wire field, not text the API replaces references in.
-		delete(question, "type")
-		collectStrings(question, &texts)
+	for _, m := range members {
+		if err := referenceTexts(m, &texts); err != nil {
+			return nil, unencodable(err)
+		}
 	}
 
 	return texts, nil
@@ -169,21 +163,6 @@ func stringValues(req Request) ([]string, error) {
 
 func unencodable(err error) error {
 	return &ValidationError{Message: "the request cannot be encoded: " + err.Error()}
-}
-
-func collectStrings(value any, texts *[]string) {
-	switch typed := value.(type) {
-	case string:
-		*texts = append(*texts, typed)
-	case []any:
-		for _, item := range typed {
-			collectStrings(item, texts)
-		}
-	case map[string]any:
-		for _, item := range typed {
-			collectStrings(item, texts)
-		}
-	}
 }
 
 func sideFits(side int) bool {

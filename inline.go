@@ -237,8 +237,7 @@ func (r *inliner) question(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 			return err
 		}
 
-		// The type is onesie's own wire field, not text the API replaces references in.
-		if key == "type" {
+		if holdsNoReferences(key) {
 			if err := copyValue(enc, dec); err != nil {
 				return err
 			}

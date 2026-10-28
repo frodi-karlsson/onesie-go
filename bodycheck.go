@@ -31,17 +31,12 @@ func scanBodyImages(members []member) error {
 	)
 
 	for _, m := range members {
-		dec := jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)
-
 		var err error
 
-		switch m.name {
-		case "assets":
+		if m.name == "assets" {
 			faults, err = assetFaults(m.value)
-		case "state":
-			err = collectTexts(dec, &texts)
-		case "questions":
-			err = questionTexts(dec, &texts)
+		} else {
+			err = referenceTexts(m, &texts)
 		}
 
 		if err != nil {
@@ -62,6 +57,19 @@ func scanBodyImages(members []member) error {
 	}
 
 	return nil
+}
+
+func referenceTexts(m member, texts *[]string) error {
+	dec := jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)
+
+	switch m.name {
+	case "state":
+		return collectTexts(dec, texts)
+	case "questions":
+		return questionTexts(dec, texts)
+	default:
+		return nil
+	}
 }
 
 func assetFaults(value jsontext.Value) (map[string]*ValidationError, error) {
@@ -222,8 +230,7 @@ func questionMembers(dec *jsontext.Decoder, texts *[]string) error {
 			return err
 		}
 
-		// The type is onesie's own wire field, not text the API replaces references in.
-		if name.String() == "type" {
+		if holdsNoReferences(name.String()) {
 			if err := dec.SkipValue(); err != nil {
 				return err
 			}
@@ -239,6 +246,11 @@ func questionMembers(dec *jsontext.Decoder, texts *[]string) error {
 	_, err := dec.ReadToken()
 
 	return err
+}
+
+func holdsNoReferences(field string) bool {
+	// The type is onesie's own wire field, not text the API replaces references in.
+	return field == "type"
 }
 
 func collectTexts(dec *jsontext.Decoder, texts *[]string) error {
