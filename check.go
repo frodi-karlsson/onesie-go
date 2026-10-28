@@ -10,6 +10,27 @@ import (
 	"strings"
 )
 
+const answerKinds = "noul, choice, score or box"
+
+const (
+	faultWrongKind shapeFault = iota
+	faultMissing
+	faultEmpty
+	faultUnknownType
+)
+
+const (
+	kindNothing jsonKind = iota
+	kindObject
+	kindArray
+	kindString
+	kindNumber
+	kindFiniteNumber
+	kindWholeNumber
+	kindBoolean
+	kindNull
+)
+
 // Check returns an *AnswerFault for the first question, in question order, whose answer is missing
 // or does not fit it, or nil. SystemOne and SendPrepared check every result they return.
 func (r *Result) Check(questions Questions) error {
@@ -231,4 +252,69 @@ func formatNumber(value float64) string {
 	}
 
 	return string(encoded)
+}
+
+type shapeFault int
+
+type jsonKind int
+
+func resultSentence(field string, fault shapeFault, want, got jsonKind) string {
+	const lead = "the response is not a System One result"
+
+	switch {
+	case field == "":
+		return lead + ", since it is " + got.phrase()
+	case fault == faultMissing:
+		return lead + ", since it has no " + field + ", or it is null"
+	default:
+		_, _, verb := fieldPhrase(field)
+
+		return lead + ", since its " + field + " " + verb + " not " + want.phrase()
+	}
+}
+
+func (k jsonKind) phrase() string {
+	switch k {
+	case kindObject:
+		return "an object"
+	case kindArray:
+		return "an array"
+	case kindString:
+		return "a string"
+	case kindNumber:
+		return "a number"
+	case kindFiniteNumber:
+		return "a finite number"
+	case kindWholeNumber:
+		return "a whole number"
+	case kindBoolean:
+		return "a boolean"
+	case kindNull:
+		return "null"
+	default:
+		return "nothing"
+	}
+}
+
+func fieldPhrase(field string) (phrase, bare, verb string) {
+	parent, key, nested := strings.Cut(field, ".")
+
+	switch {
+	case nested && parent == "probabilities":
+		bare = "probability for '" + key + "'"
+	case nested && parent == "legend":
+		bare = "legend entry for '" + key + "'"
+	case nested && parent == "box":
+		bare = "box " + key + " edge"
+	case !nested && strings.HasSuffix(field, "s"):
+		return field, field, "are"
+	default:
+		bare = field
+	}
+
+	if strings.ContainsAny(bare[:1], "aeiou") {
+		return "an " + bare, bare, "is"
+	}
+
+	return "a " + bare, bare, "is"
 }
