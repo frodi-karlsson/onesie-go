@@ -49,6 +49,7 @@ Each provider reads its key from the variable `Provider.EnvAPIKey` names, unless
 
 A request the client refuses before sending matches `onesie.ErrValidation`.
 A response outside 2xx is an `*onesie.APIError`, matched with `errors.Is` against a sentinel such as `onesie.ErrUnknownModel`.
+`SystemOne` returns a `ResponseError` matching `ErrResponse` when an answer does not fit its question.
 Every error type the package defines has `Reason()`, its message without the `onesie: ` prefix.
 An error from the function passed to `onesie.WithAPIKeyFunc` is returned as it is, without one.
 

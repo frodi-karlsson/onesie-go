@@ -14,12 +14,13 @@ func TestValidateBaseURL(t *testing.T) {
 	const unsafe = "onesie: the base URL must not hold @, ? or #"
 
 	tests := []struct {
-		name    string
-		raw     string
-		wantErr string
-		shown   string
-		rule    string
-		secret  string
+		name     string
+		raw      string
+		wantErr  string
+		shown    string
+		rule     string
+		secret   string
+		userInfo bool
 	}{
 		{name: "should accept an https URL", raw: "https://api.example"},
 		{name: "should accept an http URL with a port and a path", raw: "http://localhost:8080/proxy"},
@@ -47,15 +48,15 @@ func TestValidateBaseURL(t *testing.T) {
 		},
 		{
 			name: "should refuse userinfo", raw: "ftp://user:secret@api.example",
-			wantErr: unsafe, rule: "must not hold @, ? or #", secret: "secret",
+			wantErr: unsafe, rule: "must not hold @, ? or #", secret: "secret", userInfo: true,
 		},
 		{
 			name: "should refuse a key that parses as a host", raw: "https://sk-secret/rest@host",
-			wantErr: unsafe, rule: "must not hold @, ? or #", secret: "sk-secret",
+			wantErr: unsafe, rule: "must not hold @, ? or #", secret: "sk-secret", userInfo: true,
 		},
 		{
 			name: "should refuse a password holding a slash", raw: "https://user:pa/ss@host",
-			wantErr: unsafe, rule: "must not hold @, ? or #", secret: "pa",
+			wantErr: unsafe, rule: "must not hold @, ? or #", secret: "pa", userInfo: true,
 		},
 		{
 			name: "should refuse a query", raw: "https://api.example/v1?key=sk-secret",
@@ -96,6 +97,10 @@ func TestValidateBaseURL(t *testing.T) {
 
 			if errors.Is(err, onesie.ErrInsecureBaseURL) {
 				t.Errorf("a shape fault matched ErrInsecureBaseURL")
+			}
+
+			if errors.Is(err, onesie.ErrBaseURLUserInfo) != tc.userInfo {
+				t.Errorf("errors.Is(err, ErrBaseURLUserInfo) = %v, want %v", !tc.userInfo, tc.userInfo)
 			}
 		})
 	}

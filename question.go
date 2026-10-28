@@ -7,7 +7,7 @@ import (
 	"reflect"
 )
 
-// The question limits the API documents. ValidateQuestions checks them, and SystemOneRaw checks a raw body.
+// The question limits the API documents. ValidateQuestions checks them, and PrepareRaw checks a raw body.
 const (
 	// MaxChoiceOptions is the most options a choice question may have.
 	MaxChoiceOptions = 255
@@ -38,7 +38,7 @@ func ValidateQuestions(questions Questions) error {
 		if _, taken := seen[named.ID]; taken {
 			return &ValidationError{
 				Question: named.ID,
-				Message:  fmt.Sprintf("duplicate question id %q", named.ID),
+				Message:  fmt.Sprintf("duplicate question id '%s'", printable(named.ID)),
 			}
 		}
 
@@ -47,7 +47,7 @@ func ValidateQuestions(questions Questions) error {
 		if isNil(named.Question) {
 			return &ValidationError{
 				Question: named.ID,
-				Message:  fmt.Sprintf("question %q must not be nil", named.ID),
+				Message:  fmt.Sprintf("question '%s' must not be nil", printable(named.ID)),
 			}
 		}
 
@@ -202,7 +202,7 @@ func (q Score) validate(name string) error {
 	case len(q.Criteria) < 2:
 		return &ValidationError{
 			Question: name,
-			Message:  fmt.Sprintf("score question %q has %d criteria, at least two are required", name, len(q.Criteria)),
+			Message:  fmt.Sprintf("score question '%s' has %d criteria, at least two are required", printable(name), len(q.Criteria)),
 		}
 	case len(q.Criteria) > MaxScoreLevels:
 		return tooManyLevels(name, len(q.Criteria))
@@ -214,14 +214,14 @@ func (q Score) validate(name string) error {
 func tooManyOptions(name string, count int) error {
 	return &ValidationError{
 		Question: name,
-		Message:  fmt.Sprintf("choice question %q has %d options, and at most %d are allowed", name, count, MaxChoiceOptions),
+		Message:  fmt.Sprintf("choice question '%s' has %d options, and at most %d are allowed", printable(name), count, MaxChoiceOptions),
 	}
 }
 
 func tooManyLevels(name string, count int) error {
 	return &ValidationError{
 		Question: name,
-		Message:  fmt.Sprintf("score question %q has %d levels, and at most %d are allowed", name, count, MaxScoreLevels),
+		Message:  fmt.Sprintf("score question '%s' has %d levels, and at most %d are allowed", printable(name), count, MaxScoreLevels),
 	}
 }
 

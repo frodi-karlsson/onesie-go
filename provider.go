@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -23,6 +24,8 @@ const (
 	cloudflareJev   = "typesafe/jev"
 )
 
+var versionedModel = regexp.MustCompile(`^.+-[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+
 // ProviderNamed returns the provider with this name, as Name reports it. An empty name is TypeSafe.
 func ProviderNamed(name string) (Provider, error) {
 	wanted := strings.TrimSpace(name)
@@ -36,7 +39,7 @@ func ProviderNamed(name string) (Provider, error) {
 		}
 	}
 
-	return Provider{}, &ValidationError{Message: "unknown provider " + name + ". Use " + joinNames(providerNames(), "or")}
+	return Provider{}, &ValidationError{Message: "unknown provider '" + printable(name) + "'. Use " + joinNames(providerNames(), "or")}
 }
 
 func providerNames() []string {
@@ -75,6 +78,7 @@ func TypeSafe() Provider {
 		requestIDHeader: "X-TypeSafe-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
+		pinsVersions:    true,
 		routeFor: oneRoute(route{
 			path:         systemOnePath,
 			takes:        takesEverything(),
@@ -247,6 +251,7 @@ type Provider struct {
 	routeFor        func(model string) route
 	keyCheck        keyCheck
 	accountBaseURL  func(account string) string
+	pinsVersions    bool
 }
 
 // Name is the provider's name, as ProviderNamed takes it.
@@ -285,6 +290,12 @@ func (p Provider) DefaultModel() string {
 // depends on an account.
 func (p Provider) DefaultBaseURL() string {
 	return p.defaultBaseURL
+}
+
+// Pinned reports whether model names one fixed version whose answers never change. Only a TypeSafe
+// name ending in a two or three part version, such as jev-1.13.0, is pinned.
+func (p Provider) Pinned(model string) bool {
+	return p.pinsVersions && versionedModel.MatchString(model)
 }
 
 func (p Provider) check() error {
@@ -397,6 +408,10 @@ func decodeTypeSafeModels(body []byte) ([]ModelCard, error) {
 		return nil, errors.New("expected a models list")
 	}
 
+	for i := range wire.Models {
+		wire.Models[i].ReleaseDate = dayOf(wire.Models[i].ReleaseDate)
+	}
+
 	return wire.Models, nil
 }
 
@@ -422,11 +437,19 @@ func decodeOpenRouterModels(body []byte) ([]ModelCard, error) {
 		cards = append(cards, ModelCard{
 			Name:        model.ID,
 			Description: model.Description,
-			ReleaseDate: time.Unix(model.Created, 0).UTC().Format(time.DateOnly),
+			ReleaseDate: unixDay(model.Created),
 		})
 	}
 
 	return cards, nil
+}
+
+func unixDay(seconds int64) string {
+	if seconds <= 0 {
+		return ""
+	}
+
+	return time.Unix(seconds, 0).UTC().Format(time.DateOnly)
 }
 
 func decodeBergetModels(body []byte) ([]ModelCard, error) {
@@ -447,8 +470,8 @@ func decodeBergetModels(body []byte) ([]ModelCard, error) {
 		return nil, errors.New("expected a models list")
 	}
 
-	// The list holds every model Berget serves, chat and speech included, and only the system-one
-	// ones answer the System One endpoint.
+	// The list holds every model Berget serves, chat and speech included, and only a model whose
+	// model_type is system-one answers the System One endpoint.
 	cards := []ModelCard{}
 
 	for _, model := range wire.Data {
@@ -456,7 +479,7 @@ func decodeBergetModels(body []byte) ([]ModelCard, error) {
 			continue
 		}
 
-		card := ModelCard{Name: model.ID, ReleaseDate: model.ReleaseDate}
+		card := ModelCard{Name: model.ID, ReleaseDate: dayOf(model.ReleaseDate)}
 		if len(model.Aliases) > 0 {
 			card.Description = "aliases " + strings.Join(model.Aliases, ", ")
 		}
@@ -465,4 +488,15 @@ func decodeBergetModels(body []byte) ([]ModelCard, error) {
 	}
 
 	return cards, nil
+}
+
+func dayOf(date string) string {
+	day, _, _ := strings.Cut(strings.TrimSpace(date), "T")
+	day, _, _ = strings.Cut(day, " ")
+
+	if _, err := time.Parse(time.DateOnly, day); err != nil {
+		return ""
+	}
+
+	return day
 }

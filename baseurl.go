@@ -40,7 +40,7 @@ func ValidateBaseURL(raw string) error {
 func checkBaseURL(raw string, source BaseURLSource) *BaseURLError {
 	// Checked before parsing, since url.Parse reads a password holding a slash as a host and a path.
 	if strings.ContainsAny(raw, "@?#") {
-		return newBaseURLError("", source, ruleUnsafe, nil)
+		return newBaseURLError("", source, ruleUnsafe, userInfoKind(raw))
 	}
 
 	parsed, err := url.Parse(raw)
@@ -55,6 +55,14 @@ func checkBaseURL(raw string, source BaseURLSource) *BaseURLError {
 	default:
 		return nil
 	}
+}
+
+func userInfoKind(raw string) error {
+	if strings.Contains(raw, "@") {
+		return ErrBaseURLUserInfo
+	}
+
+	return nil
 }
 
 func shownOf(parsed *url.URL) string {
@@ -101,7 +109,7 @@ func refuseInsecure(raw string, source BaseURLSource) *BaseURLError {
 	return newBaseURLError(shownOf(parsed), source, ruleInsecure, ErrInsecureBaseURL)
 }
 
-// BaseURLSource says where a base URL came from.
+// BaseURLSource is one of the BaseURLFrom constants, or BaseURLSourceUnknown.
 type BaseURLSource int
 
 // BaseURLError is a refused base URL. Shown is its scheme and host when they are safe to show, and

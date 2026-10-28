@@ -50,10 +50,9 @@ func TestProviderNamed(t *testing.T) {
 			t.Fatalf("error got %v, want ErrValidation", err)
 		}
 
-		for _, want := range []string{"nope", "typesafe", "openrouter", "berget", "levanto", "cloudflare"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("error = %q, want it to name %q", err.Error(), want)
-			}
+		const want = "onesie: unknown provider 'nope'. Use typesafe, openrouter, berget, levanto or cloudflare"
+		if err.Error() != want {
+			t.Errorf("error = %q, want %q", err.Error(), want)
 		}
 	})
 }
@@ -112,6 +111,48 @@ func TestProviderRefuse(t *testing.T) {
 
 			if !errors.Is(err, onesie.ErrValidation) || err.Error() != tc.wantErr {
 				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestProviderPinned(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		model    string
+		want     bool
+	}{
+		{name: "should pin a three part version on typesafe", provider: onesie.TypeSafe(), model: "jev-1.13.0", want: true},
+		{name: "should pin a two part version on typesafe", provider: onesie.TypeSafe(), model: "jev-2.0", want: true},
+		{name: "should not pin the latest alias", provider: onesie.TypeSafe(), model: "jev-latest"},
+		{name: "should not pin a one part version", provider: onesie.TypeSafe(), model: "jev-1"},
+		{name: "should not pin a prerelease", provider: onesie.TypeSafe(), model: "jev-1.13.0-rc.1"},
+		{name: "should not pin a four part version", provider: onesie.TypeSafe(), model: "jev-1.2.3.4"},
+		{name: "should not pin a bare version", provider: onesie.TypeSafe(), model: "-1.2"},
+		{name: "should not pin a name with no version", provider: onesie.TypeSafe(), model: "some-model"},
+		{name: "should not pin an empty name", provider: onesie.TypeSafe(), model: ""},
+		{name: "should not pin a version on openrouter", provider: onesie.OpenRouter(), model: "typesafe/jev-1.13"},
+		{name: "should not pin an alias on openrouter", provider: onesie.OpenRouter(), model: "typesafe/jev-latest"},
+		{name: "should not pin a typesafe name on another provider", provider: onesie.OpenRouter(), model: "jev-1.13.0"},
+		{name: "should not pin the default alias on berget", provider: onesie.Berget(), model: "systemone"},
+		{name: "should not pin a canonical id on berget", provider: onesie.Berget(), model: "Qwen/Qwen3.5-2B"},
+		{name: "should not pin a versioned name on berget", provider: onesie.Berget(), model: "jev-1.13.0"},
+		{name: "should not pin the default alias on levanto", provider: onesie.Levanto(), model: "sage-latest"},
+		{name: "should not pin a versioned name on levanto", provider: onesie.Levanto(), model: "levanto-sage-v1.4"},
+		{name: "should not pin jev on cloudflare", provider: onesie.Cloudflare(), model: "typesafe/jev"},
+		{name: "should not pin a versioned name on cloudflare", provider: onesie.Cloudflare(), model: "jev-1.13.0"},
+		{name: "should not pin anything on a zero provider", model: "jev-1.13.0"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.provider.Pinned(tc.model); got != tc.want {
+				t.Errorf("%s Pinned(%q) = %v, want %v", tc.provider.Name(), tc.model, got, tc.want)
 			}
 		})
 	}
@@ -216,6 +257,86 @@ func TestCapabilityError(t *testing.T) {
 			t.Errorf("error = %v, want a CapabilityError for the box", err)
 		}
 	})
+}
+
+func TestProviderCheck(t *testing.T) {
+	t.Parallel()
+
+	square, err := onesie.NewImage(squarePNG(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	box := onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug in image-a"}}}
+	photo := onesie.Request{State: "image-a", Questions: box, Assets: onesie.Assets{"image-a": square}}
+	padded := onesie.Image{Format: "png", Data: append(squarePNG(t), bytes.Repeat([]byte{0}, onesie.MaxBodyBytes/1200)...)}
+	repeated := onesie.Request{State: strings.Repeat("img-a ", 1000), Questions: oneNoul(), Assets: onesie.Assets{"img-a": padded}}
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		req      onesie.Request
+		opts     []onesie.RequestOption
+		wantErr  string
+	}{
+		{name: "should take a request the provider takes", provider: onesie.TypeSafe(), req: photo},
+		{
+			name: "should refuse a request with no questions", provider: onesie.TypeSafe(), req: onesie.Request{State: "s"},
+			wantErr: "onesie: at least one question is required",
+		},
+		{
+			name: "should refuse a box question with no image, which Encode sends", provider: onesie.TypeSafe(),
+			req:     onesie.Request{State: "s", Questions: box},
+			wantErr: "onesie: box question 'mug' needs an image in the request",
+		},
+		{
+			name: "should refuse what the provider's route does not take", provider: onesie.Levanto(),
+			req:     onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}},
+			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do",
+		},
+		{
+			name: "should refuse a blank model as the built in default refuses it", provider: onesie.Cloudflare(),
+			req:     onesie.Request{Model: " ", State: "s", Questions: oneNoul(), LongContext: true},
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+		},
+		{
+			name: "should refuse a body openrouter would inline past the limit", provider: onesie.OpenRouter(), req: repeated,
+			wantErr: "This provider takes an image once per place it is named, so name each image once",
+		},
+		{
+			name: "should refuse long context from WithLongContext as SystemOne does", provider: onesie.Cloudflare(),
+			req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()},
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+		},
+		{
+			name: "should take WithLongContext on a provider that takes long context", provider: onesie.TypeSafe(),
+			req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()},
+		},
+		{
+			name: "should refuse a failing option", provider: onesie.TypeSafe(), req: onesie.Request{State: "s", Questions: oneNoul()},
+			opts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(0)}, wantErr: "onesie: attempt timeout must be positive",
+		},
+		{name: "should refuse a zero provider", req: onesie.Request{State: "s", Questions: oneNoul()}, wantErr: "onesie: the provider is empty. Use ProviderNamed with typesafe, openrouter, berget, levanto or cloudflare"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tc.provider.Check(tc.req, tc.opts...)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				return
+			}
+
+			if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
 }
 
 func TestProviderEncode(t *testing.T) {

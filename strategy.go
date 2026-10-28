@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"net/http"
 	"slices"
 	"strings"
 )
@@ -32,6 +33,31 @@ type Needs struct {
 	Images      bool
 	Box         bool
 	LongContext bool
+}
+
+// Check refuses what SystemOne refuses before it sends req with opts, and sends nothing. It
+// validates req, then refuses what Encode refuses. A blank model is the built in default.
+func (p Provider) Check(req Request, opts ...RequestOption) error {
+	if err := p.check(); err != nil {
+		return err
+	}
+
+	cfg, err := applyOptions(requestConfig{header: http.Header{}}, opts)
+	if err != nil {
+		return err
+	}
+
+	_, err = p.validated(req, cfg.longContext)
+
+	return err
+}
+
+func (p Provider) validated(req Request, longContext bool) (encoded, error) {
+	if err := ValidateRequest(req); err != nil {
+		return encoded{}, err
+	}
+
+	return encodeRequest(p, req, longContext)
 }
 
 // Encode refuses a request this provider's route does not take, then returns the body SystemOne

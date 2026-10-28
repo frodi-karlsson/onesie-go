@@ -26,8 +26,6 @@ const (
 func TestLiveSystemOne(t *testing.T) {
 	t.Parallel()
 
-	// One request carrying every question type. Questions are evaluated in parallel and in
-	// isolation, so batching costs almost nothing over a single question.
 	t.Run("should answer all three question types in one request", func(t *testing.T) {
 		t.Parallel()
 
@@ -502,6 +500,33 @@ func TestLiveSystemOne(t *testing.T) {
 
 		if _, err := client.SystemOneRaw(liveContext(t, time.Minute), body); err != nil {
 			t.Fatalf("SystemOneRaw: unexpected error: %v", err)
+		}
+	})
+
+	t.Run("should send a prepared body and return its checked result", func(t *testing.T) {
+		t.Parallel()
+
+		client := liveClient(t)
+
+		body, err := onesie.MarshalBody(onesie.Request{State: urgentState, Questions: onesie.Questions{
+			{ID: "urgent", Question: onesie.Noul{Instructions: "Is this urgent?"}},
+		}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		prepared, err := client.Provider().PrepareRaw(body, client.DefaultModel())
+		if err != nil {
+			t.Fatalf("PrepareRaw: unexpected error: %v", err)
+		}
+
+		result, raw, err := client.SendPrepared(liveContext(t, time.Minute), prepared)
+		if err != nil {
+			t.Fatalf("SendPrepared: unexpected error: %v", err)
+		}
+
+		if got, _ := result.Noul("urgent"); got == nil || got.Noul < 0.5 || len(raw) == 0 {
+			t.Errorf("urgent = %+v with body %s, want a yes and the response body", got, raw)
 		}
 	})
 

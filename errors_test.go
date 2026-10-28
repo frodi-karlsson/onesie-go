@@ -2,11 +2,17 @@ package onesie
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -367,38 +373,61 @@ func TestNewAPIError(t *testing.T) {
 
 	for _, tc := range []struct {
 		name     string
+		provider Provider
+		model    string
+		needs    Needs
 		status   int
+		body     string
+		reason   string
 		sentinel error
 		not      error
 	}{
 		{
-			name: "should build a 401 from a status and a message alone", status: 401,
-			sentinel: ErrAuthentication, not: ErrServer,
+			name: "should read a 401 with no body as a live response reads it", provider: TypeSafe(), status: 401,
+			reason: "401 status code, no body", sentinel: ErrAuthentication, not: ErrServer,
 		},
 		{
-			name: "should build a 503 from a status and a message alone", status: 503,
-			sentinel: ErrServer, not: ErrAuthentication,
+			name: "should read a 503 with no body as a live response reads it", provider: TypeSafe(), status: 503,
+			reason: "503 status code, no body", sentinel: ErrServer, not: ErrAuthentication,
+		},
+		{
+			name: "should read the route's sentinel from the body", provider: TypeSafe(), status: 400,
+			body: `{"detail":"Unknown model: jev-0.1"}`, reason: "400 Unknown model: jev-0.1", sentinel: ErrUnknownModel,
+		},
+		{
+			name: "should read a box refusal from the request's needs", provider: TypeSafe(), needs: Needs{Box: true}, status: 400,
+			body: `{"detail":"Invalid request"}`, reason: "400 Invalid request", sentinel: ErrNotServed,
+		},
+		{
+			name: "should read the body on the route the model picks", provider: Cloudflare(), model: "clef", status: 400,
+			body:   `{"errors":[{"message":"No such model @cf/cloudflare/clef-0","code":5007}],"success":false}`,
+			reason: "400 No such model @cf/cloudflare/clef-0", sentinel: ErrUnknownModel,
+		},
+		{
+			name: "should read the default model's route for a blank model", provider: Cloudflare(), status: 400,
+			body:   `{"errors":[{"message":"No such model @cf/cloudflare/clef-0","code":5007}],"success":false}`,
+			reason: "400 No such model @cf/cloudflare/clef-0", sentinel: ErrBadRequest, not: ErrUnknownModel,
+		},
+		{
+			name: "should read a status alone from a zero provider", status: 429, body: `{"error":"slow down"}`,
+			reason: "429 slow down", sentinel: ErrRateLimit,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := NewAPIError(tc.status, "mock status")
+			err := NewAPIError(tc.provider, tc.model, tc.needs, tc.status, []byte(tc.body))
 
-			if err.Status != tc.status {
-				t.Errorf("status got %d, want %d", err.Status, tc.status)
-			}
-
-			if err.Error() != "onesie: mock status" || err.Reason() != "mock status" {
-				t.Errorf("message got %q and %q", err.Error(), err.Reason())
+			if err.Status != tc.status || err.Reason() != tc.reason || string(err.RawBody) != tc.body {
+				t.Errorf("error = %d %q holding %q, want %d %q holding %q", err.Status, err.Reason(), err.RawBody, tc.status, tc.reason, tc.body)
 			}
 
 			if !errors.Is(err, tc.sentinel) {
-				t.Errorf("status %d did not match its sentinel", tc.status)
+				t.Errorf("error %q did not match %v", err.Reason(), tc.sentinel)
 			}
 
-			if errors.Is(err, tc.not) {
-				t.Errorf("status %d matched %v", tc.status, tc.not)
+			if tc.not != nil && errors.Is(err, tc.not) {
+				t.Errorf("error %q matched %v", err.Reason(), tc.not)
 			}
 		})
 	}
@@ -792,12 +821,12 @@ func TestAnswerError(t *testing.T) {
 		{
 			name: "should report a missing answer",
 			err:  &AnswerError{Name: "absent", Missing: true},
-			want: `onesie: no answer named "absent"`,
+			want: `onesie: no answer named 'absent'`,
 		},
 		{
 			name: "should report a type mismatch",
 			err:  &AnswerError{Name: "department", Want: "noul", Got: "choice"},
-			want: `onesie: answer "department" is a choice, not a noul`,
+			want: `onesie: answer 'department' is a choice, not a noul`,
 		},
 	}
 
@@ -854,7 +883,7 @@ func TestAPIErrorReason(t *testing.T) {
 	t.Run("should give the status and the message", func(t *testing.T) {
 		t.Parallel()
 
-		checkReason(t, NewAPIError(503, "503 down"), "503 down")
+		checkReason(t, NewAPIError(TypeSafe(), "", Needs{}, 503, []byte(`{"error":"down"}`)), "503 down")
 	})
 }
 
@@ -876,16 +905,115 @@ func TestResponseErrorReason(t *testing.T) {
 
 		checkReason(t, &ResponseError{Status: 200, Err: errors.New("empty response body")}, "200 response could not be used: empty response body")
 	})
+
+	t.Run("should give an answer fault without its prefix", func(t *testing.T) {
+		t.Parallel()
+
+		fault := (&Result{}).Check(Questions{{ID: "q", Question: Noul{}}})
+
+		checkReason(t, &ResponseError{Status: 200, Err: fault}, "200 response could not be used: question 'q' has no answer")
+	})
 }
 
 func TestConnectionErrorReason(t *testing.T) {
 	t.Parallel()
 
-	t.Run("should give the cause", func(t *testing.T) {
-		t.Parallel()
+	proxy := &net.TCPAddr{IP: net.ParseIP("10.0.0.1"), Port: 8080}
 
-		checkReason(t, &ConnectionError{Err: errors.New("dial failed")}, "connection error: dial failed")
-	})
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "should give the cause of an error with no URL", err: errors.New("dial failed"), want: "connection error: dial failed"},
+		{
+			name: "should name the host and port and the refusal, without the URL or its query",
+			err: &url.Error{Op: "Post", URL: "https://api.example:8443/v1/systemone?key=1", Err: &net.OpError{
+				Op: "dial", Net: "tcp", Err: errors.New("connection refused"),
+			}},
+			want: "could not reach api.example:8443: connection refused",
+		},
+		{
+			name: "should give a failed lookup without the name it looked up",
+			err: &url.Error{Op: "Post", URL: "https://nothing.invalid/v1/systemone", Err: &net.OpError{
+				Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "nothing.invalid", IsNotFound: true},
+			}},
+			want: "could not reach nothing.invalid: no such host",
+		},
+		{
+			name: "should give an unknown certificate authority without its package",
+			err: &url.Error{Op: "Get", URL: "https://api.example/v1/models", Err: &tls.CertificateVerificationError{
+				Err: x509.UnknownAuthorityError{},
+			}},
+			want: "could not reach api.example: certificate signed by unknown authority",
+		},
+		{
+			name: "should never print a proxy address",
+			err: &url.Error{Op: "Get", URL: "https://api.example/v1/models", Err: &net.OpError{
+				Op: "proxyconnect", Net: "tcp", Err: &net.OpError{Op: "dial", Net: "tcp", Addr: proxy, Err: errors.New("connection refused")},
+			}},
+			want: "could not reach api.example through a proxy: connection refused",
+		},
+		{
+			name: "should name an expired certificate in plain words",
+			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
+				Reason: x509.Expired, Detail: "current time 2026-10-28T12:00:00Z is after 2026-01-01T00:00:00Z",
+			}}),
+			want: "could not reach api.example: certificate has expired",
+		},
+		{
+			name: "should name a certificate that is not yet valid in plain words",
+			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
+				Reason: x509.Expired, Detail: "current time 2026-10-28T12:00:00Z is before 2027-01-01T00:00:00Z",
+			}}),
+			want: "could not reach api.example: certificate is not yet valid",
+		},
+		{
+			name: "should name another certificate problem without its detail",
+			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
+				Reason: x509.NameConstraintsWithoutSANs, Detail: "ignored detail",
+			}}),
+			want: "could not reach api.example: issuer has name constraints but leaf doesn't have a SAN extension",
+		},
+		{
+			name: "should drop a URL with credentials from a cause with no colon",
+			err:  models(errors.New("proxy http://u:p@proxy.local:3128 refused")),
+			want: "could not reach api.example: proxy refused",
+		},
+		{
+			name: "should drop a cause whose tail is a URL",
+			err:  models(errors.New("dial: https://api.example/v1/models?key=1")),
+			want: "could not reach api.example: connection failed",
+		},
+		{
+			name: "should drop a host with credentials and no scheme",
+			err:  models(errors.New("refused by u:p@proxy.local:3128 upstream")),
+			want: "could not reach api.example: refused by upstream",
+		},
+		{
+			name: "should give the first line of a joined cause",
+			err:  models(errors.Join(errors.New("connection reset"), errors.New("second failure"))),
+			want: "could not reach api.example: connection reset",
+		},
+		{
+			name: "should fall back when a cause ends in a colon",
+			err:  models(errors.New("dial tcp: ")),
+			want: "could not reach api.example: connection failed",
+		},
+		{
+			name: "should drop a URL from an error with no request",
+			err:  errors.New("stopped at http://u:p@proxy.local:3128"),
+			want: "connection error: stopped at",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			checkReason(t, &ConnectionError{Err: tc.err}, tc.want)
+		})
+	}
 }
 
 func TestTimeoutErrorReason(t *testing.T) {
@@ -915,7 +1043,7 @@ func TestAnswerErrorReason(t *testing.T) {
 	t.Run("should say the answer is missing", func(t *testing.T) {
 		t.Parallel()
 
-		checkReason(t, &AnswerError{Name: "a", Missing: true}, `no answer named "a"`)
+		checkReason(t, &AnswerError{Name: "a", Missing: true}, `no answer named 'a'`)
 	})
 }
 
@@ -946,33 +1074,28 @@ type reasoner interface {
 	Reason() string
 }
 
-func TestResultShapeError(t *testing.T) {
+func TestAnswerFault(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
-		err  *resultShapeError
+		err  *AnswerFault
 		want string
 	}{
 		{
 			name: "should report a body that is not an object",
-			err:  &resultShapeError{want: kindObject, got: kindString},
+			err:  &AnswerFault{WholeResponse: true, want: kindObject, got: kindString},
 			want: "the response is not a System One result, since it is a string",
 		},
 		{
 			name: "should report a missing top level field",
-			err:  &resultShapeError{field: "model", fault: faultMissing, want: kindString},
+			err:  &AnswerFault{WholeResponse: true, field: "model", fault: faultMissing, want: kindString},
 			want: "the response is not a System One result, since it has no model, or it is null",
 		},
 		{
 			name: "should report a missing answer field",
-			err:  &resultShapeError{answer: "x", field: "score", fault: faultMissing, want: kindNumber},
+			err:  &AnswerFault{Question: "x", field: "score", fault: faultMissing, want: kindNumber},
 			want: "answer 'x' has no score, or it is null",
-		},
-		{
-			name: "should report a question the response did not answer",
-			err:  &resultShapeError{answer: "q", fault: faultNoAnswer},
-			want: "no answer for question 'q'",
 		},
 	}
 
@@ -980,9 +1103,7 @@ func TestResultShapeError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := tc.err.Error(); got != tc.want {
-				t.Errorf("\n got: %s\nwant: %s", got, tc.want)
-			}
+			checkReason(t, tc.err, tc.want)
 		})
 	}
 
@@ -993,9 +1114,39 @@ func TestResultShapeError(t *testing.T) {
 
 		err := result.UnmarshalJSON([]byte(`{"answers":{"x":{"type":"noul"}}}`))
 
-		var shape *resultShapeError
-		if !errors.As(err, &shape) || shape.Unwrap() != nil {
-			t.Errorf("error = %v, want a resultShapeError with no cause", err)
+		var fault *AnswerFault
+		if !errors.As(err, &fault) || fault.Unwrap() != nil {
+			t.Errorf("error = %v, want an AnswerFault with no cause", err)
 		}
 	})
+}
+
+func TestDescribeShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "should read an array body's kind from the body", raw: `[1]`, want: "onesie: the response is not a System One result, since it is an array"},
+		{name: "should read a number body's kind from the body", raw: `5`, want: "onesie: the response is not a System One result, since it is a number"},
+		{name: "should read a string body's kind from the body", raw: `"x"`, want: "onesie: the response is not a System One result, since it is a string"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mistyped := &json.UnmarshalTypeError{Type: reflect.TypeFor[struct{}]()}
+
+			if got := blamingResponse(describeShape([]byte(tc.raw), mistyped)).Error(); got != tc.want {
+				t.Errorf("describeShape = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func models(cause error) error {
+	return &url.Error{Op: "Get", URL: "https://api.example/v1/models", Err: cause}
 }

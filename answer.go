@@ -12,7 +12,8 @@ import (
 	"strings"
 )
 
-// Result is one response from the evaluation endpoint.
+// Result is one System One response. SystemOne and SendPrepared return only a Result that
+// passed Check.
 type Result struct {
 	Model     string            `json:"model"`
 	Answers   map[string]Answer `json:"answers"`
@@ -93,7 +94,11 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	}
 
 	if err := json.Unmarshal(data, &wire); err != nil {
-		return describeShape(err)
+		return blamingResponse(describeShape(data, err))
+	}
+
+	if wire.Answers == nil {
+		return &AnswerFault{WholeResponse: true, text: "the response is not a System One result, since it has no answers"}
 	}
 
 	r.Model = wire.Model
@@ -112,19 +117,59 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func describeShape(err error) error {
+func blamingResponse(err error) error {
+	var fault *AnswerFault
+	if errors.As(err, &fault) {
+		fault.WholeResponse = true
+	}
+
+	return err
+}
+
+func describeShape(raw []byte, err error) error {
 	var mistyped *json.UnmarshalTypeError
 	if !errors.As(err, &mistyped) {
 		return err
 	}
 
-	return &resultShapeError{
-		field: strings.TrimPrefix(mistyped.Field, "."),
+	field := strings.TrimPrefix(mistyped.Field, ".")
+	want, got := wantedKind(mistyped.Type), kindAt(raw, field)
+
+	if want == kindNumber && got == kindNumber {
+		want = boundedNumber(mistyped.Type)
+	}
+
+	return &AnswerFault{
+		field: field,
 		fault: faultWrongKind,
-		want:  wantedKind(mistyped.Type),
-		got:   foundKind(mistyped.Value),
+		want:  want,
+		got:   got,
 		cause: err,
 	}
+}
+
+func kindAt(raw []byte, field string) jsonKind {
+	if field == "" {
+		return rawKind(raw)
+	}
+
+	parent, key, nested := strings.Cut(field, ".")
+
+	value := memberOf(raw, parent)
+	if nested {
+		value = memberOf(value, key)
+	}
+
+	return rawKind(value)
+}
+
+func memberOf(raw []byte, name string) json.RawMessage {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return nil
+	}
+
+	return members[name]
 }
 
 func wantedKind(wanted reflect.Type) jsonKind {
@@ -151,34 +196,27 @@ func wantedKind(wanted reflect.Type) jsonKind {
 	}
 }
 
-func foundKind(value string) jsonKind {
-	kind, _, _ := strings.Cut(value, " ")
-
-	switch kind {
-	case "string":
-		return kindString
-	case "number":
-		return kindNumber
-	case "bool":
-		return kindBoolean
-	case "array":
-		return kindArray
-	case "object":
-		return kindObject
-	default:
-		return kindNothing
+func boundedNumber(wanted reflect.Type) jsonKind {
+	for wanted.Kind() == reflect.Pointer {
+		wanted = wanted.Elem()
 	}
+
+	if wanted.Kind() == reflect.Float32 || wanted.Kind() == reflect.Float64 {
+		return kindFiniteNumber
+	}
+
+	return kindWholeNumber
 }
 
 func namingAnswer(name string, err error) error {
-	var shape *resultShapeError
-	if !errors.As(err, &shape) {
-		return fmt.Errorf("answer '%s': %w", printable(name), err)
+	var fault *AnswerFault
+	if !errors.As(err, &fault) {
+		fault = &AnswerFault{text: fmt.Sprintf("answer '%s' cannot be read: %v", printable(name), err), cause: err}
 	}
 
-	shape.answer = name
+	fault.Question = name
 
-	return shape
+	return fault
 }
 
 func (r *Result) answer(name string) (Answer, error) {
@@ -199,7 +237,7 @@ type Usage struct {
 
 func decodeAnswer(raw json.RawMessage) (Answer, error) {
 	if kind := rawKind(raw); kind != kindObject {
-		return nil, &resultShapeError{want: kindObject, got: kind}
+		return nil, &AnswerFault{want: kindObject, got: kind}
 	}
 
 	var probe struct {
@@ -207,7 +245,7 @@ func decodeAnswer(raw json.RawMessage) (Answer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &probe); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if probe.Type == nil {
@@ -224,9 +262,9 @@ func decodeAnswer(raw json.RawMessage) (Answer, error) {
 	case "box":
 		return decodeBox(raw)
 	case "":
-		return nil, &resultShapeError{field: "type", fault: faultEmpty, want: kindString}
+		return nil, &AnswerFault{field: "type", fault: faultEmpty, want: kindString}
 	default:
-		return nil, &resultShapeError{field: "type", fault: faultUnknownType, gotType: *probe.Type}
+		return nil, &AnswerFault{field: "type", fault: faultUnknownType, gotType: *probe.Type}
 	}
 }
 
@@ -258,7 +296,7 @@ func decodeNoul(raw json.RawMessage) (*NoulAnswer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if wire.Noul == nil {
@@ -276,7 +314,7 @@ func decodeChoice(raw json.RawMessage) (*ChoiceAnswer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if wire.Choice == nil {
@@ -284,7 +322,7 @@ func decodeChoice(raw json.RawMessage) (*ChoiceAnswer, error) {
 	}
 
 	if *wire.Choice == "" {
-		return nil, &resultShapeError{field: "choice", fault: faultEmpty, want: kindString}
+		return nil, &AnswerFault{field: "choice", fault: faultEmpty, want: kindString}
 	}
 
 	probabilities, err := requireProbabilities(wire.Probabilities)
@@ -304,7 +342,7 @@ func decodeScore(raw json.RawMessage) (*ScoreAnswer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if wire.Score == nil {
@@ -333,7 +371,7 @@ func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
 	}
 
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, describeShape(err)
+		return nil, describeShape(raw, err)
 	}
 
 	if wire.Box == nil {
@@ -360,7 +398,7 @@ func decodeBox(raw json.RawMessage) (*BoxAnswer, error) {
 }
 
 func missingField(field string, want jsonKind) error {
-	return &resultShapeError{field: field, fault: faultMissing, want: want}
+	return &AnswerFault{field: field, fault: faultMissing, want: want}
 }
 
 func requireProbabilities(wire map[string]*float64) (map[string]float64, error) {
@@ -369,7 +407,7 @@ func requireProbabilities(wire map[string]*float64) (map[string]float64, error) 
 	}
 
 	if len(wire) == 0 {
-		return nil, &resultShapeError{field: "probabilities", fault: faultEmpty, want: kindObject}
+		return nil, &AnswerFault{field: "probabilities", fault: faultEmpty, want: kindObject}
 	}
 
 	probabilities := make(map[string]float64, len(wire))
@@ -398,12 +436,12 @@ type NoulAnswer struct {
 	Noul float64 `json:"noul"`
 }
 
-// Kind reports the wire type.
+// Kind returns noul.
 func (*NoulAnswer) Kind() string {
 	return "noul"
 }
 
-// MarshalJSON re-emits the wire shape, including the type discriminator.
+// MarshalJSON writes the wire shape back out, including the type discriminator.
 func (a *NoulAnswer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type string  `json:"type"`
@@ -418,7 +456,7 @@ type ChoiceAnswer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-// Kind reports the wire type.
+// Kind returns choice.
 func (*ChoiceAnswer) Kind() string {
 	return "choice"
 }
@@ -431,7 +469,7 @@ func (a *ChoiceAnswer) Probability(option string) (float64, bool) {
 	return value, ok
 }
 
-// MarshalJSON re-emits the wire shape, including the type discriminator.
+// MarshalJSON writes the wire shape back out, including the type discriminator.
 func (a *ChoiceAnswer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type          string             `json:"type"`
@@ -453,12 +491,12 @@ type ScoreAnswer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-// Kind reports the wire type.
+// Kind returns score.
 func (*ScoreAnswer) Kind() string {
 	return "score"
 }
 
-// MarshalJSON re-emits the wire shape, including the type discriminator.
+// MarshalJSON writes the wire shape back out, including the type discriminator.
 func (a *ScoreAnswer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type          string             `json:"type"`
@@ -472,19 +510,19 @@ func (a *ScoreAnswer) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// BoxAnswer is a Box's edges, each a fraction of the image from its top left corner. The edges are
-// not range checked here, so one bad box cannot fail every other answer in its result.
+// BoxAnswer is a Box's edges, each a fraction of the image from its top left corner. Check refuses a
+// box outside the image, and one bad answer fails its whole result.
 type BoxAnswer struct {
 	Edges      Edges   `json:"box"`
 	Confidence float64 `json:"confidence"`
 }
 
-// Kind reports the wire type.
+// Kind returns box.
 func (*BoxAnswer) Kind() string {
 	return "box"
 }
 
-// MarshalJSON re-emits the wire shape, including the type discriminator.
+// MarshalJSON writes the wire shape back out, including the type discriminator.
 func (a *BoxAnswer) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type       string  `json:"type"`

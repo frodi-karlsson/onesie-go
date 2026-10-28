@@ -102,7 +102,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 		var result onesie.Result
 
 		err := json.Unmarshal([]byte(body), &result)
-		if err == nil || !strings.HasPrefix(err.Error(), `answer 'x' `) {
+		if err == nil || !strings.HasPrefix(err.Error(), `onesie: answer 'x' `) {
 			t.Fatalf("error = %v, want one naming the answer", err)
 		}
 	})
@@ -289,7 +289,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			case tc.refuse && err == nil:
 				t.Fatalf("decoded %s as %+v, want it refused", tc.answer, result.Answers["x"])
-			case tc.refuse && !strings.HasPrefix(err.Error(), `answer 'x' `):
+			case tc.refuse && !strings.HasPrefix(err.Error(), `onesie: answer 'x' `):
 				t.Fatalf("error = %v, want one naming the answer like an unknown type", err)
 			}
 		})
@@ -306,7 +306,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 		var result onesie.Result
 
 		err := json.Unmarshal([]byte(body), &result)
-		if err == nil || err.Error() != `answer 'broken' has no choice, or it is null` {
+		if err == nil || err.Error() != `onesie: answer 'broken' has no choice, or it is null` {
 			t.Fatalf("error = %v, want the broken answer named", err)
 		}
 	})
@@ -321,7 +321,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			var result onesie.Result
 
 			err := json.Unmarshal([]byte(body), &result)
-			if err == nil || err.Error() != `answer 'x' has no probability for 'b', or it is null` {
+			if err == nil || err.Error() != `onesie: answer 'x' has no probability for 'b', or it is null` {
 				t.Fatalf("error = %v, want the null probability of b named", err)
 			}
 		}
@@ -336,7 +336,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			var result onesie.Result
 
 			err := json.Unmarshal([]byte(body), &result)
-			if err == nil || err.Error() != `answer 'x' has no box bottom edge, or it is null` {
+			if err == nil || err.Error() != `onesie: answer 'x' has no box bottom edge, or it is null` {
 				t.Fatalf("error = %v, want the bottom edge named", err)
 			}
 		}
@@ -351,6 +351,16 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			name: "should report a body that is an array",
 			body: `[1]`,
 			text: "the response is not a System One result, since it is an array",
+		},
+		{
+			name: "should report a body with no answers",
+			body: `{"model":"m","usage":{}}`,
+			text: "the response is not a System One result, since it has no answers",
+		},
+		{
+			name: "should report answers that are null",
+			body: `{"model":"m","answers":null}`,
+			text: "the response is not a System One result, since it has no answers",
 		},
 		{
 			name: "should report answers that are not an object",
@@ -396,6 +406,21 @@ func TestResultUnmarshalJSON(t *testing.T) {
 			name: "should report a noul that is not a number",
 			body: `{"answers":{"x":{"type":"noul","noul":"0.9"}}}`,
 			text: "answer 'x' has a noul that is not a number",
+		},
+		{
+			name: "should report a noul too large for a number",
+			body: `{"answers":{"x":{"type":"noul","noul":1e400}}}`,
+			text: "answer 'x' has a noul that is not a finite number",
+		},
+		{
+			name: "should report a probability too large for a number",
+			body: `{"answers":{"x":{"type":"choice","choice":"a","probabilities":{"a":-1e400}}}}`,
+			text: "answer 'x' has a probability for 'a' that is not a finite number",
+		},
+		{
+			name: "should report a token count that is not whole",
+			body: `{"answers":{},"usage":{"input_tokens":1.5}}`,
+			text: "the response is not a System One result, since its usage.input_tokens is not a whole number",
 		},
 		{
 			name: "should report an empty choice",
@@ -470,8 +495,35 @@ func TestResultUnmarshalJSON(t *testing.T) {
 
 			var result onesie.Result
 
-			if err := json.Unmarshal([]byte(tc.body), &result); err == nil || err.Error() != tc.text {
+			if err := json.Unmarshal([]byte(tc.body), &result); err == nil || err.Error() != "onesie: "+tc.text {
 				t.Errorf("error = %v, want %q", err, tc.text)
+			}
+		})
+	}
+
+	blames := []struct {
+		name  string
+		body  string
+		want  string
+		whole bool
+		text  string
+	}{
+		{name: "should blame the whole response that is not an object", body: `[1]`, whole: true, text: "the response is not a System One result, since it is an array"},
+		{name: "should blame the whole response with no answers", body: `{"x":1}`, whole: true, text: "the response is not a System One result, since it has no answers"},
+		{name: "should blame the answer that does not decode", body: `{"answers":{"x":{"type":"tarot"}}}`, want: "x", text: "answer 'x' has the type 'tarot', which is not noul, choice, score or box"},
+		{name: "should blame an answer named by the empty string", body: `{"answers":{"":{"type":"noul"}}}`, text: "answer '' has no noul, or it is null"},
+	}
+
+	for _, tc := range blames {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var result onesie.Result
+
+			var fault *onesie.AnswerFault
+			if err := json.Unmarshal([]byte(tc.body), &result); !errors.As(err, &fault) || fault.Question != tc.want ||
+				fault.WholeResponse != tc.whole || fault.Reason() != tc.text {
+				t.Errorf("error = %v, want an AnswerFault naming %q, whole response %t, reading %q", err, tc.want, tc.whole, tc.text)
 			}
 		})
 	}
@@ -509,6 +561,227 @@ func TestResultUnmarshalJSON(t *testing.T) {
 
 		if noul.Noul != 0.95 {
 			t.Errorf("noul got %v, want 0.95", noul.Noul)
+		}
+	})
+}
+
+func TestResultCheck(t *testing.T) {
+	t.Parallel()
+
+	urgent := onesie.NamedQuestion{ID: "urgent", Question: onesie.Noul{Instructions: "Urgent?"}}
+	team := onesie.NamedQuestion{ID: "team", Question: onesie.Choice{Criteria: onesie.Criteria{{Name: "billing"}, {Name: "technical"}}}}
+	severity := onesie.NamedQuestion{ID: "severity", Question: onesie.Score{Criteria: onesie.Levels("low", "mid", "high")}}
+	bare := onesie.NamedQuestion{ID: "bare", Question: onesie.Score{}}
+	mug := onesie.NamedQuestion{ID: "mug", Question: onesie.Box{Instructions: "the mug"}}
+
+	choice := func(picked string, confidence float64, p map[string]float64) onesie.Answer {
+		return &onesie.ChoiceAnswer{Choice: picked, Confidence: confidence, Probabilities: p}
+	}
+	score := func(value, confidence float64, p map[string]float64) onesie.Answer {
+		return &onesie.ScoreAnswer{Score: value, Confidence: confidence, Probabilities: p}
+	}
+	box := func(edges onesie.Edges, confidence float64) onesie.Answer {
+		return &onesie.BoxAnswer{Edges: edges, Confidence: confidence}
+	}
+	even := map[string]float64{"billing": 0.6, "technical": 0.4}
+	levels := map[string]float64{"0": 0.2, "1": 0.3, "2": 0.5}
+	inside := onesie.Edges{Top: 0.25, Bottom: 0.82, Left: 0.44, Right: 0.84}
+	crossed := "box question 'mug' has a left edge not left of its right edge, or a top edge not above its bottom edge"
+
+	tests := []struct {
+		name     string
+		question onesie.NamedQuestion
+		answer   onesie.Answer
+		want     string
+	}{
+		{name: "should accept a noul inside its range", question: urgent, answer: &onesie.NoulAnswer{Noul: 0.92}},
+		{name: "should accept a choice that fits", question: team, answer: choice("billing", 0.6, even)},
+		{name: "should accept p that two place rounding leaves just off 1", question: onesie.NamedQuestion{
+			ID: "team", Question: onesie.Choice{Criteria: onesie.Criteria{{Name: "a"}, {Name: "b"}, {Name: "c"}}},
+		}, answer: choice("a", 0.1, map[string]float64{"a": 0.33, "b": 0.33, "c": 0.33})},
+		{name: "should accept a score that fits", question: severity, answer: score(1, 0.5, levels)},
+		{name: "should accept a box that fits", question: mug, answer: box(inside, 0.92)},
+		{name: "should refuse a missing answer", question: urgent, want: "question 'urgent' has no answer"},
+		{
+			name: "should refuse a choice answer to a noul question", question: urgent, answer: choice("x", 0.5, nil),
+			want: "question 'urgent' expects a noul answer, got choice",
+		},
+		{
+			name: "should refuse a noul answer to a choice question", question: team, answer: &onesie.NoulAnswer{Noul: 0.4},
+			want: "question 'team' expects a choice answer, got noul",
+		},
+		{
+			name: "should refuse a choice answer to a score question", question: severity, answer: choice("low", 0.5, nil),
+			want: "question 'severity' expects a score answer, got choice",
+		},
+		{
+			name: "should refuse a noul above 1", question: urgent, answer: &onesie.NoulAnswer{Noul: 1.5},
+			want: "question 'urgent' answered 1.5, which lies outside [0,1]",
+		},
+		{
+			name: "should refuse a negative noul", question: urgent, answer: &onesie.NoulAnswer{Noul: -0.1},
+			want: "question 'urgent' answered -0.1, which lies outside [0,1]",
+		},
+		{
+			name: "should refuse a choice that is not an option", question: team, answer: choice("sales", 0.6, even),
+			want: "question 'team' picked 'sales', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should refuse a pick before its p", question: team, answer: choice("sales", 2, map[string]float64{"billing": 3}),
+			want: "question 'team' picked 'sales', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should keep the spaces around a pick it reports", question: team, answer: choice(" billing ", 0.6, even),
+			want: "question 'team' picked ' billing ', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should keep the spaces around a key it reports", question: team,
+			answer: choice("billing", 0.6, map[string]float64{"billing": 0.6, "technical": 0.4, " sales ": 0}),
+			want:   "question 'team' has p for ' sales ', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should drop control characters from a pick it reports", question: team, answer: choice("x\ty\x00", 0.6, even),
+			want: "question 'team' picked 'xy', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should refuse an extra key in p", question: team,
+			answer: choice("billing", 0.6, map[string]float64{"billing": 0.6, "technical": 0.4, "sales": 0}),
+			want:   "question 'team' has p for 'sales', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should refuse a missing option in p", question: team, answer: choice("billing", 0.6, map[string]float64{"billing": 1}),
+			want: "question 'team' has no p for 'technical'",
+		},
+		{
+			name: "should refuse a p outside its range in option order", question: team,
+			answer: choice("billing", 0.6, map[string]float64{"billing": 1.1, "technical": -0.1}),
+			want:   "question 'team' has p for 'billing' of 1.1, which lies outside [0,1]",
+		},
+		{
+			name: "should refuse p that does not add up to 1", question: team,
+			answer: choice("billing", 0.6, map[string]float64{"billing": 0.6, "technical": 0.2}),
+			want:   "question 'team' has p that adds up to 0.8, not 1",
+		},
+		{
+			name: "should refuse a confidence above 1", question: team, answer: choice("billing", 1.2, even),
+			want: "question 'team' has confidence 1.2, which lies outside [0,1]",
+		},
+		{
+			name: "should refuse a score outside its levels", question: severity, answer: score(3, 0.5, levels),
+			want: "question 'severity' has score 3, which lies outside [0,2]",
+		},
+		{
+			name: "should refuse p keyed by label rather than by index", question: severity,
+			answer: score(1, 0.5, map[string]float64{"low": 0.2, "mid": 0.3, "high": 0.5}),
+			want:   "question 'severity' has p for 'high', which is not a level index from 0 to 2",
+		},
+		{
+			name: "should refuse a missing level in p", question: severity, answer: score(1, 0.5, map[string]float64{"0": 0.5, "1": 0.5}),
+			want: "question 'severity' has no p for level 2",
+		},
+		{
+			name: "should refuse a score to a question with no levels", question: bare, answer: score(0, 1, map[string]float64{}),
+			want: "question 'bare' has no levels to score against",
+		},
+		{
+			name: "should refuse a score confidence below 0", question: severity, answer: score(1, -0.5, levels),
+			want: "question 'severity' has confidence -0.5, which lies outside [0,1]",
+		},
+		{
+			name: "should refuse an edge above 1", question: mug, answer: box(onesie.Edges{Top: 0, Bottom: 1.2, Left: 0, Right: 1}, 0.5),
+			want: "box question 'mug' has an edge or a confidence outside [0,1]",
+		},
+		{
+			name: "should refuse a box confidence above 1", question: mug, answer: box(inside, 3),
+			want: "box question 'mug' has an edge or a confidence outside [0,1]",
+		},
+		{
+			name: "should refuse a left edge right of the right edge", question: mug,
+			answer: box(onesie.Edges{Top: 0, Bottom: 1, Left: 0.6, Right: 0.4}, 0.5), want: crossed,
+		},
+		{
+			name: "should refuse a top edge below the bottom edge", question: mug,
+			answer: box(onesie.Edges{Top: 0.9, Bottom: 0.1, Left: 0, Right: 1}, 0.5), want: crossed,
+		},
+		{
+			name: "should blame a question with an empty id, not the whole response", answer: &onesie.NoulAnswer{Noul: 7},
+			question: onesie.NamedQuestion{ID: "", Question: onesie.Noul{Instructions: "Urgent?"}},
+			want:     "question '' answered 7, which lies outside [0,1]",
+		},
+		{
+			name: "should check a question behind a pointer", answer: score(3, 0.5, levels),
+			question: onesie.NamedQuestion{ID: "severity", Question: &onesie.Score{Criteria: onesie.Levels("low", "mid", "high")}},
+			want:     "question 'severity' has score 3, which lies outside [0,2]",
+		},
+		{
+			name: "should check a choice behind a pointer", answer: choice("sales", 0.6, even),
+			question: onesie.NamedQuestion{ID: "team", Question: &onesie.Choice{Criteria: onesie.Criteria{{Name: "billing"}, {Name: "technical"}}}},
+			want:     "question 'team' picked 'sales', which is not one of its options: billing, technical",
+		},
+		{
+			name: "should check the kind of a noul behind a pointer", answer: choice("x", 0.5, nil),
+			question: onesie.NamedQuestion{ID: "urgent", Question: &onesie.Noul{Instructions: "Urgent?"}},
+			want:     "question 'urgent' expects a noul answer, got choice",
+		},
+		{
+			name: "should check a box behind a pointer", answer: box(onesie.Edges{Top: 0, Bottom: 1, Left: 0.6, Right: 0.4}, 0.5),
+			question: onesie.NamedQuestion{ID: "mug", Question: &onesie.Box{Instructions: "the mug"}}, want: crossed,
+		},
+		{
+			name: "should check only the range behind a nil pointer", answer: &onesie.NoulAnswer{Noul: 2},
+			question: onesie.NamedQuestion{ID: "urgent", Question: (*onesie.Score)(nil)},
+			want:     "question 'urgent' answered 2, which lies outside [0,1]",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := &onesie.Result{Answers: map[string]onesie.Answer{}}
+			if tc.answer != nil {
+				result.Answers[tc.question.ID] = tc.answer
+			}
+
+			err := result.Check(onesie.Questions{tc.question})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				return
+			}
+
+			var fault *onesie.AnswerFault
+			if !errors.As(err, &fault) || fault.Question != tc.question.ID || fault.WholeResponse || err.Error() != "onesie: "+tc.want ||
+				fault.Reason() != tc.want {
+				t.Fatalf("error = %v, want an AnswerFault for %s reading %q", err, tc.question.ID, tc.want)
+			}
+		})
+	}
+
+	t.Run("should name the first question in question order", func(t *testing.T) {
+		t.Parallel()
+
+		result := &onesie.Result{Answers: map[string]onesie.Answer{
+			"urgent": &onesie.NoulAnswer{Noul: 2}, "team": choice("sales", 0.6, even),
+		}}
+
+		err := result.Check(onesie.Questions{team, urgent})
+		if err == nil || err.Error() != "onesie: question 'team' picked 'sales', which is not one of its options: billing, technical" {
+			t.Fatalf("error = %v, want the team question named first", err)
+		}
+	})
+
+	t.Run("should ignore an answer no question asked for", func(t *testing.T) {
+		t.Parallel()
+
+		result := &onesie.Result{Answers: map[string]onesie.Answer{
+			"urgent": &onesie.NoulAnswer{Noul: 0.5}, "extra": &onesie.NoulAnswer{Noul: 9},
+		}}
+
+		if err := result.Check(onesie.Questions{urgent}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 }
@@ -552,7 +825,7 @@ func TestResultNoul(t *testing.T) {
 			t.Fatalf("expected an error, got none")
 		}
 
-		want := `onesie: answer "department" is a choice, not a noul`
+		want := `onesie: answer 'department' is a choice, not a noul`
 		if err.Error() != want {
 			t.Errorf("\n got: %s\nwant: %s", err.Error(), want)
 		}

@@ -187,19 +187,19 @@ func TestValidateQuestions(t *testing.T) {
 			questions: onesie.Questions{
 				{ID: "severity", Question: onesie.Score{Criteria: onesie.Levels("Only one")}},
 			},
-			wantErr: `onesie: score question "severity" has 1 criteria, at least two are required`,
+			wantErr: `onesie: score question 'severity' has 1 criteria, at least two are required`,
 		},
 		{
 			name:      "should reject a score with no levels",
 			questions: onesie.Questions{{ID: "severity", Question: onesie.Score{}}},
-			wantErr:   `onesie: score question "severity" has 0 criteria, at least two are required`,
+			wantErr:   `onesie: score question 'severity' has 0 criteria, at least two are required`,
 		},
 		{
 			name: "should reject a score behind a pointer",
 			questions: onesie.Questions{
 				{ID: "severity", Question: &onesie.Score{Criteria: onesie.Levels("Only one")}},
 			},
-			wantErr: `onesie: score question "severity" has 1 criteria, at least two are required`,
+			wantErr: `onesie: score question 'severity' has 1 criteria, at least two are required`,
 		},
 		{
 			name: "should name the first offender in slice order",
@@ -207,7 +207,7 @@ func TestValidateQuestions(t *testing.T) {
 				{ID: "zebra", Question: onesie.Score{Criteria: onesie.Levels("One")}},
 				{ID: "alpha", Question: onesie.Score{Criteria: onesie.Levels("One")}},
 			},
-			wantErr: `onesie: score question "zebra" has 1 criteria, at least two are required`,
+			wantErr: `onesie: score question 'zebra' has 1 criteria, at least two are required`,
 		},
 		{
 			name: "should reject a duplicate question id",
@@ -215,17 +215,25 @@ func TestValidateQuestions(t *testing.T) {
 				{ID: "a", Question: onesie.Noul{Instructions: "one"}},
 				{ID: "a", Question: onesie.Noul{Instructions: "two"}},
 			},
-			wantErr: `onesie: duplicate question id "a"`,
+			wantErr: `onesie: duplicate question id 'a'`,
+		},
+		{
+			name: "should drop control characters from a repeated id",
+			questions: onesie.Questions{
+				{ID: "a\nb", Question: onesie.Noul{Instructions: "one"}},
+				{ID: "a\nb", Question: onesie.Noul{Instructions: "two"}},
+			},
+			wantErr: `onesie: duplicate question id 'ab'`,
 		},
 		{
 			name:      "should reject a nil question",
 			questions: onesie.Questions{{ID: "a", Question: nil}},
-			wantErr:   `onesie: question "a" must not be nil`,
+			wantErr:   `onesie: question 'a' must not be nil`,
 		},
 		{
 			name:      "should reject a typed nil question",
 			questions: onesie.Questions{{ID: "a", Question: (*onesie.Score)(nil)}},
-			wantErr:   `onesie: question "a" must not be nil`,
+			wantErr:   `onesie: question 'a' must not be nil`,
 		},
 		{
 			name: "should accept a valid mixed set",
@@ -254,7 +262,7 @@ func TestValidateQuestions(t *testing.T) {
 		{
 			name:      "should reject a choice over the options limit",
 			questions: onesie.Questions{{ID: "pick", Question: onesie.Choice{Criteria: options(onesie.MaxChoiceOptions + 1)}}},
-			wantErr:   `onesie: choice question "pick" has 256 options, and at most 255 are allowed`,
+			wantErr:   `onesie: choice question 'pick' has 256 options, and at most 255 are allowed`,
 		},
 		{
 			name:      "should count a repeated option name once, as the body keeps one",
@@ -267,7 +275,7 @@ func TestValidateQuestions(t *testing.T) {
 		{
 			name:      "should reject a score over the levels limit",
 			questions: onesie.Questions{{ID: "rate", Question: onesie.Score{Criteria: levels(onesie.MaxScoreLevels + 1)}}},
-			wantErr:   `onesie: score question "rate" has 11 levels, and at most 10 are allowed`,
+			wantErr:   `onesie: score question 'rate' has 11 levels, and at most 10 are allowed`,
 		},
 	}
 

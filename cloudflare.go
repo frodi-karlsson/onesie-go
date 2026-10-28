@@ -204,8 +204,7 @@ func decodeCloudflareModels(body []byte) ([]ModelCard, error) {
 			continue
 		}
 
-		date, _, _ := strings.Cut(model.CreatedAt, " ")
-		cards = append(cards, ModelCard{Name: short, Description: model.Description, ReleaseDate: date})
+		cards = append(cards, ModelCard{Name: short, Description: model.Description, ReleaseDate: dayOf(model.CreatedAt)})
 	}
 
 	return cards, nil

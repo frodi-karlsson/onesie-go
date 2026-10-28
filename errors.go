@@ -1,9 +1,11 @@
 package onesie
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -24,7 +26,6 @@ const (
 	faultMissing
 	faultEmpty
 	faultUnknownType
-	faultNoAnswer
 )
 
 const (
@@ -33,6 +34,8 @@ const (
 	kindArray
 	kindString
 	kindNumber
+	kindFiniteNumber
+	kindWholeNumber
 	kindBoolean
 	kindNull
 )
@@ -80,12 +83,20 @@ var (
 	// ErrInsecureBaseURL matches the BaseURLError New returns for plain http to a host other than
 	// this machine.
 	ErrInsecureBaseURL = errors.New("insecure base URL")
+	// ErrBaseURLUserInfo matches the BaseURLError for a base URL holding @, where a key pasted into
+	// the URL would sit.
+	ErrBaseURLUserInfo = errors.New("base URL holds userinfo")
 )
 
-// NewAPIError builds an APIError from a status and a message, for fakes and mocks. The message
-// carries no prefix, since Error adds it.
-func NewAPIError(status int, message string) *APIError {
-	return &APIError{Status: status, Header: http.Header{}, message: message}
+// NewAPIError builds the APIError a live response with this status and body gets from p's route for
+// model, sentinels included, for fakes and mocks. A blank model is p's built in default.
+func NewAPIError(p Provider, model string, needs Needs, status int, body []byte) *APIError {
+	var via route
+	if p.check() == nil {
+		via = p.route(orDefault(strings.TrimSpace(model), p.defaultModel))
+	}
+
+	return newAPIError(via, needs, status, http.Header{}, body, time.Time{})
 }
 
 func newAPIError(via route, needs Needs, status int, header http.Header, body []byte, now time.Time) *APIError {
@@ -188,7 +199,7 @@ func statusLine(status int) string {
 func firstLine(body string) string {
 	line, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(body), byteOrderMark), "\n")
 
-	return withoutControls(line)
+	return strings.TrimSpace(withoutControls(line))
 }
 
 func printable(text string) string {
@@ -196,13 +207,13 @@ func printable(text string) string {
 }
 
 func withoutControls(text string) string {
-	return strings.TrimSpace(strings.Map(func(r rune) rune {
+	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
 		}
 
 		return r
-	}, text))
+	}, text)
 }
 
 func repeatsStatus(line string, status int) bool {
@@ -473,13 +484,96 @@ func (e *ConnectionError) Error() string {
 	return "onesie: " + e.Reason()
 }
 
-// Reason describes the transport failure.
+// Reason names the host and the innermost cause of a failed request, and never a URL, a proxy
+// address or a credential. A failure with no request reads connection error.
 func (e *ConnectionError) Reason() string {
+	var failed *url.Error
+	if errors.As(e.Err, &failed) {
+		if parsed, err := url.Parse(failed.URL); err == nil && parsed.Host != "" {
+			return "could not reach " + parsed.Host + throughProxy(failed.Err) + ": " + causeOf(failed.Err)
+		}
+	}
+
 	if e.Err == nil {
 		return "connection error"
 	}
 
-	return "connection error: " + e.Err.Error()
+	if shown := withoutAddresses(firstLine(e.Err.Error())); shown != "" {
+		return "connection error: " + shown
+	}
+
+	return "connection error"
+}
+
+func throughProxy(err error) string {
+	var dial *net.OpError
+	for errors.As(err, &dial) {
+		if dial.Op == "proxyconnect" {
+			return " through a proxy"
+		}
+
+		err = dial.Err
+	}
+
+	return ""
+}
+
+func causeOf(err error) string {
+	if problem := certificateProblem(err); problem != "" {
+		return problem
+	}
+
+	for next := errors.Unwrap(err); next != nil; next = errors.Unwrap(err) {
+		err = next
+	}
+
+	// The text after the last colon, since the net package writes the address it dialled or the
+	// name it looked up before one.
+	text, _, _ := strings.Cut(err.Error(), "\n")
+	if at := strings.LastIndex(text, ": "); at >= 0 {
+		text = text[at+len(": "):]
+	}
+
+	if shown := withoutAddresses(firstLine(text)); shown != "" {
+		return shown
+	}
+
+	return "connection failed"
+}
+
+func certificateProblem(err error) string {
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &invalid) && invalid.Reason == x509.Expired {
+		switch {
+		case strings.Contains(invalid.Detail, " is after "):
+			return "certificate has expired"
+		case strings.Contains(invalid.Detail, " is before "):
+			return "certificate is not yet valid"
+		}
+	}
+
+	for ; err != nil; err = errors.Unwrap(err) {
+		if text, isCertificate := strings.CutPrefix(err.Error(), "x509: "); isCertificate {
+			problem, _, _ := strings.Cut(firstLine(text), ": ")
+			problem, _, _ = strings.Cut(problem, " (")
+
+			return withoutAddresses(problem)
+		}
+	}
+
+	return ""
+}
+
+func withoutAddresses(text string) string {
+	kept := make([]string, 0, strings.Count(text, " ")+1)
+
+	for _, token := range strings.Fields(text) {
+		if !strings.Contains(token, "://") && !strings.Contains(token, "@") {
+			kept = append(kept, token)
+		}
+	}
+
+	return strings.Join(kept, " ")
 }
 
 // Unwrap returns the underlying transport error.
@@ -517,7 +611,7 @@ func (e *TimeoutError) Is(target error) bool {
 }
 
 // ResponseError is a 2xx response this client could not use. Err holds the fault, and Usage is
-// what the response billed when its answers failed to decode, nil otherwise.
+// what the response billed whenever its usage member decoded, nil otherwise.
 type ResponseError struct {
 	Status int
 	Body   []byte
@@ -532,6 +626,11 @@ func (e *ResponseError) Error() string {
 
 // Reason describes what could not be read.
 func (e *ResponseError) Reason() string {
+	var fault *AnswerFault
+	if errors.As(e.Err, &fault) {
+		return fmt.Sprintf("%d response could not be used: %s", e.Status, fault.Reason())
+	}
+
 	return fmt.Sprintf("%d response could not be used: %v", e.Status, e.Err)
 }
 
@@ -632,19 +731,24 @@ func (e *AnswerError) Error() string {
 // Reason says whether the answer was absent or of the wrong type.
 func (e *AnswerError) Reason() string {
 	if e.Missing {
-		return fmt.Sprintf("no answer named %q", e.Name)
+		return fmt.Sprintf("no answer named '%s'", printable(e.Name))
 	}
 
-	return fmt.Sprintf("answer %q is a %s, not a %s", e.Name, e.Got, e.Want)
+	return fmt.Sprintf("answer '%s' is a %s, not a %s", printable(e.Name), e.Got, e.Want)
 }
 
-type resultShapeError struct {
-	answer  string
+// AnswerFault is a 2xx response that is not a System One result, or whose answer does not fit the
+// question asked. Question names the answer to blame, unless WholeResponse says the whole response is.
+type AnswerFault struct {
+	Question      string
+	WholeResponse bool
+
 	field   string
 	fault   shapeFault
 	want    jsonKind
 	got     jsonKind
 	gotType string
+	text    string
 	cause   error
 }
 
@@ -652,22 +756,24 @@ type shapeFault int
 
 type jsonKind int
 
-func (e *resultShapeError) Unwrap() error {
-	return e.cause
+// Error is Reason with the package prefix.
+func (e *AnswerFault) Error() string {
+	return "onesie: " + e.Reason()
 }
 
-func (e *resultShapeError) Error() string {
-	field := printable(e.field)
-
-	if e.fault == faultNoAnswer {
-		return "no answer for question '" + printable(e.answer) + "'"
+// Reason names the answer and what is wrong with it, or what is wrong with the whole response.
+func (e *AnswerFault) Reason() string {
+	if e.text != "" {
+		return e.text
 	}
 
-	if e.answer == "" {
+	field := printable(e.field)
+
+	if e.WholeResponse {
 		return resultSentence(field, e.fault, e.want, e.got)
 	}
 
-	name := "answer '" + printable(e.answer) + "'"
+	name := "answer '" + printable(e.Question) + "'"
 	if field == "" {
 		return fmt.Sprintf("%s is %s, not %s", name, e.got.phrase(), e.want.phrase())
 	}
@@ -684,6 +790,11 @@ func (e *resultShapeError) Error() string {
 	default:
 		return fmt.Sprintf("%s has %s that %s not %s", name, phrase, verb, e.want.phrase())
 	}
+}
+
+// Unwrap returns the decoder's error behind a value of the wrong JSON type, or nil.
+func (e *AnswerFault) Unwrap() error {
+	return e.cause
 }
 
 func resultSentence(field string, fault shapeFault, want, got jsonKind) string {
@@ -711,6 +822,10 @@ func (k jsonKind) phrase() string {
 		return "a string"
 	case kindNumber:
 		return "a number"
+	case kindFiniteNumber:
+		return "a finite number"
+	case kindWholeNumber:
+		return "a whole number"
 	case kindBoolean:
 		return "a boolean"
 	case kindNull:

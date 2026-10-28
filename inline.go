@@ -139,7 +139,7 @@ func dataURLOf(ref string, asset rawAsset) (string, error) {
 
 	encoded, err := textOf(asset.data)
 	if err != nil {
-		return "", validationOr(err, fmt.Sprintf("asset '%s' needs data_base64 as a string", ref))
+		return "", validationOr(err, fmt.Sprintf("asset '%s' needs data_base64 as a string", printable(ref)))
 	}
 
 	mime := "image/png"
@@ -237,8 +237,7 @@ func (r *inliner) question(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 			return err
 		}
 
-		// The type is onesie's own wire field, not text the API replaces references in.
-		if key == "type" {
+		if holdsNoReferences(key) {
 			if err := copyValue(enc, dec); err != nil {
 				return err
 			}

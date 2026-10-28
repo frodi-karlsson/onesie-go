@@ -50,6 +50,15 @@ func TestDecodeOpenRouterModels(t *testing.T) {
 		}
 	})
 
+	t.Run("should leave the date empty for a created of zero", func(t *testing.T) {
+		t.Parallel()
+
+		cards, err := decodeOpenRouterModels([]byte(`{"data":[{"id":"x","created":0}]}`))
+		if err != nil || len(cards) != 1 || cards[0].ReleaseDate != "" {
+			t.Errorf("cards = %+v, %v, want one card with no date", cards, err)
+		}
+	})
+
 	t.Run("should return an empty list for empty data", func(t *testing.T) {
 		t.Parallel()
 
@@ -62,6 +71,31 @@ func TestDecodeOpenRouterModels(t *testing.T) {
 			t.Errorf("cards = %#v, want an empty slice", cards)
 		}
 	})
+}
+
+func TestDecodeTypeSafeModels(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		date string
+		want string
+	}{
+		{name: "should keep a day as it is", date: "2026-08-01", want: "2026-08-01"},
+		{name: "should cut a timestamp to its day", date: "2026-08-01 12:00:00", want: "2026-08-01"},
+		{name: "should leave a date that does not parse empty", date: "08/01/2026"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cards, err := decodeTypeSafeModels([]byte(`{"models":[{"name":"jev-latest","release_date":"` + tc.date + `"}]}`))
+			if err != nil || len(cards) != 1 || cards[0].ReleaseDate != tc.want {
+				t.Errorf("cards = %+v, %v, want one card dated %q", cards, err, tc.want)
+			}
+		})
+	}
 }
 
 func TestDecodeBergetModels(t *testing.T) {
@@ -114,6 +148,33 @@ func TestDecodeBergetModels(t *testing.T) {
 
 		if len(cards) != 1 || cards[0] != (ModelCard{Name: "x"}) {
 			t.Errorf("cards = %+v, want one card named x", cards)
+		}
+	})
+
+	t.Run("should write every date as a day", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			date string
+			want string
+		}{
+			{name: "should keep a day as it is", date: "2026-09-23", want: "2026-09-23"},
+			{name: "should cut a timestamp to its day", date: "2026-09-23T10:00:00Z", want: "2026-09-23"},
+			{name: "should leave a date that does not parse empty", date: "soon"},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				body := `{"data":[{"id":"x","model_type":"system-one","release_date":"` + tc.date + `"}]}`
+
+				cards, err := decodeBergetModels([]byte(body))
+				if err != nil || len(cards) != 1 || cards[0].ReleaseDate != tc.want {
+					t.Errorf("cards = %+v, %v, want one card dated %q", cards, err, tc.want)
+				}
+			})
 		}
 	})
 
