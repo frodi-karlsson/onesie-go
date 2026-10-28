@@ -3417,6 +3417,35 @@ func TestClientSendPrepared(t *testing.T) {
 		}
 	})
 
+	for _, provider := range onesie.Providers() {
+		t.Run("should return the response body as SystemOneRaw does on "+provider.Name(), func(t *testing.T) {
+			t.Parallel()
+
+			response := shortAnswer + "\n"
+			if provider.Name() == "cloudflare" {
+				response = `{"result":` + shortAnswer + "\n}\n"
+			}
+
+			transport := &recordingTransport{body: response}
+			client, _ := newTestClient(t, "https://api.example", onesie.WithProvider(provider),
+				onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			_, prepared, err := client.SendPrepared(t.Context(), prepare(t, provider, client, asked))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			unchecked, err := client.SystemOneRaw(t.Context(), json.RawMessage(asked))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if !bytes.Equal(prepared, unchecked) {
+				t.Errorf("SendPrepared returned %q, want %q as SystemOneRaw returns it", prepared, unchecked)
+			}
+		})
+	}
+
 	t.Run("should send long context as it was prepared", func(t *testing.T) {
 		t.Parallel()
 

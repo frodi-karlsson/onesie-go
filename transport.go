@@ -312,6 +312,13 @@ func decodeInto(res *rawResponse, shown string, out any, decode func([]byte) ([]
 		return &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
 
+	// Assigned, since json.Unmarshal into a RawMessage drops the whitespace around the value.
+	if raw, isRaw := out.(*json.RawMessage); isRaw {
+		*raw = body
+
+		return nil
+	}
+
 	if err = json.Unmarshal(body, out); err != nil {
 		return &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
