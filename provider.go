@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +20,7 @@ const (
 const (
 	typeSafeBaseURL = "https://api.typesafe.ai"
 	jevLatest       = "jev-latest"
+	jevPreview      = "jev-preview"
 	bergetModel     = "systemone"
 	levantoModel    = "sage-latest"
 	cloudflareJev   = "typesafe/jev"
@@ -75,6 +77,7 @@ func TypeSafe() Provider {
 		envBaseURL:      "TYPESAFE_BASE_URL",
 		envDefaultModel: "TYPESAFE_DEFAULT_MODEL",
 		defaultModel:    jevLatest,
+		boxModel:        jevPreview,
 		requestIDHeader: "X-TypeSafe-Request-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
@@ -86,7 +89,7 @@ func TypeSafe() Provider {
 			encode:       encodeAsIs,
 			decode:       identity,
 			classifyError: classifyBy(
-				unknownModel("Unknown model"), contextTooLong, boxNotServed, countDetail(asSent), questionLimit,
+				unknownModel("Unknown model"), contextTooLong, boxNotServed, countDetail, questionLimit,
 			),
 		}),
 	}
@@ -99,6 +102,7 @@ func OpenRouter() Provider {
 		defaultBaseURL:  "https://openrouter.ai/api",
 		envAPIKey:       "OPENROUTER_API_KEY",
 		defaultModel:    jevLatest,
+		boxModel:        jevPreview,
 		requestIDHeader: "X-Generation-Id",
 		modelsPath:      "/v1/models?output_modalities=decisions",
 		decodeModels:    decodeOpenRouterModels,
@@ -110,56 +114,62 @@ func OpenRouter() Provider {
 			encode:        encodeAsIs,
 			decode:        identity,
 			describeError: readOpenRouterMessage,
+			forwarded:     openRouterForwarded,
 			classifyError: classifyBy(
 				unknownModel("Unknown model"), unknownModel("does not exist"), contextTooLong, boxNotServed,
-				countDetail(forwardedBody), questionLimit,
+				countDetail, questionLimit,
 			),
 		}),
 	}
 }
 
 func readOpenRouterMessage(body any) string {
-	if fields, isObject := body.(map[string]any); isObject {
-		if nested, isNested := fields["error"].(map[string]any); isNested {
-			if text, isText := nested["message"].(string); isText {
-				return unwrapForwarded(text)
-			}
-		}
+	if text, found := openRouterMessage(body); found {
+		return firstIssue(text)
 	}
 
 	return readMessage(body)
 }
 
-func forwardedBody(body any) any {
-	if fields, isObject := body.(map[string]any); isObject {
-		if nested, isNested := fields["error"].(map[string]any); isNested {
-			if text, isText := nested["message"].(string); isText {
-				if forwarded, ok := forwardedText(text); ok {
-					return decodeBody([]byte(forwarded))
-				}
-			}
+func openRouterForwarded(body any) any {
+	if text, found := openRouterMessage(body); found {
+		if forwarded, ok := forwardedText(text); ok {
+			return decodeBody([]byte(forwarded))
 		}
 	}
 
 	return nil
 }
 
-func forwardedText(text string) (string, bool) {
-	// OpenRouter forwards a TypeSafe error as the text HTTP 400: followed by TypeSafe's body.
-	if rest, ok := strings.CutPrefix(text, "HTTP "); ok && len(rest) > 5 && rest[3] == ':' {
-		return strings.TrimSpace(rest[4:]), true
+func openRouterMessage(body any) (string, bool) {
+	fields, isObject := body.(map[string]any)
+	if !isObject {
+		return "", false
 	}
 
-	return "", false
+	nested, isNested := fields["error"].(map[string]any)
+	if !isNested {
+		return "", false
+	}
+
+	text, isText := nested["message"].(string)
+
+	return text, isText
 }
 
-func unwrapForwarded(text string) string {
-	if forwarded, ok := forwardedText(text); ok {
-		if inner := readMessage(decodeBody([]byte(forwarded))); inner != "" {
-			return inner
-		}
+func forwardedText(text string) (string, bool) {
+	// OpenRouter forwards a TypeSafe error as the text HTTP 400: followed by TypeSafe's body.
+	rest, isForwarded := strings.CutPrefix(text, "HTTP ")
+	code, body, hasColon := strings.Cut(rest, ":")
+
+	if status, err := strconv.Atoi(code); !isForwarded || !hasColon || err != nil || status < 100 || status > 599 {
+		return "", false
 	}
 
+	return strings.TrimSpace(body), true
+}
+
+func firstIssue(text string) string {
 	// OpenRouter's validation puts its issue list in the message as a JSON string.
 	var issues []struct {
 		Path    any    `json:"path"`
@@ -245,6 +255,7 @@ type Provider struct {
 	envDefaultModel string
 	envAccountID    string
 	defaultModel    string
+	boxModel        string
 	requestIDHeader string
 	modelsPath      string
 	decodeModels    func([]byte) ([]ModelCard, error)
@@ -286,6 +297,38 @@ func (p Provider) DefaultModel() string {
 	return p.defaultModel
 }
 
+// BoxModel names a model known to answer a box question, or is empty when none is known. Refuse
+// says whether a model takes a box at all.
+func (p Provider) BoxModel() string {
+	return p.boxModel
+}
+
+// ResponseBody encodes result as the route for model returns it, a blank model being the default. It
+// leaves out the request id, which travels in a response header, so a fake that wants one sets that header.
+func (p Provider) ResponseBody(model string, result *Result) ([]byte, error) {
+	if err := p.check(); err != nil {
+		return nil, err
+	}
+
+	if result == nil {
+		return nil, &ValidationError{Message: "the result is nil"}
+	}
+
+	inBody := *result
+	inBody.RequestID = ""
+
+	body, err := json.Marshal(&inBody)
+	if err != nil {
+		return nil, err
+	}
+
+	if via := p.route(modelOr(model, p.defaultModel)); via.wrapResult != nil {
+		return via.wrapResult(body)
+	}
+
+	return body, nil
+}
+
 // DefaultBaseURL is the base URL used when nothing overrides it, or is empty when the base URL
 // depends on an account.
 func (p Provider) DefaultBaseURL() string {
@@ -316,7 +359,15 @@ type keyCheckMethod int
 // ResolveModel reports the model a request carries under this provider, so a caller that prints a
 // request without a client fills the model as a client would.
 func (p Provider) ResolveModel(model string, lookupEnv func(string) (string, bool)) string {
-	return orDefault(orEnv(model, lookupEnv, p.envDefaultModel), p.defaultModel)
+	return modelOr(orEnv(model, lookupEnv, p.envDefaultModel), p.defaultModel)
+}
+
+func modelOr(model, fallback string) string {
+	if named := strings.TrimSpace(model); named != "" {
+		return named
+	}
+
+	return fallback
 }
 
 func (p Provider) route(model string) route {

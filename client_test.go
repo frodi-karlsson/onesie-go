@@ -3,11 +3,14 @@ package onesie_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -1459,6 +1462,77 @@ func TestClientSystemOne(t *testing.T) {
 			t.Errorf("error got %v, want ErrConnection", err)
 		}
 	})
+
+	for _, tc := range []struct {
+		name    string
+		err     error
+		timeout bool
+		want    string
+	}{
+		{name: "should read a deadline the transport reports as a timeout", err: context.DeadlineExceeded, timeout: true, want: "onesie: request to api.example:443 timed out"},
+		{
+			name: "should read a dial the network timed out as a timeout", timeout: true, want: "onesie: request to api.example:443 timed out",
+			err: &net.OpError{Op: "dial", Net: "tcp", Err: netError{timeout: true}},
+		},
+		{
+			name: "should leave a network error that is not a timeout a connection error",
+			err:  &net.OpError{Op: "dial", Net: "tcp", Err: netError{}}, want: "onesie: could not reach api.example: network failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client, _, _ := newScriptedClient(t, []scriptedReply{{err: tc.err}})
+
+			_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+
+			var timedOut *onesie.TimeoutError
+			if errors.As(err, &timedOut) != tc.timeout || !errors.Is(err, onesie.ErrConnection) || err.Error() != tc.want {
+				t.Fatalf("error = %v, want %q, a timeout: %t", err, tc.want, tc.timeout)
+			}
+
+			if tc.timeout && timedOut.Timeout != 0 {
+				t.Errorf("Timeout = %s, want zero", timedOut.Timeout)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name      string
+		notBefore time.Time
+		notAfter  time.Time
+		detail    string
+		want      string
+	}{
+		{
+			name: "should name a certificate that expired by the client's clock", want: "onesie: could not reach api.example: certificate has expired",
+			notBefore: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), notAfter: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			detail: "current time 2026-09-20T12:00:00Z is after 2026-01-01T00:00:00Z",
+		},
+		{
+			name: "should name a certificate not yet valid by the client's clock", want: "onesie: could not reach api.example: certificate is not yet valid",
+			notBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), notAfter: time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC),
+			detail: "current time 2026-09-20T12:00:00Z is before 2027-01-01T00:00:00Z",
+		},
+		{
+			name: "should keep the general wording for a certificate valid by the client's clock", want: "onesie: could not reach api.example: certificate has expired or is not yet valid",
+			notBefore: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), notAfter: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+			detail: "current time 2027-06-01T00:00:00Z is after 2027-01-01T00:00:00Z",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			refused := &tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
+				Cert: &x509.Certificate{NotBefore: tc.notBefore, NotAfter: tc.notAfter}, Reason: x509.Expired, Detail: tc.detail,
+			}}
+			client, _, _ := newScriptedClient(t, []scriptedReply{{err: refused}})
+
+			if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err == nil || err.Error() != tc.want {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
 
 	t.Run("should retry a failed request when the policy allows it", func(t *testing.T) {
 		t.Parallel()
@@ -3313,6 +3387,10 @@ func TestClientSystemOneRaw(t *testing.T) {
 	}{
 		{name: "a body that is not JSON", body: `{"state":1,`, want: "onesie: the request body is not JSON: "},
 		{name: "a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", want: "onesie: the request body is not valid UTF-8"},
+		{
+			name: "a question of an unknown type", body: `{"state":"s","questions":{"q":{"type":"tarot"}}}`,
+			want: "onesie: question 'q' has the type 'tarot', which is not noul, choice, score or box",
+		},
 	} {
 		for _, provider := range onesie.Providers() {
 			t.Run("should refuse "+bad.name+" on "+provider.Name()+" before any request", func(t *testing.T) {
@@ -3418,12 +3496,14 @@ func TestClientSendPrepared(t *testing.T) {
 	})
 
 	for _, provider := range onesie.Providers() {
-		t.Run("should return the response body as SystemOneRaw does on "+provider.Name(), func(t *testing.T) {
+		t.Run("should return the same one line body SystemOneRaw returns on "+provider.Name(), func(t *testing.T) {
 			t.Parallel()
 
-			response := shortAnswer + "\n"
+			const spaced = "{\n  \"model\": \"m\",\n  \"answers\": {\"q\": {\"type\": \"noul\", \"noul\": 0.1}},\n  \"usage\": {}\n}\n"
+
+			response := spaced
 			if provider.Name() == "cloudflare" {
-				response = `{"result":` + shortAnswer + "\n}\n"
+				response = `{"result":` + spaced + "}\n"
 			}
 
 			transport := &recordingTransport{body: response}
@@ -3440,8 +3520,8 @@ func TestClientSendPrepared(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if !bytes.Equal(prepared, unchecked) {
-				t.Errorf("SendPrepared returned %q, want %q as SystemOneRaw returns it", prepared, unchecked)
+			if string(prepared) != shortAnswer || !bytes.Equal(prepared, unchecked) {
+				t.Errorf("SendPrepared returned %q and SystemOneRaw %q, want both %s", prepared, unchecked, shortAnswer)
 			}
 		})
 	}
@@ -3571,15 +3651,30 @@ func TestClientSendPrepared(t *testing.T) {
 		}
 	})
 
-	t.Run("should run only the decoding checks when the prepared questions do not read", func(t *testing.T) {
+	t.Run("should check the answers of a body that repeats a question id", func(t *testing.T) {
 		t.Parallel()
 
-		transport := &recordingTransport{body: `{"model":"m","answers":{},"usage":{}}`}
+		transport := &recordingTransport{body: `{"model":"m","answers":{"b":{"type":"noul","noul":0.5}},"usage":{}}`}
 		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
 
+		body := `{"state":"s","questions":{"a":{"type":"noul"},"b":{"type":"noul"},"a":{"type":"noul"}}}`
+		_, _, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, body))
+
+		if want := "onesie: 200 response could not be used: question 'a' has no answer"; err == nil || err.Error() != want {
+			t.Fatalf("error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("should never prepare a body whose questions do not read", func(t *testing.T) {
+		t.Parallel()
+
 		body := `{"state":"s","questions":{"q":{"type":"tarot"}}}`
-		if _, _, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, body)); err != nil {
-			t.Fatalf("unexpected error: %v", err)
+
+		_, err := onesie.TypeSafe().PrepareRaw(json.RawMessage(body), "")
+
+		var refused *onesie.ValidationError
+		if !errors.As(err, &refused) || refused.Question != "q" {
+			t.Fatalf("error = %v, want a ValidationError naming q", err)
 		}
 	})
 }
@@ -3810,6 +3905,58 @@ func TestMarshalBody(t *testing.T) {
 	}
 }
 
+func TestMarshalQuestionsBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  onesie.Request
+		want string
+	}{
+		{
+			name: "should write the model and questions and leave out the state and assets",
+			req: onesie.Request{
+				State: "s", Model: "m", Questions: oneNoul(),
+				Assets: onesie.Assets{"r": {Format: "png", Data: []byte{1}}},
+			},
+			want: `{"model":"m","questions":{"q":{"type":"noul","instructions":"Urgent?"}}}`,
+		},
+		{
+			name: "should write long_context after the questions when it is on",
+			req:  onesie.Request{Model: "m", Questions: oneNoul(), LongContext: true},
+			want: `{"model":"m","questions":{"q":{"type":"noul","instructions":"Urgent?"}},"long_context":true}`,
+		},
+		{
+			name: "should write a blank model and no questions as they are",
+			req:  onesie.Request{},
+			want: `{"model":"","questions":{}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := onesie.MarshalQuestionsBody(tc.req)
+			if err != nil || string(got) != tc.want {
+				t.Errorf("MarshalQuestionsBody = %s, %v, want %s", got, err, tc.want)
+			}
+		})
+	}
+
+	t.Run("should fail when a question cannot be marshalled", func(t *testing.T) {
+		t.Parallel()
+
+		req := onesie.Request{Questions: onesie.Questions{{ID: "c", Question: onesie.Choice{
+			Criteria: onesie.Criteria{{Name: "a", Desc: make(chan int)}},
+		}}}}
+
+		if _, err := onesie.MarshalQuestionsBody(req); err == nil || !strings.Contains(err.Error(), "unsupported type: chan int") {
+			t.Fatalf("error = %v, want an unsupported type", err)
+		}
+	})
+}
+
 func TestProviderResolveModel(t *testing.T) {
 	t.Parallel()
 
@@ -4019,6 +4166,22 @@ func (rt *recordingTransport) lastBody() string {
 	defer rt.mu.Unlock()
 
 	return rt.bodies[len(rt.bodies)-1]
+}
+
+type netError struct {
+	timeout bool
+}
+
+func (e netError) Error() string {
+	return "network failed"
+}
+
+func (e netError) Timeout() bool {
+	return e.timeout
+}
+
+func (e netError) Temporary() bool {
+	return false
 }
 
 type stallingTransport struct {

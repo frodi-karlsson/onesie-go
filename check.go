@@ -1,6 +1,7 @@
 package onesie
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -8,6 +9,27 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+)
+
+const answerKinds = "noul, choice, score or box"
+
+const (
+	faultWrongKind shapeFault = iota
+	faultMissing
+	faultEmpty
+	faultUnknownType
+)
+
+const (
+	kindNothing jsonKind = iota
+	kindObject
+	kindArray
+	kindString
+	kindNumber
+	kindFiniteNumber
+	kindWholeNumber
+	kindBoolean
+	kindNull
 )
 
 // Check returns an *AnswerFault for the first question, in question order, whose answer is missing
@@ -148,7 +170,7 @@ func checkScore(id string, levels int, answer *ScoreAnswer) *AnswerFault {
 		indexes = append(indexes, strconv.Itoa(i))
 	}
 
-	for _, key := range numericOrder(answer.Probabilities) {
+	for _, key := range NumericOrder(slices.Collect(maps.Keys(answer.Probabilities))) {
 		if !slices.Contains(indexes, key) {
 			return misfit(id, "question '%s' has p for '%s', which is not a level index from 0 to %d", printable(key), top)
 		}
@@ -163,17 +185,30 @@ func checkScore(id string, levels int, answer *ScoreAnswer) *AnswerFault {
 	return checkSpread(id, indexes, answer.Probabilities, answer.Confidence)
 }
 
-func numericOrder(probabilities map[string]float64) []string {
-	return slices.SortedFunc(maps.Keys(probabilities), func(left, right string) int {
-		leftIndex, leftErr := strconv.Atoi(left)
-		rightIndex, rightErr := strconv.Atoi(right)
+// NumericOrder returns a sorted copy of keys with level indexes first by number, then every other key
+// by text. A key counts as an index only when written as strconv.Itoa writes it, so 01 and +1 are text.
+func NumericOrder(keys []string) []string {
+	return slices.SortedFunc(slices.Values(keys), func(left, right string) int {
+		leftIndex, leftIsIndex := levelIndex(left)
+		rightIndex, rightIsIndex := levelIndex(right)
 
-		if leftErr != nil || rightErr != nil {
+		switch {
+		case leftIsIndex && rightIsIndex:
+			return cmp.Compare(leftIndex, rightIndex)
+		case leftIsIndex:
+			return -1
+		case rightIsIndex:
+			return 1
+		default:
 			return strings.Compare(left, right)
 		}
-
-		return leftIndex - rightIndex
 	})
+}
+
+func levelIndex(key string) (int, bool) {
+	index, err := strconv.Atoi(key)
+
+	return index, err == nil && strconv.Itoa(index) == key
 }
 
 func checkSpread(id string, keys []string, probabilities map[string]float64, confidence float64) *AnswerFault {
@@ -229,4 +264,69 @@ func formatNumber(value float64) string {
 	}
 
 	return string(encoded)
+}
+
+type shapeFault int
+
+type jsonKind int
+
+func resultSentence(field string, fault shapeFault, want, got jsonKind) string {
+	const lead = "the response is not a System One result"
+
+	switch {
+	case field == "":
+		return lead + ", since it is " + got.phrase()
+	case fault == faultMissing:
+		return lead + ", since it has no " + field + ", or it is null"
+	default:
+		_, _, verb := fieldPhrase(field)
+
+		return lead + ", since its " + field + " " + verb + " not " + want.phrase()
+	}
+}
+
+func (k jsonKind) phrase() string {
+	switch k {
+	case kindObject:
+		return "an object"
+	case kindArray:
+		return "an array"
+	case kindString:
+		return "a string"
+	case kindNumber:
+		return "a number"
+	case kindFiniteNumber:
+		return "a finite number"
+	case kindWholeNumber:
+		return "a whole number"
+	case kindBoolean:
+		return "a boolean"
+	case kindNull:
+		return "null"
+	default:
+		return "nothing"
+	}
+}
+
+func fieldPhrase(field string) (phrase, bare, verb string) {
+	parent, key, nested := strings.Cut(field, ".")
+
+	switch {
+	case nested && parent == "probabilities":
+		bare = "probability for '" + key + "'"
+	case nested && parent == "legend":
+		bare = "legend entry for '" + key + "'"
+	case nested && parent == "box":
+		bare = "box " + key + " edge"
+	case !nested && strings.HasSuffix(field, "s"):
+		return field, field, "are"
+	default:
+		bare = field
+	}
+
+	if strings.ContainsAny(bare[:1], "aeiou") {
+		return "an " + bare, bare, "is"
+	}
+
+	return "a " + bare, bare, "is"
 }

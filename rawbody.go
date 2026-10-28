@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -27,7 +26,7 @@ func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...
 }
 
 func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*PreparedBody, error) {
-	if _, err := compactBody(raw); err != nil {
+	if err := checkJSON(raw); err != nil {
 		return nil, err
 	}
 
@@ -35,7 +34,7 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 		return nil, &ValidationError{Message: "the request body is not valid UTF-8"}
 	}
 
-	model := orDefault(strings.TrimSpace(defaultModel), p.defaultModel)
+	model := modelOr(defaultModel, p.defaultModel)
 	b := fillModel(lastWins(parseBody(raw)), model)
 
 	bodyLongContext, err := longContextOf(b.members)
@@ -43,7 +42,12 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 		return nil, err
 	}
 
-	if err = checkQuestionCounts(b.members); err != nil {
+	asked, err := questionsIn(b.members)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = checkQuestionCounts(asked); err != nil {
 		return nil, err
 	}
 
@@ -52,9 +56,9 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 	}
 
 	scan := scanMembers(b.members)
-	model = orDefault(scan.model, model)
+	model = modelOr(scan.model, model)
 	via := p.route(model)
-	needs := capabilities{images: scan.assets, box: scan.box, longContext: longContext || bodyLongContext}
+	needs := capabilities{images: scan.assets, box: asksBox(asked), longContext: longContext || bodyLongContext}
 
 	if needs.images || needs.box {
 		if fault := checkBodyImages(b.members); fault != nil {
@@ -76,9 +80,18 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 		return nil, err
 	}
 
-	asked, count := questionsIn(b.members)
+	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked}, nil
+}
 
-	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked, count: count}, nil
+func checkJSON(body []byte) error {
+	if json.Valid(body) {
+		return nil
+	}
+
+	// Compacted only to name the fault, which json.Valid does not report.
+	_, err := compactBody(body)
+
+	return err
 }
 
 // PreparedBody is a raw body PrepareRaw checked and encoded for one provider, which SendPrepared
@@ -89,7 +102,6 @@ type PreparedBody struct {
 	sent     encoded
 	model    string
 	asked    Questions
-	count    int
 }
 
 // Bytes returns a copy of the prepared body, as a print of the request shows it.
@@ -112,95 +124,24 @@ func (b *PreparedBody) Box() bool {
 	return b.sent.needs.box
 }
 
-// QuestionCount is the number of distinct ids in the body's questions member, or 0 when that member
-// is not an object.
+// QuestionCount is the number of distinct ids in the body's questions member, each of which a send
+// checks the answer to, or 0 when that member is absent or not an object.
 func (b *PreparedBody) QuestionCount() int {
-	return b.count
+	return len(b.asked)
 }
 
-func questionsIn(members []member) (Questions, int) {
-	for _, m := range members {
-		if m.name != "questions" {
-			continue
-		}
-
-		var ids map[string]json.RawMessage
-		if json.Unmarshal(m.value, &ids) != nil {
-			return nil, 0
-		}
-
-		asked, err := readQuestions(m.value)
-		if err != nil {
-			return nil, len(ids)
-		}
-
-		return asked, len(ids)
+func questionsIn(members []member) (Questions, error) {
+	at := slices.IndexFunc(members, named("questions"))
+	if at < 0 || members[at].value.Kind() != '{' {
+		return nil, nil
 	}
 
-	return nil, 0
-}
-
-func readQuestions(value jsontext.Value) (Questions, error) {
-	entries, err := readMembers(value)
-	if err != nil {
+	var asked Questions
+	if err := asked.UnmarshalJSON(members[at].value); err != nil {
 		return nil, err
-	}
-
-	asked := make(Questions, 0, len(entries))
-
-	for _, entry := range entries {
-		if slices.ContainsFunc(asked, func(named NamedQuestion) bool { return named.ID == entry.name }) {
-			return nil, errors.New("a question id is repeated")
-		}
-
-		question, err := readQuestion(entry.value)
-		if err != nil {
-			return nil, err
-		}
-
-		asked = append(asked, NamedQuestion{ID: entry.name, Question: question})
 	}
 
 	return asked, nil
-}
-
-func readQuestion(value jsontext.Value) (Question, error) {
-	var wire struct {
-		Type     string          `json:"type"`
-		Criteria json.RawMessage `json:"criteria"`
-	}
-
-	if err := json.Unmarshal(value, &wire); err != nil {
-		return nil, err
-	}
-
-	switch wire.Type {
-	case "noul":
-		return Noul{}, nil
-	case "box":
-		return Box{}, nil
-	case "choice":
-		options, err := readMembers(wire.Criteria)
-		if err != nil {
-			return nil, err
-		}
-
-		criteria := make(Criteria, 0, len(options))
-		for _, option := range options {
-			criteria = append(criteria, NamedCriterion{Name: option.name})
-		}
-
-		return Choice{Criteria: criteria}, nil
-	case "score":
-		var levels []json.RawMessage
-		if err := json.Unmarshal(wire.Criteria, &levels); err != nil {
-			return nil, err
-		}
-
-		return Score{Criteria: make([]any, len(levels))}, nil
-	default:
-		return nil, errors.New("the question type is not noul, choice, score or box")
-	}
 }
 
 func lastWins(b jsonBody) jsonBody {
@@ -208,24 +149,33 @@ func lastWins(b jsonBody) jsonBody {
 		return b
 	}
 
-	last := make(map[string]int, len(b.members))
-	for i, m := range b.members {
+	kept := lastOf(b.members)
+	if len(kept) == len(b.members) {
+		return b
+	}
+
+	return b.with(kept)
+}
+
+func lastOf(members []member) []member {
+	last := make(map[string]int, len(members))
+	for i, m := range members {
 		last[m.name] = i
 	}
 
-	if len(last) == len(b.members) {
-		return b
+	if len(last) == len(members) {
+		return members
 	}
 
 	kept := make([]member, 0, len(last))
 
-	for i, m := range b.members {
+	for i, m := range members {
 		if last[m.name] == i {
 			kept = append(kept, m)
 		}
 	}
 
-	return b.with(kept)
+	return kept
 }
 
 func fillModel(b jsonBody, model string) jsonBody {

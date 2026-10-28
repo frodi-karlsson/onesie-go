@@ -1,6 +1,10 @@
 package onesie
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+)
 
 func TestScanMembers(t *testing.T) {
 	t.Parallel()
@@ -12,7 +16,6 @@ func TestScanMembers(t *testing.T) {
 	}{
 		{name: "should see assets", body: `{"state":"r","questions":{},"assets":{"r":{}}}`, want: bodyScan{assets: true}},
 		{name: "should see assets that are not an object", body: `{"assets":[1],"questions":{}}`, want: bodyScan{assets: true}},
-		{name: "should see a box question", body: `{"state":"s","questions":{"m":{"type":"box"}}}`, want: bodyScan{box: true}},
 		{name: "should not see an empty assets object", body: `{"state":"s","questions":{},"assets":{ }}`},
 		{name: "should not see null assets", body: `{"state":"s","questions":{},"assets":null}`},
 		{name: "should not see a text body", body: `{"state":"s","questions":{"q":{"type":"noul"}}}`},
@@ -24,9 +27,9 @@ func TestScanMembers(t *testing.T) {
 		{name: "should read a blank model as none", body: `{"model":"   ","questions":{}}`},
 		{name: "should read a model that is not a string as none", body: `{"model":1,"questions":{}}`},
 		{
-			name: "should read the model beside assets and a box question",
+			name: "should read the model beside assets and leave the questions alone",
 			body: `{"model":"m","assets":{"r":{}},"questions":{"b":{"type":"box"}}}`,
-			want: bodyScan{model: "m", assets: true, box: true},
+			want: bodyScan{model: "m", assets: true},
 		},
 	}
 
@@ -77,4 +80,23 @@ func TestRequestNeeds(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEncodedPost(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should post the encoded body on its route with its needs", func(t *testing.T) {
+		t.Parallel()
+
+		via := TypeSafe().route(jevLatest)
+		sent := encoded{via: via, body: []byte(`{}`), needs: capabilities{box: true, longContext: true}, images: true}
+
+		var out json.RawMessage
+
+		got := sent.post(&out)
+		if got.method != http.MethodPost || got.path != via.path || string(got.payload) != `{}` || got.out != &out ||
+			got.needs != (Needs{Box: true, LongContext: true}) || !got.imagesHeader || got.via.path != via.path {
+			t.Errorf("post = %+v, want a POST of the encoded body", got)
+		}
+	})
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -539,6 +540,14 @@ func TestNewAPIError(t *testing.T) {
 			name: "should unwrap a forwarded body on openrouter", via: openrouter,
 			body: `{"error":{"message":"HTTP 400: {\"detail\":\"x\"}"}}`, message: "onesie: 400 x",
 		},
+		{
+			name: "should unwrap a forwarded body with no space after the status", via: openrouter,
+			body: `{"error":{"message":"HTTP 422:{\"detail\":\"x\"}"}}`, message: "onesie: 400 x",
+		},
+		{
+			name: "should leave a forwarded status that is not a number alone", via: openrouter,
+			body: `{"error":{"message":"HTTP abc: {\"detail\":\"x\"}"}}`, message: `onesie: 400 HTTP abc: {"detail":"x"}`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -592,25 +601,45 @@ func TestNewAPIError(t *testing.T) {
 		via      route
 		needs    Needs
 		sentinel error
+		reason   string
 	}{
-		{name: "should read typesafe's unknown model", file: "typesafe-unknown-model.json", status: 400, via: typesafe, sentinel: ErrUnknownModel},
-		{name: "should read typesafe's context limit", file: "typesafe-context-too-long.json", status: 400, via: typesafe, sentinel: ErrContextTooLong},
-		{name: "should read typesafe's box refusal", file: "typesafe-box-not-served.json", status: 400, via: typesafe, needs: boxed, sentinel: ErrNotServed},
-		{name: "should read typesafe's count refusal", file: "typesafe-question-limit.json", status: 422, via: typesafe, sentinel: ErrQuestionLimit},
-		{name: "should read openrouter's unknown model", file: "openrouter-unknown-model.json", status: 400, via: openrouter, sentinel: ErrUnknownModel},
-		{name: "should read openrouter's context limit", file: "openrouter-context-too-long.json", status: 400, via: openrouter, sentinel: ErrContextTooLong},
-		{name: "should read openrouter's box refusal", file: "openrouter-box-not-served.json", status: 400, via: openrouter, needs: boxed, sentinel: ErrNotServed},
-		{name: "should read openrouter's count refusal", file: "openrouter-question-limit.json", status: 422, via: openrouter, sentinel: ErrQuestionLimit},
-		{name: "should read berget's unknown model", file: "berget-unknown-model.json", status: 404, via: Berget().route(bergetModel), sentinel: ErrUnknownModel},
-		{name: "should read levanto's unknown model", file: "levanto-unknown-model.json", status: 422, via: Levanto().route(levantoModel), sentinel: ErrUnknownModel},
-		{name: "should read the gateway's unknown model", file: "gateway-unknown-model.json", status: 404, via: gateway, sentinel: ErrUnknownModel},
-		{name: "should read the gateway's context limit", file: "gateway-context-too-long.json", status: 400, via: gateway, sentinel: ErrContextTooLong},
-		{name: "should read the gateway's box refusal", file: "gateway-box-not-served.json", status: 400, via: gateway, needs: boxed, sentinel: ErrNotServed},
-		{name: "should read the gateway's count refusal", file: "gateway-question-limit.json", status: 400, via: gateway, sentinel: ErrQuestionLimit},
-		{name: "should read cloudflare's refused token", file: "cloudflare-auth.json", status: 401, via: gateway, sentinel: ErrAuthentication},
-		{name: "should read the models search's refused token", file: "cloudflare-models-auth.json", status: 400, via: workers, sentinel: ErrAuthentication},
-		{name: "should read workers ai's unknown model", file: "workers-unknown-model.json", status: 400, via: workers, sentinel: ErrUnknownModel},
+		{name: "should read typesafe's unknown model", file: "typesafe-unknown-model.json", status: 400, via: typesafe, sentinel: ErrUnknownModel, reason: "400 Unknown model: onesie-does-not-exist"},
+		{name: "should read typesafe's context limit", file: "typesafe-context-too-long.json", status: 400, via: typesafe, sentinel: ErrContextTooLong, reason: "400 max_tokens_exceeded"},
+		{name: "should read typesafe's box refusal", file: "typesafe-box-not-served.json", status: 400, via: typesafe, needs: boxed, sentinel: ErrNotServed, reason: "400 Invalid request."},
+		{name: "should read typesafe's count refusal", file: "typesafe-question-limit.json", status: 422, via: typesafe, sentinel: ErrQuestionLimit, reason: "422 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"},
+		{name: "should read openrouter's unknown model", file: "openrouter-unknown-model.json", status: 400, via: openrouter, sentinel: ErrUnknownModel, reason: "400 Model onesie-does-not-exist does not exist"},
+		{name: "should read openrouter's context limit", file: "openrouter-context-too-long.json", status: 400, via: openrouter, sentinel: ErrContextTooLong, reason: "400 max_tokens_exceeded"},
+		{name: "should read openrouter's box refusal", file: "openrouter-box-not-served.json", status: 400, via: openrouter, needs: boxed, sentinel: ErrNotServed, reason: "400 Invalid request."},
+		{name: "should read openrouter's count refusal", file: "openrouter-question-limit.json", status: 422, via: openrouter, sentinel: ErrQuestionLimit, reason: "422 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"},
+		{name: "should read berget's unknown model", file: "berget-unknown-model.json", status: 404, via: Berget().route(bergetModel), sentinel: ErrUnknownModel, reason: "404 Model not found: jev-latest"},
+		{name: "should read levanto's unknown model", file: "levanto-unknown-model.json", status: 422, via: Levanto().route(levantoModel), sentinel: ErrUnknownModel, reason: "422 model: unknown model 'jev-latest'; GET /v1/models lists the accepted names (levanto-sage-v1.4, sage-latest)"},
+		{name: "should read the gateway's unknown model", file: "gateway-unknown-model.json", status: 404, via: gateway, sentinel: ErrUnknownModel, reason: "404 Model not found: typesafe/jev-nope"},
+		{name: "should read the gateway's context limit", file: "gateway-context-too-long.json", status: 400, via: gateway, sentinel: ErrContextTooLong, reason: "400 max_tokens_exceeded"},
+		{name: "should read the gateway's box refusal", file: "gateway-box-not-served.json", status: 400, via: gateway, needs: boxed, sentinel: ErrNotServed, reason: "400 Invalid request."},
+		{name: "should read the gateway's count refusal", file: "gateway-question-limit.json", status: 400, via: gateway, sentinel: ErrQuestionLimit, reason: "400 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"},
+		{name: "should read cloudflare's refused token", file: "cloudflare-auth.json", status: 401, via: gateway, sentinel: ErrAuthentication, reason: "401 Authentication error"},
+		{name: "should read the models search's refused token", file: "cloudflare-models-auth.json", status: 400, via: workers, sentinel: ErrAuthentication, reason: "400 Authentication failed (status: 400)"},
+		{name: "should read workers ai's unknown model", file: "workers-unknown-model.json", status: 400, via: workers, sentinel: ErrUnknownModel, reason: "400 No such model: No such model @cf/cloudflare/clef-nope or task (72980980-d159-4205-859d-0aca1986d075)"},
 	}
+
+	t.Run("should show only the first line of a detail, without control characters, on every route", func(t *testing.T) {
+		t.Parallel()
+
+		routes := map[string]route{
+			"typesafe": typesafe, "openrouter": openrouter, "berget": Berget().route(bergetModel),
+			"levanto": Levanto().route(levantoModel), "gateway": gateway, "workers": workers,
+		}
+		const hostile = `"a\u001b[31mb\nline2"`
+		bodies := []string{`{"error":` + hostile + `}`, `{"error":{"message":` + hostile + `}}`, `{"errors":[{"message":` + hostile + `}]}`}
+
+		for name, via := range routes {
+			for _, body := range bodies {
+				if got := newAPIError(via, Needs{}, 400, http.Header{}, []byte(body), time.Now()); got.Reason() != "400 a[31mb" {
+					t.Errorf("Reason = %q on %s for %s, want %q", got.Reason(), name, body, "400 a[31mb")
+				}
+			}
+		}
+	})
 
 	refusals := []error{ErrUnknownModel, ErrContextTooLong, ErrNotServed, ErrQuestionLimit}
 
@@ -624,8 +653,8 @@ func TestNewAPIError(t *testing.T) {
 			}
 
 			got := newAPIError(tc.via, tc.needs, tc.status, http.Header{}, body, time.Now())
-			if !errors.Is(got, tc.sentinel) {
-				t.Fatalf("error = %v, want %v", got, tc.sentinel)
+			if !errors.Is(got, tc.sentinel) || got.Reason() != tc.reason {
+				t.Fatalf("error = %v, want %v reading %q", got, tc.sentinel, tc.reason)
 			}
 
 			for _, other := range refusals {
@@ -714,6 +743,14 @@ func TestNewAPIError(t *testing.T) {
 		{name: "should not read a count refusal from a server error", via: typesafe, status: 500, body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`},
 		{name: "should not read a structured count refusal on berget", via: Berget().route(bergetModel), status: 422, body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`},
 		{
+			name: "should read a count refusal openrouter sends unwrapped", via: openrouter, status: 422, want: true,
+			body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`,
+		},
+		{
+			name: "should read a count refusal the gateway sends unwrapped", via: gateway, status: 400, want: true,
+			body: `{"detail":[{"type":"too_long","loc":["body","questions","rate","score","criteria"],"msg":"List should have at most 10 items"}]}`,
+		},
+		{
 			name: "should read the gateway's forwarded count refusal", via: gateway, status: 400, want: true,
 			body: `{"errors":[{"message":"Model execution failed (User Input Error): {\"detail\":[{\"type\":\"too_long\",\"loc\":[\"body\",\"questions\",\"rate\",\"score\",\"criteria\"],\"msg\":\"List should have at most 10 items\"}]}","code":7003}]}`,
 		},
@@ -733,6 +770,44 @@ func TestNewAPIError(t *testing.T) {
 		got := newAPIError(typesafe, boxed, 400, http.Header{}, []byte(`{"detail":"Unknown model, max_tokens_exceeded, Invalid request"}`), time.Now())
 		if !errors.Is(got, ErrUnknownModel) || errors.Is(got, ErrContextTooLong) || errors.Is(got, ErrNotServed) {
 			t.Errorf("error = %v, want ErrUnknownModel alone", got)
+		}
+	})
+}
+
+func TestDescribe(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("x", maxBodyInError+10)
+
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   description
+	}{
+		{name: "should lead with the status and keep the read message as the detail", status: 400, body: `{"error":"bad question"}`, want: description{lead: "400 ", detail: "bad question"}},
+		{name: "should keep a body that is not JSON as the detail", status: 529, body: "overloaded", want: description{lead: "529 status code, with a response body that is not JSON: ", detail: "overloaded"}},
+		{name: "should lead with the whole message when there is no body", status: 500, want: description{lead: "500 status code, no body"}},
+		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := describe(tc.status, http.Header{}, decodeBody([]byte(tc.body)), []byte(tc.body), readMessage); got != tc.want {
+				t.Errorf("describe = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("should cut the detail and never the lead", func(t *testing.T) {
+		t.Parallel()
+
+		got := describe(400, http.Header{}, map[string]any{"error": long}, nil, readMessage)
+
+		if got.whole() != "400 "+long || got.fitted() != "400 "+long[:maxBodyInError]+"..." {
+			t.Errorf("whole = %q and fitted = %q, want the detail cut alone", got.whole(), got.fitted())
 		}
 	})
 }
@@ -791,6 +866,28 @@ func TestTimeoutError(t *testing.T) {
 		}
 	})
 
+	t.Run("should match context.DeadlineExceeded when the transport reported the timeout", func(t *testing.T) {
+		t.Parallel()
+
+		transports := map[string]*http.Transport{
+			"https": {TLSHandshakeTimeout: 20 * time.Millisecond},
+			"http":  {ResponseHeaderTimeout: 20 * time.Millisecond},
+		}
+
+		for scheme, transport := range transports {
+			err := transportTimeout(t, scheme, transport)
+
+			var timeout *TimeoutError
+			if !errors.As(err, &timeout) {
+				t.Fatalf("%s error = %v, want a TimeoutError", scheme, err)
+			}
+
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("%s error = %v, want it to match context.DeadlineExceeded", scheme, err)
+			}
+		}
+	})
+
 	t.Run("should not report a connection error as a timeout", func(t *testing.T) {
 		t.Parallel()
 
@@ -808,6 +905,51 @@ func TestTimeoutError(t *testing.T) {
 			t.Errorf("a nil cause produced an empty message")
 		}
 	})
+}
+
+func transportTimeout(t *testing.T, scheme string, transport *http.Transport) error {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go holdConnections(listener)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, scheme+"://"+listener.Addr().String()+"/v1?key=secret", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	defer transport.CloseIdleConnections()
+
+	res, err := (&http.Client{Transport: transport}).Do(req)
+	if err == nil {
+		_ = res.Body.Close()
+		t.Fatalf("%s request succeeded, want a timeout", scheme)
+	}
+
+	return classify(context.Background(), context.Background(), err, requestConfig{}, time.Now())
+}
+
+func holdConnections(listener net.Listener) {
+	var held []net.Conn
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			for _, conn := range held {
+				_ = conn.Close()
+			}
+
+			return
+		}
+
+		held = append(held, conn)
+	}
 }
 
 func TestAnswerError(t *testing.T) {
@@ -955,18 +1097,11 @@ func TestConnectionErrorReason(t *testing.T) {
 			want: "could not reach api.example through a proxy: connection refused",
 		},
 		{
-			name: "should name an expired certificate in plain words",
+			name: "should name an expired certificate in general words without the time it checked",
 			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
 				Reason: x509.Expired, Detail: "current time 2026-10-28T12:00:00Z is after 2026-01-01T00:00:00Z",
 			}}),
-			want: "could not reach api.example: certificate has expired",
-		},
-		{
-			name: "should name a certificate that is not yet valid in plain words",
-			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
-				Reason: x509.Expired, Detail: "current time 2026-10-28T12:00:00Z is before 2027-01-01T00:00:00Z",
-			}}),
-			want: "could not reach api.example: certificate is not yet valid",
+			want: "could not reach api.example: certificate has expired or is not yet valid",
 		},
 		{
 			name: "should name another certificate problem without its detail",
@@ -1026,6 +1161,20 @@ func TestTimeoutErrorReason(t *testing.T) {
 	}{
 		{name: "should give the timeout", err: &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}, Timeout: time.Second}, want: "request timed out after 1s"},
 		{name: "should say only that a deadline fired when the timeout is unknown", err: &TimeoutError{ConnectionError: ConnectionError{Err: context.DeadlineExceeded}}, want: "request timed out"},
+		{
+			name: "should name the host and default port of a request the transport timed out",
+			err:  transportTimedOut("https://user:pass@api.example.com/v1/answer?key=secret"), want: "request to api.example.com:443 timed out",
+		},
+		{name: "should name the port a request gave", err: transportTimedOut("http://localhost:8080/v1"), want: "request to localhost:8080 timed out"},
+		{name: "should bracket an IPv6 host", err: transportTimedOut("https://[::1]/v1"), want: "request to [::1]:443 timed out"},
+		{
+			name: "should give the attempt deadline rather than the host",
+			err: &TimeoutError{
+				ConnectionError: ConnectionError{Err: &url.Error{Op: "Post", URL: "https://api.example.com/v1", Err: context.DeadlineExceeded}},
+				Timeout:         2 * time.Second,
+			},
+			want: "request timed out after 2s",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1035,6 +1184,21 @@ func TestTimeoutErrorReason(t *testing.T) {
 			checkReason(t, tc.err, tc.want)
 		})
 	}
+
+	t.Run("should name the host and port of a live TLS handshake timeout", func(t *testing.T) {
+		t.Parallel()
+
+		err := transportTimeout(t, "https", &http.Transport{TLSHandshakeTimeout: 20 * time.Millisecond})
+
+		var timeout *TimeoutError
+		if !errors.As(err, &timeout) || !regexp.MustCompile(`^request to 127\.0\.0\.1:\d+ timed out$`).MatchString(timeout.Reason()) {
+			t.Errorf("error = %v, want it to name the host and port", err)
+		}
+	})
+}
+
+func transportTimedOut(target string) *TimeoutError {
+	return &TimeoutError{ConnectionError: ConnectionError{Err: &url.Error{Op: "Post", URL: target, Err: os.ErrDeadlineExceeded}}}
 }
 
 func TestAnswerErrorReason(t *testing.T) {

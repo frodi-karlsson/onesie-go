@@ -27,59 +27,36 @@ type Result struct {
 
 // Noul returns the named answer, or an AnswerError when it is absent or of another type.
 func (r *Result) Noul(name string) (*NoulAnswer, error) {
-	found, err := r.answer(name)
-	if err != nil {
-		return nil, err
-	}
-
-	typed, ok := found.(*NoulAnswer)
-	if !ok {
-		return nil, &AnswerError{Name: name, Want: "noul", Got: found.Kind()}
-	}
-
-	return typed, nil
+	return answerAs[*NoulAnswer](r, name)
 }
 
 // Choice returns the named answer, or an AnswerError when it is absent or of another type.
 func (r *Result) Choice(name string) (*ChoiceAnswer, error) {
-	found, err := r.answer(name)
-	if err != nil {
-		return nil, err
-	}
-
-	typed, ok := found.(*ChoiceAnswer)
-	if !ok {
-		return nil, &AnswerError{Name: name, Want: "choice", Got: found.Kind()}
-	}
-
-	return typed, nil
+	return answerAs[*ChoiceAnswer](r, name)
 }
 
 // Score returns the named answer, or an AnswerError when it is absent or of another type.
 func (r *Result) Score(name string) (*ScoreAnswer, error) {
-	found, err := r.answer(name)
-	if err != nil {
-		return nil, err
-	}
-
-	typed, ok := found.(*ScoreAnswer)
-	if !ok {
-		return nil, &AnswerError{Name: name, Want: "score", Got: found.Kind()}
-	}
-
-	return typed, nil
+	return answerAs[*ScoreAnswer](r, name)
 }
 
 // Box returns the named answer, or an AnswerError when it is absent or of another type.
 func (r *Result) Box(name string) (*BoxAnswer, error) {
-	found, err := r.answer(name)
-	if err != nil {
-		return nil, err
+	return answerAs[*BoxAnswer](r, name)
+}
+
+func answerAs[T Answer](r *Result, name string) (T, error) {
+	var wanted T
+
+	found, ok := r.Answers[name]
+	if !ok {
+		return wanted, &AnswerError{Name: name, Missing: true}
 	}
 
-	typed, ok := found.(*BoxAnswer)
+	typed, ok := found.(T)
 	if !ok {
-		return nil, &AnswerError{Name: name, Want: "box", Got: found.Kind()}
+		// Kind reads no field, so the nil pointer names the kind asked for.
+		return wanted, &AnswerError{Name: name, Want: wanted.Kind(), Got: found.Kind()}
 	}
 
 	return typed, nil
@@ -217,15 +194,6 @@ func namingAnswer(name string, err error) error {
 	fault.Question = name
 
 	return fault
-}
-
-func (r *Result) answer(name string) (Answer, error) {
-	found, ok := r.Answers[name]
-	if !ok {
-		return nil, &AnswerError{Name: name, Missing: true}
-	}
-
-	return found, nil
 }
 
 // Usage is the token count the API billed for a request, and the cost in USD when the provider reports one.

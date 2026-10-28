@@ -3,6 +3,9 @@ package onesie_test
 import (
 	"encoding/json"
 	"errors"
+	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -773,6 +776,21 @@ func TestResultCheck(t *testing.T) {
 		}
 	})
 
+	t.Run("should name the same stray level key on every run", func(t *testing.T) {
+		t.Parallel()
+
+		pair := onesie.NamedQuestion{ID: "pair", Question: onesie.Score{Criteria: onesie.Levels("low", "high")}}
+		stray := map[string]float64{"0": 0.25, "1": 0.25, "01": 0.25, "+1": 0.25}
+		want := "onesie: question 'pair' has p for '+1', which is not a level index from 0 to 1"
+
+		for range 200 {
+			result := &onesie.Result{Answers: map[string]onesie.Answer{"pair": score(0.5, 0.5, stray)}}
+			if err := result.Check(onesie.Questions{pair}); err == nil || err.Error() != want {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+		}
+	})
+
 	t.Run("should ignore an answer no question asked for", func(t *testing.T) {
 		t.Parallel()
 
@@ -782,6 +800,61 @@ func TestResultCheck(t *testing.T) {
 
 		if err := result.Check(onesie.Questions{urgent}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestNumericOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		keys []string
+		want []string
+	}{
+		{name: "should order level indexes by number", keys: []string{"10", "2", "0", "1"}, want: []string{"0", "1", "2", "10"}},
+		{name: "should order keys that are not numbers by text", keys: []string{"b", "10", "a"}, want: []string{"10", "a", "b"}},
+		{name: "should return nothing for no keys"},
+		{name: "should put numbers before text", keys: []string{"1a", "10", "9"}, want: []string{"9", "10", "1a"}},
+		{name: "should treat a padded or signed number as text", keys: []string{"+1", "01", "1", "0"}, want: []string{"0", "1", "+1", "01"}},
+		{
+			name: "should order the extremes of int without overflow", keys: []string{"1", strconv.Itoa(math.MinInt), "-1", strconv.Itoa(math.MaxInt)},
+			want: []string{strconv.Itoa(math.MinInt), "-1", "1", strconv.Itoa(math.MaxInt)},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := onesie.NumericOrder(tc.keys); !slices.Equal(got, tc.want) {
+				t.Errorf("NumericOrder(%q) = %q, want %q", tc.keys, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("should give one order for every arrangement of mixed keys", func(t *testing.T) {
+		t.Parallel()
+
+		arrangements := [][]string{
+			{"10", "9", "1a"}, {"10", "1a", "9"}, {"9", "10", "1a"}, {"9", "1a", "10"}, {"1a", "10", "9"}, {"1a", "9", "10"},
+		}
+
+		for _, keys := range arrangements {
+			if got := onesie.NumericOrder(keys); !slices.Equal(got, []string{"9", "10", "1a"}) {
+				t.Errorf("NumericOrder(%q) = %q, want [9 10 1a]", keys, got)
+			}
+		}
+	})
+
+	t.Run("should leave the keys it was given in their order", func(t *testing.T) {
+		t.Parallel()
+
+		keys := []string{"2", "1"}
+		onesie.NumericOrder(keys)
+
+		if !slices.Equal(keys, []string{"2", "1"}) {
+			t.Errorf("keys = %q, want them unchanged", keys)
 		}
 	})
 }

@@ -122,6 +122,9 @@ func TestInsecureBaseURL(t *testing.T) {
 		{name: "should pass the IPv6 loopback address", raw: "http://[::1]:8080"},
 		{name: "should pass https to another host", raw: "https://proxy.example"},
 		{name: "should pass a URL that does not parse", raw: "http://[::1"},
+		{name: "should not flag plain http holding userinfo, since ValidateBaseURL refuses it", raw: "http://user@proxy.example"},
+		{name: "should not flag plain http holding a query, since ValidateBaseURL refuses it", raw: "http://proxy.example/?key=1"},
+		{name: "should not flag plain http naming no host, since ValidateBaseURL refuses it", raw: "http:///v1"},
 	}
 
 	for _, tc := range tests {

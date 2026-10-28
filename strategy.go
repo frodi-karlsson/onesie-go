@@ -16,10 +16,7 @@ func (p Provider) Refuse(model string, needs Needs) error {
 		return err
 	}
 
-	model = strings.TrimSpace(model)
-	if model == "" {
-		model = p.defaultModel
-	}
+	model = modelOr(model, p.defaultModel)
 
 	return p.route(model).refuse(p.name, model, needs.capabilities())
 }
@@ -69,11 +66,7 @@ func (p Provider) Encode(req Request) ([]byte, error) {
 }
 
 func encodeRequest(p Provider, req Request, longContext bool) (encoded, error) {
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = p.defaultModel
-	}
-
+	model := modelOr(req.Model, p.defaultModel)
 	via := p.route(model)
 	needs := requestNeeds(req)
 	needs.longContext = needs.longContext || longContext
@@ -96,6 +89,13 @@ type encoded struct {
 	body   []byte
 	needs  capabilities
 	images bool
+}
+
+func (e encoded) post(out any) call {
+	return call{
+		method: http.MethodPost, path: e.via.path, payload: e.body, out: out, decode: e.via.decode,
+		via: e.via, needs: e.needs.asNeeds(), imagesHeader: e.images,
+	}
 }
 
 func encodeBody(via route, needs capabilities, b jsonBody) (encoded, error) {
@@ -126,14 +126,18 @@ func requestNeeds(req Request) capabilities {
 // a box question, and long context when LongContext is set.
 func (req Request) Needs() Needs {
 	return Needs{
-		Images: len(req.Assets) > 0,
-		Box: slices.ContainsFunc(req.Questions, func(named NamedQuestion) bool {
-			_, isBox := named.Question.(Box)
-
-			return isBox
-		}),
+		Images:      len(req.Assets) > 0,
+		Box:         asksBox(req.Questions),
 		LongContext: req.LongContext,
 	}
+}
+
+func asksBox(questions Questions) bool {
+	return slices.ContainsFunc(questions, func(named NamedQuestion) bool {
+		_, isBox := named.Question.(Box)
+
+		return isBox
+	})
 }
 
 func (n Needs) capabilities() capabilities {
@@ -149,8 +153,6 @@ func scanMembers(members []member) bodyScan {
 			scan.model = modelName(m.value)
 		case "assets":
 			scan.assets = scan.assets || nonEmptyAssets(m.value)
-		case "questions":
-			scan.box = scan.box || hasBoxQuestion(m.value)
 		}
 	}
 
@@ -160,7 +162,6 @@ func scanMembers(members []member) bodyScan {
 type bodyScan struct {
 	model  string
 	assets bool
-	box    bool
 }
 
 func modelName(value jsontext.Value) string {
@@ -186,22 +187,4 @@ func nonEmptyAssets(value jsontext.Value) bool {
 	default:
 		return true
 	}
-}
-
-func hasBoxQuestion(value jsontext.Value) bool {
-	var questions map[string]struct {
-		Type string `json:"type"`
-	}
-
-	if json.Unmarshal(value, &questions) != nil {
-		return false
-	}
-
-	for _, question := range questions {
-		if question.Type == "box" {
-			return true
-		}
-	}
-
-	return false
 }

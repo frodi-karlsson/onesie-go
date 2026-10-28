@@ -86,9 +86,25 @@ func TestProviderPrepareRaw(t *testing.T) {
 			wantErr: `onesie: choice question 'pick' has 256 options, and at most 255 are allowed`,
 		},
 		{
+			name: "should name the first question over a limit in body order, not by id",
+			body: `{"state":"s","questions":{"zeta":{"type":"score","criteria":["0","1","2","3","4","5","6","7","8","9","10"]},` +
+				`"alpha":{"type":"choice","criteria":` + manyOptions(256) + `}}}`,
+			wantErr: `onesie: score question 'zeta' has 11 levels, and at most 10 are allowed`,
+		},
+		{
 			name: "should count a repeated raw option name once",
 			body: `{"model":"m","questions":{"pick":{"type":"choice","criteria":` + manyOptions(255)[:len(manyOptions(255))-1] + `,"option 0":"y"}}}}`,
 			want: `{"model":"m","questions":{"pick":{"type":"choice","criteria":` + manyOptions(255)[:len(manyOptions(255))-1] + `,"option 0":"y"}}}}`,
+		},
+		{
+			name:    "should refuse a question of an unknown type",
+			body:    `{"state":"s","questions":{"q":{"type":"tarot"}}}`,
+			wantErr: "onesie: question 'q' has the type 'tarot', which is not noul, choice, score or box",
+		},
+		{
+			name:    "should refuse choice criteria that are not an object",
+			body:    `{"state":"s","questions":{"t":{"type":"choice","criteria":["a","b"]}}}`,
+			wantErr: "onesie: choice question 't' needs criteria as an object",
 		},
 		{name: "should refuse a failing option", body: `{}`, opts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(0)}, wantErr: "onesie: attempt timeout must be positive"},
 	}
@@ -181,8 +197,8 @@ func TestProviderPrepareRaw(t *testing.T) {
 			body: `{"state":"r","questions":{"b":{"type":"box"}},"assets":{"r":{"format":"png","data_base64":"AQ=="}}}`,
 		},
 		{
-			name: "should count each question id once", model: "jev-latest", questionCount: 2,
-			body: `{"questions":{"a":{"type":"noul"},"b":{"type":"noul"},"a":{"type":"noul"}}}`,
+			name: "should count each question id once and read the last of a repeated one", model: "jev-latest", box: true, questionCount: 2,
+			body: `{"questions":{"a":{"type":"noul"},"b":{"type":"noul"},"a":{"type":"box"}}}`,
 		},
 		{name: "should count no questions in a member that is not an object", body: `{"questions":[1]}`, model: "jev-latest"},
 		{name: "should report the default model for an array", body: `[1]`, model: "jev-latest"},

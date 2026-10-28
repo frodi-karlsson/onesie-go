@@ -49,7 +49,7 @@ Each provider reads its key from the variable `Provider.EnvAPIKey` names, unless
 
 A request the client refuses before sending matches `onesie.ErrValidation`.
 A response outside 2xx is an `*onesie.APIError`, matched with `errors.Is` against a sentinel such as `onesie.ErrUnknownModel`.
-`SystemOne` returns a `ResponseError` matching `ErrResponse` when an answer does not fit its question.
+`SystemOne` and `SendPrepared` return a `ResponseError` matching `ErrResponse` when an answer does not fit its question.
 Every error type the package defines has `Reason()`, its message without the `onesie: ` prefix.
 An error from the function passed to `onesie.WithAPIKeyFunc` is returned as it is, without one.
 
@@ -59,8 +59,4 @@ The full API is documented at [pkg.go.dev](https://pkg.go.dev/github.com/frodi-k
 
 ## Development
 
-Run `make check` for lint and race enabled tests. Run `make tidy` to verify the module files.
-The live suite is available with `make test-integration`. It reads `TYPESAFE_API_KEY`,
-`OPENROUTER_API_KEY`, `BERGET_API_KEY`, `LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID` from the environment or a local `.env` file, and skips the cases whose keys
-are missing.
+[MAINTAINING.md](MAINTAINING.md) describes the checks, the live suite and the repository settings.

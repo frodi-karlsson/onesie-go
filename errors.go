@@ -1,43 +1,13 @@
 package onesie
 
 import (
-	"crypto/x509"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
-)
-
-const (
-	maxBodyInError = 200
-	byteOrderMark  = "\ufeff"
-	answerKinds    = "noul, choice, score or box"
-)
-
-const (
-	faultWrongKind shapeFault = iota
-	faultMissing
-	faultEmpty
-	faultUnknownType
-)
-
-const (
-	kindNothing jsonKind = iota
-	kindObject
-	kindArray
-	kindString
-	kindNumber
-	kindFiniteNumber
-	kindWholeNumber
-	kindBoolean
-	kindNull
 )
 
 // Sentinels for errors.Is. An APIError matches the one for its status, and one its route reads from the body.
@@ -87,306 +57,6 @@ var (
 	// the URL would sit.
 	ErrBaseURLUserInfo = errors.New("base URL holds userinfo")
 )
-
-// NewAPIError builds the APIError a live response with this status and body gets from p's route for
-// model, sentinels included, for fakes and mocks. A blank model is p's built in default.
-func NewAPIError(p Provider, model string, needs Needs, status int, body []byte) *APIError {
-	var via route
-	if p.check() == nil {
-		via = p.route(orDefault(strings.TrimSpace(model), p.defaultModel))
-	}
-
-	return newAPIError(via, needs, status, http.Header{}, body, time.Time{})
-}
-
-func newAPIError(via route, needs Needs, status int, header http.Header, body []byte, now time.Time) *APIError {
-	parsed := decodeBody(body)
-	retryAfter, _ := parseRetryAfter(header, now)
-	read := via.reader()
-
-	return &APIError{
-		Status:     status,
-		RequestID:  header.Get(via.requestIDHeader),
-		Header:     header,
-		Body:       parsed,
-		RawBody:    body,
-		RetryAfter: retryAfter,
-		Code:       codeOf(parsed),
-		message:    describe(status, header, parsed, body, read, truncate),
-		sentinel:   via.classify(status, parsed, describe(status, header, parsed, body, read, whole), needs),
-	}
-}
-
-func whole(text string) string {
-	return text
-}
-
-func describe(status int, header http.Header, body any, raw []byte, read func(any) string, fit func(string) string) string {
-	switch {
-	case redirected(status, header):
-		return describeRedirect(status, header.Get("Location"))
-	case body == nil && len(raw) == 0:
-		return fmt.Sprintf("%d status code, no body", status)
-	case body == nil:
-		return describeText(status, string(raw), fit)
-	}
-
-	if text, isText := body.(string); isText {
-		return describeString(status, text, fit)
-	}
-
-	if detail := read(body); detail != "" {
-		// Fitted here rather than inside extraction, so a hostile body cannot reach a log line at
-		// full length.
-		return fmt.Sprintf("%d %s", status, fit(detail))
-	}
-
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Sprintf("%d status code, unreadable body", status)
-	}
-
-	return fmt.Sprintf("%d %s", status, fit(string(encoded)))
-}
-
-func redirected(status int, header http.Header) bool {
-	return status >= 300 && status < 400 && header.Get("Location") != ""
-}
-
-func describeRedirect(status int, location string) string {
-	const refusal = ", which onesie does not follow, since the request carries the API key. " +
-		"Point the base URL at where the API is"
-
-	// Only the origin, since the rest of a location may carry a token.
-	parsed, err := url.Parse(location)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Sprintf("%d redirect", status) + refusal
-	}
-
-	return fmt.Sprintf("%d redirect to %s", status, printable(shownOf(parsed))) + refusal
-}
-
-func describeText(status int, body string, fit func(string) string) string {
-	message := statusLine(status) + ", with a response body that is not JSON"
-
-	// An HTML page from a proxy or a web server says nothing one line can show, while a line of text
-	// may name the cause.
-	line := firstLine(body)
-	if line == "" || strings.HasPrefix(line, "<") || repeatsStatus(line, status) {
-		return message
-	}
-
-	return message + ": " + fit(line)
-}
-
-func describeString(status int, text string, fit func(string) string) string {
-	line := firstLine(text)
-	if line == "" || strings.HasPrefix(line, "<") {
-		return statusLine(status)
-	}
-
-	return fmt.Sprintf("%d %s", status, fit(line))
-}
-
-func statusLine(status int) string {
-	if http.StatusText(status) == "" {
-		return fmt.Sprintf("%d status code", status)
-	}
-
-	return fmt.Sprintf("%d %s", status, http.StatusText(status))
-}
-
-func firstLine(body string) string {
-	line, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(body), byteOrderMark), "\n")
-
-	return strings.TrimSpace(withoutControls(line))
-}
-
-func printable(text string) string {
-	return truncate(withoutControls(text))
-}
-
-func withoutControls(text string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-
-		return r
-	}, text)
-}
-
-func repeatsStatus(line string, status int) bool {
-	text := strings.TrimSuffix(line, ".")
-	text = strings.TrimSpace(strings.TrimPrefix(text, strconv.Itoa(status)))
-
-	return strings.EqualFold(text, http.StatusText(status))
-}
-
-func truncate(raw string) string {
-	if len(raw) <= maxBodyInError {
-		return raw
-	}
-
-	cut := maxBodyInError
-	for cut > 0 && !utf8.RuneStart(raw[cut]) {
-		cut--
-	}
-
-	return raw[:cut] + "..."
-}
-
-func readMessage(body any) string {
-	if text, ok := body.(string); ok {
-		return text
-	}
-
-	fields, ok := body.(map[string]any)
-	if !ok {
-		return ""
-	}
-
-	if text, ok := fields["error"].(string); ok {
-		return text
-	}
-
-	if nested, ok := fields["error"].(map[string]any); ok {
-		if text, ok := nested["message"].(string); ok {
-			return text
-		}
-	}
-
-	if text, ok := fields["message"].(string); ok {
-		return text
-	}
-
-	if text, ok := fields["detail"].(string); ok {
-		return text
-	}
-
-	if nested, ok := fields["detail"].(map[string]any); ok {
-		if text, ok := nested["message"].(string); ok {
-			return text
-		}
-
-		if text, ok := nested["error_type"].(string); ok {
-			return text
-		}
-	}
-
-	if list, ok := fields["detail"].([]any); ok {
-		return describeValidation(list)
-	}
-
-	return firstError(fields)
-}
-
-func firstError(fields map[string]any) string {
-	list, isList := fields["errors"].([]any)
-	if !isList || len(list) == 0 {
-		return ""
-	}
-
-	entry, isObject := list[0].(map[string]any)
-	if !isObject {
-		return ""
-	}
-
-	text, isText := entry["message"].(string)
-	if !isText {
-		return ""
-	}
-
-	return text
-}
-
-func codeOf(body any) string {
-	fields, isObject := body.(map[string]any)
-	if !isObject {
-		return ""
-	}
-
-	if nested, isNested := fields["error"].(map[string]any); isNested {
-		return codeText(nested["code"])
-	}
-
-	if list, isList := fields["errors"].([]any); isList && len(list) > 0 {
-		if entry, isEntry := list[0].(map[string]any); isEntry {
-			return codeText(entry["code"])
-		}
-	}
-
-	return ""
-}
-
-func codeText(code any) string {
-	switch typed := code.(type) {
-	case string:
-		return typed
-	case float64:
-		return strconv.FormatFloat(typed, 'f', -1, 64)
-	default:
-		return ""
-	}
-}
-
-func describeValidation(entries []any) string {
-	parts := make([]string, 0, len(entries))
-
-	for _, entry := range entries {
-		fields, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		msg, ok := fields["msg"].(string)
-		if !ok {
-			continue
-		}
-
-		path := validationPath(fields["loc"])
-		if path == "" {
-			parts = append(parts, msg)
-
-			continue
-		}
-
-		parts = append(parts, path+": "+msg)
-	}
-
-	return strings.Join(parts, ", ")
-}
-
-func validationPath(loc any) string {
-	list, ok := loc.([]any)
-	if !ok {
-		return ""
-	}
-
-	segments := make([]string, 0, len(list))
-
-	// The location comes from FastAPI, which prefixes it with the request part.
-	for _, item := range list {
-		text := fmt.Sprint(item)
-		if text == "body" {
-			continue
-		}
-
-		segments = append(segments, text)
-	}
-
-	return strings.Join(segments, ".")
-}
-
-func decodeBody(body []byte) any {
-	var parsed any
-	// Lenient, since proxies do not always set a JSON content type.
-	if json.Unmarshal(body, &parsed) != nil {
-		return nil
-	}
-
-	return parsed
-}
 
 // RetryAfterError reports a server requested delay onesie refused to wait out, because spending the
 // remaining retries on a known answer is worse than failing now.
@@ -466,8 +136,8 @@ func (e *RetryAfterError) Unwrap() error {
 	return &e.APIError
 }
 
-// TimeoutError is a ConnectionError whose cause was a deadline. It unwraps to
-// context.DeadlineExceeded, so errors.Is against a caller's own deadline matches it too.
+// TimeoutError is a ConnectionError whose cause was a deadline. It matches context.DeadlineExceeded
+// whichever deadline fired, the caller's, the client's or the transport's.
 type TimeoutError struct {
 	ConnectionError
 
@@ -477,6 +147,8 @@ type TimeoutError struct {
 // ConnectionError is a transport failure, a cancelled call or a body that stopped arriving.
 type ConnectionError struct {
 	Err error
+
+	certificate string
 }
 
 // Error is Reason with the package prefix.
@@ -490,7 +162,7 @@ func (e *ConnectionError) Reason() string {
 	var failed *url.Error
 	if errors.As(e.Err, &failed) {
 		if parsed, err := url.Parse(failed.URL); err == nil && parsed.Host != "" {
-			return "could not reach " + parsed.Host + throughProxy(failed.Err) + ": " + causeOf(failed.Err)
+			return "could not reach " + parsed.Host + throughProxy(failed.Err) + ": " + e.cause(failed.Err)
 		}
 	}
 
@@ -503,77 +175,6 @@ func (e *ConnectionError) Reason() string {
 	}
 
 	return "connection error"
-}
-
-func throughProxy(err error) string {
-	var dial *net.OpError
-	for errors.As(err, &dial) {
-		if dial.Op == "proxyconnect" {
-			return " through a proxy"
-		}
-
-		err = dial.Err
-	}
-
-	return ""
-}
-
-func causeOf(err error) string {
-	if problem := certificateProblem(err); problem != "" {
-		return problem
-	}
-
-	for next := errors.Unwrap(err); next != nil; next = errors.Unwrap(err) {
-		err = next
-	}
-
-	// The text after the last colon, since the net package writes the address it dialled or the
-	// name it looked up before one.
-	text, _, _ := strings.Cut(err.Error(), "\n")
-	if at := strings.LastIndex(text, ": "); at >= 0 {
-		text = text[at+len(": "):]
-	}
-
-	if shown := withoutAddresses(firstLine(text)); shown != "" {
-		return shown
-	}
-
-	return "connection failed"
-}
-
-func certificateProblem(err error) string {
-	var invalid x509.CertificateInvalidError
-	if errors.As(err, &invalid) && invalid.Reason == x509.Expired {
-		switch {
-		case strings.Contains(invalid.Detail, " is after "):
-			return "certificate has expired"
-		case strings.Contains(invalid.Detail, " is before "):
-			return "certificate is not yet valid"
-		}
-	}
-
-	for ; err != nil; err = errors.Unwrap(err) {
-		if text, isCertificate := strings.CutPrefix(err.Error(), "x509: "); isCertificate {
-			problem, _, _ := strings.Cut(firstLine(text), ": ")
-			problem, _, _ = strings.Cut(problem, " (")
-
-			return withoutAddresses(problem)
-		}
-	}
-
-	return ""
-}
-
-func withoutAddresses(text string) string {
-	kept := make([]string, 0, strings.Count(text, " ")+1)
-
-	for _, token := range strings.Fields(text) {
-		if !strings.Contains(token, "://") && !strings.Contains(token, "@") {
-			kept = append(kept, token)
-		}
-	}
-
-	return strings.Join(kept, " ")
 }
 
 // Unwrap returns the underlying transport error.
@@ -591,13 +192,45 @@ func (e *TimeoutError) Error() string {
 	return "onesie: " + e.Reason()
 }
 
-// Reason reports the deadline that fired, or only that one fired when it was the caller's own.
+// Reason reports the client's deadline that fired, or else the host and port the request went to,
+// and never a URL. A failure with no request reads request timed out.
 func (e *TimeoutError) Reason() string {
-	if e.Timeout <= 0 {
-		return "request timed out"
+	if e.Timeout > 0 {
+		return fmt.Sprintf("request timed out after %s", e.Timeout)
 	}
 
-	return fmt.Sprintf("request timed out after %s", e.Timeout)
+	if address := requestAddress(e.Err); address != "" {
+		return "request to " + address + " timed out"
+	}
+
+	return "request timed out"
+}
+
+func requestAddress(err error) string {
+	var failed *url.Error
+	if !errors.As(err, &failed) {
+		return ""
+	}
+
+	parsed, parseErr := url.Parse(failed.URL)
+	if parseErr != nil || parsed.Hostname() == "" {
+		return ""
+	}
+
+	port := parsed.Port()
+	if port == "" {
+		port = defaultPort(parsed.Scheme)
+	}
+
+	return net.JoinHostPort(parsed.Hostname(), port)
+}
+
+func defaultPort(scheme string) string {
+	if scheme == "http" {
+		return "80"
+	}
+
+	return "443"
 }
 
 // Unwrap returns the embedded ConnectionError, so errors.As reaches it.
@@ -605,9 +238,9 @@ func (e *TimeoutError) Unwrap() error {
 	return &e.ConnectionError
 }
 
-// Is matches both ErrTimeout and ErrConnection.
+// Is matches ErrTimeout, ErrConnection and context.DeadlineExceeded.
 func (e *TimeoutError) Is(target error) bool {
-	return target == ErrConnection || target == ErrTimeout
+	return target == ErrConnection || target == ErrTimeout || target == context.DeadlineExceeded
 }
 
 // ResponseError is a 2xx response this client could not use. Err holds the fault, and Usage is
@@ -752,10 +385,6 @@ type AnswerFault struct {
 	cause   error
 }
 
-type shapeFault int
-
-type jsonKind int
-
 // Error is Reason with the package prefix.
 func (e *AnswerFault) Error() string {
 	return "onesie: " + e.Reason()
@@ -795,65 +424,4 @@ func (e *AnswerFault) Reason() string {
 // Unwrap returns the decoder's error behind a value of the wrong JSON type, or nil.
 func (e *AnswerFault) Unwrap() error {
 	return e.cause
-}
-
-func resultSentence(field string, fault shapeFault, want, got jsonKind) string {
-	const lead = "the response is not a System One result"
-
-	switch {
-	case field == "":
-		return lead + ", since it is " + got.phrase()
-	case fault == faultMissing:
-		return lead + ", since it has no " + field + ", or it is null"
-	default:
-		_, _, verb := fieldPhrase(field)
-
-		return lead + ", since its " + field + " " + verb + " not " + want.phrase()
-	}
-}
-
-func (k jsonKind) phrase() string {
-	switch k {
-	case kindObject:
-		return "an object"
-	case kindArray:
-		return "an array"
-	case kindString:
-		return "a string"
-	case kindNumber:
-		return "a number"
-	case kindFiniteNumber:
-		return "a finite number"
-	case kindWholeNumber:
-		return "a whole number"
-	case kindBoolean:
-		return "a boolean"
-	case kindNull:
-		return "null"
-	default:
-		return "nothing"
-	}
-}
-
-func fieldPhrase(field string) (phrase, bare, verb string) {
-	parent, key, nested := strings.Cut(field, ".")
-
-	switch {
-	case nested && parent == "probabilities":
-		bare = "probability for '" + key + "'"
-	case nested && parent == "legend":
-		bare = "legend entry for '" + key + "'"
-	case nested && parent == "box":
-		bare = "box " + key + " edge"
-	case !nested && strings.HasSuffix(field, "s"):
-		return field, field, "are"
-	default:
-		bare = field
-	}
-
-	if strings.ContainsAny(bare[:1], "aeiou") {
-		return "an " + bare, bare, "is"
-	}
-
-	return "a " + bare, bare, "is"
 }

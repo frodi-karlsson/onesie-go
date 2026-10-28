@@ -1,6 +1,7 @@
 package onesie
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -236,22 +237,14 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	req.Model = strings.TrimSpace(req.Model)
-	if req.Model == "" {
-		req.Model = c.defaultModel
-	}
+	req.Model = modelOr(req.Model, c.defaultModel)
 
 	sent, err := c.provider.validated(req, cfg.longContext)
 	if err != nil {
 		return nil, err
 	}
 
-	var decoded json.RawMessage
-
-	res, err := c.do(ctx, cfg, call{
-		method: http.MethodPost, path: sent.via.path, payload: sent.body, out: &decoded, decode: sent.via.decode,
-		via: sent.via, needs: sent.needs.asNeeds(), imagesHeader: sent.images,
-	})
+	res, decoded, err := c.send(ctx, cfg, sent)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +253,7 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 }
 
 // SendPrepared sends a body PrepareRaw prepared for this client's provider without preparing it again,
-// and returns its checked result and the response body as SystemOneRaw returns it.
+// and returns its checked result and the response body as the route decoded it, on one line.
 func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...RequestOption) (*Result, json.RawMessage, error) {
 	if body == nil {
 		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Provider.PrepareRaw"}
@@ -280,12 +273,7 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw"}
 	}
 
-	var decoded json.RawMessage
-
-	res, err := c.do(ctx, cfg, call{
-		method: http.MethodPost, path: body.sent.via.path, payload: body.sent.body, out: &decoded, decode: body.sent.via.decode,
-		via: body.sent.via, needs: body.sent.needs.asNeeds(), imagesHeader: body.sent.images,
-	})
+	res, decoded, err := c.send(ctx, cfg, body.sent)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -296,6 +284,17 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 	}
 
 	return result, decoded, nil
+}
+
+func (c *Client) send(ctx context.Context, cfg requestConfig, sent encoded) (*rawResponse, json.RawMessage, error) {
+	var decoded json.RawMessage
+
+	res, err := c.do(ctx, cfg, sent.post(&decoded))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return res, decoded, nil
 }
 
 func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
@@ -359,6 +358,16 @@ func MarshalBody(req Request) ([]byte, error) {
 	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
 }
 
+// MarshalQuestionsBody encodes req's model and questions with no state key, since a null state is a
+// state. LongContext adds long_context, and the assets are left out.
+func MarshalQuestionsBody(req Request) ([]byte, error) {
+	return json.Marshal(struct {
+		Model       string    `json:"model"`
+		Questions   Questions `json:"questions"`
+		LongContext bool      `json:"long_context,omitempty"`
+	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext})
+}
+
 // Request is one evaluation, whose questions all see the same state and are answered independently.
 // Assets holds the images they reference, and LongContext raises the context limits.
 type Request struct {
@@ -370,7 +379,8 @@ type Request struct {
 }
 
 // SystemOneRaw prepares body as PrepareRaw does with the client's default model, sends it through the
-// SystemOne retry loop and returns the response body unchecked, as the route decoded it.
+// SystemOne retry loop and returns the response body unchecked, as the route decoded it, on one line.
+// A body that is empty or not JSON comes back as it is.
 func (c *Client) SystemOneRaw(
 	ctx context.Context,
 	body json.RawMessage,
@@ -386,23 +396,27 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	sent := prepared.sent
-
-	res, err := c.do(ctx, cfg, call{
-		method: http.MethodPost, path: sent.via.path, payload: sent.body, decode: identity,
-		via: sent.via, needs: sent.needs.asNeeds(), imagesHeader: sent.images,
-	})
+	res, err := c.do(ctx, cfg, prepared.sent.post(nil))
 	if err != nil {
 		return nil, err
 	}
 
 	// Decoded here, not in do, so a body that is empty or not JSON comes back as it is.
-	decoded, err := sent.via.decode(res.body)
+	decoded, err := prepared.sent.via.decode(oneLineIfJSON(res.body))
 	if err != nil {
 		return nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
 	}
 
 	return decoded, nil
+}
+
+func oneLineIfJSON(body []byte) []byte {
+	var line bytes.Buffer
+	if json.Compact(&line, body) != nil {
+		return body
+	}
+
+	return line.Bytes()
 }
 
 // ListModels reports the model names this account may send.
