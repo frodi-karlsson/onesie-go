@@ -736,9 +736,10 @@ func (e *AnswerError) Reason() string {
 }
 
 // AnswerFault is a 2xx response that is not a System One result, or whose answer does not fit the
-// question asked. Question names the answer to blame, and is empty when the whole response is.
+// question asked. Question names the answer to blame, unless WholeResponse says the whole response is.
 type AnswerFault struct {
-	Question string
+	Question      string
+	WholeResponse bool
 
 	field   string
 	fault   shapeFault
@@ -766,7 +767,7 @@ func (e *AnswerFault) Reason() string {
 
 	field := printable(e.field)
 
-	if e.Question == "" {
+	if e.WholeResponse {
 		return resultSentence(field, e.fault, e.want, e.got)
 	}
 

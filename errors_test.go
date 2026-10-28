@@ -1084,12 +1084,12 @@ func TestAnswerFault(t *testing.T) {
 	}{
 		{
 			name: "should report a body that is not an object",
-			err:  &AnswerFault{want: kindObject, got: kindString},
+			err:  &AnswerFault{WholeResponse: true, want: kindObject, got: kindString},
 			want: "the response is not a System One result, since it is a string",
 		},
 		{
 			name: "should report a missing top level field",
-			err:  &AnswerFault{field: "model", fault: faultMissing, want: kindString},
+			err:  &AnswerFault{WholeResponse: true, field: "model", fault: faultMissing, want: kindString},
 			want: "the response is not a System One result, since it has no model, or it is null",
 		},
 		{
@@ -1140,7 +1140,7 @@ func TestDescribeShape(t *testing.T) {
 
 			mistyped := &json.UnmarshalTypeError{Type: reflect.TypeFor[struct{}]()}
 
-			if got := describeShape([]byte(tc.raw), mistyped).Error(); got != tc.want {
+			if got := blamingResponse(describeShape([]byte(tc.raw), mistyped)).Error(); got != tc.want {
 				t.Errorf("describeShape = %q, want %q", got, tc.want)
 			}
 		})

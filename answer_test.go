@@ -486,18 +486,32 @@ func TestResultUnmarshalJSON(t *testing.T) {
 		})
 	}
 
-	t.Run("should return an AnswerFault naming the answer to blame", func(t *testing.T) {
-		t.Parallel()
+	blames := []struct {
+		name  string
+		body  string
+		want  string
+		whole bool
+		text  string
+	}{
+		{name: "should blame the whole response that is not an object", body: `[1]`, whole: true, text: "the response is not a System One result, since it is an array"},
+		{name: "should blame the whole response with no answers", body: `{"x":1}`, whole: true, text: "the response is not a System One result, since it has no answers"},
+		{name: "should blame the answer that does not decode", body: `{"answers":{"x":{"type":"tarot"}}}`, want: "x", text: "answer 'x' has the type 'tarot', which is not noul, choice, score or box"},
+		{name: "should blame an answer named by the empty string", body: `{"answers":{"":{"type":"noul"}}}`, text: "answer '' has no noul, or it is null"},
+	}
 
-		for body, want := range map[string]string{`[1]`: "", `{"answers":{"x":{"type":"tarot"}}}`: "x"} {
+	for _, tc := range blames {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			var result onesie.Result
 
 			var fault *onesie.AnswerFault
-			if err := json.Unmarshal([]byte(body), &result); !errors.As(err, &fault) || fault.Question != want {
-				t.Errorf("error = %v for %s, want an AnswerFault naming %q", err, body, want)
+			if err := json.Unmarshal([]byte(tc.body), &result); !errors.As(err, &fault) || fault.Question != tc.want ||
+				fault.WholeResponse != tc.whole || fault.Reason() != tc.text {
+				t.Errorf("error = %v, want an AnswerFault naming %q, whole response %t, reading %q", err, tc.want, tc.whole, tc.text)
 			}
-		}
-	})
+		})
+	}
 
 	t.Run("should keep the decoder's error as the cause of a wrong JSON type", func(t *testing.T) {
 		t.Parallel()
@@ -675,6 +689,11 @@ func TestResultCheck(t *testing.T) {
 			answer: box(onesie.Edges{Top: 0.9, Bottom: 0.1, Left: 0, Right: 1}, 0.5), want: crossed,
 		},
 		{
+			name: "should blame a question with an empty id, not the whole response", answer: &onesie.NoulAnswer{Noul: 7},
+			question: onesie.NamedQuestion{ID: "", Question: onesie.Noul{Instructions: "Urgent?"}},
+			want:     "question '' answered 7, which lies outside [0,1]",
+		},
+		{
 			name: "should check a question behind a pointer", answer: score(3, 0.5, levels),
 			question: onesie.NamedQuestion{ID: "severity", Question: &onesie.Score{Criteria: onesie.Levels("low", "mid", "high")}},
 			want:     "question 'severity' has score 3, which lies outside [0,2]",
@@ -700,7 +719,8 @@ func TestResultCheck(t *testing.T) {
 			}
 
 			var fault *onesie.AnswerFault
-			if !errors.As(err, &fault) || fault.Question != tc.question.ID || err.Error() != "onesie: "+tc.want || fault.Reason() != tc.want {
+			if !errors.As(err, &fault) || fault.Question != tc.question.ID || fault.WholeResponse || err.Error() != "onesie: "+tc.want ||
+				fault.Reason() != tc.want {
 				t.Fatalf("error = %v, want an AnswerFault for %s reading %q", err, tc.question.ID, tc.want)
 			}
 		})

@@ -94,11 +94,11 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	}
 
 	if err := json.Unmarshal(data, &wire); err != nil {
-		return describeShape(data, err)
+		return blamingResponse(describeShape(data, err))
 	}
 
 	if wire.Answers == nil {
-		return &AnswerFault{text: "the response is not a System One result, since it has no answers"}
+		return &AnswerFault{WholeResponse: true, text: "the response is not a System One result, since it has no answers"}
 	}
 
 	r.Model = wire.Model
@@ -115,6 +115,15 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+func blamingResponse(err error) error {
+	var fault *AnswerFault
+	if errors.As(err, &fault) {
+		fault.WholeResponse = true
+	}
+
+	return err
 }
 
 func describeShape(raw []byte, err error) error {
