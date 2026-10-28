@@ -745,6 +745,44 @@ func TestNewAPIError(t *testing.T) {
 	})
 }
 
+func TestDescribe(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("x", maxBodyInError+10)
+
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   description
+	}{
+		{name: "should lead with the status and keep the read message as the detail", status: 400, body: `{"error":"bad question"}`, want: description{lead: "400 ", detail: "bad question"}},
+		{name: "should keep a body that is not JSON as the detail", status: 529, body: "overloaded", want: description{lead: "529 status code, with a response body that is not JSON: ", detail: "overloaded"}},
+		{name: "should lead with the whole message when there is no body", status: 500, want: description{lead: "500 status code, no body"}},
+		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := describe(tc.status, http.Header{}, decodeBody([]byte(tc.body)), []byte(tc.body), readMessage); got != tc.want {
+				t.Errorf("describe = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("should cut the detail and never the lead", func(t *testing.T) {
+		t.Parallel()
+
+		got := describe(400, http.Header{}, map[string]any{"error": long}, nil, readMessage)
+
+		if got.whole() != "400 "+long || got.fitted() != "400 "+long[:maxBodyInError]+"..." {
+			t.Errorf("whole = %q and fitted = %q, want the detail cut alone", got.whole(), got.fitted())
+		}
+	})
+}
+
 func TestRetryAfterError(t *testing.T) {
 	t.Parallel()
 

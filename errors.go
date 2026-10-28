@@ -102,6 +102,7 @@ func NewAPIError(p Provider, model string, needs Needs, status int, body []byte)
 func newAPIError(via route, needs Needs, status int, header http.Header, body []byte, now time.Time) *APIError {
 	parsed := decodeBody(body)
 	retryAfter, _ := parseRetryAfter(header, now)
+	described := describe(status, header, parsed, body, via.read)
 
 	return &APIError{
 		Status:     status,
@@ -111,41 +112,50 @@ func newAPIError(via route, needs Needs, status int, header http.Header, body []
 		RawBody:    body,
 		RetryAfter: retryAfter,
 		Code:       codeOf(parsed),
-		message:    describe(status, header, parsed, body, via.read, truncate),
-		sentinel:   via.classify(status, parsed, describe(status, header, parsed, body, via.read, whole), needs),
+		message:    described.fitted(),
+		sentinel:   via.classify(status, parsed, described.whole(), needs),
 	}
 }
 
-func whole(text string) string {
-	return text
-}
-
-func describe(status int, header http.Header, body any, raw []byte, read func(any) string, fit func(string) string) string {
+func describe(status int, header http.Header, body any, raw []byte, read func(any) string) description {
 	switch {
 	case redirected(status, header):
-		return describeRedirect(status, header.Get("Location"))
+		return description{lead: describeRedirect(status, header.Get("Location"))}
 	case body == nil && len(raw) == 0:
-		return fmt.Sprintf("%d status code, no body", status)
+		return description{lead: fmt.Sprintf("%d status code, no body", status)}
 	case body == nil:
-		return describeText(status, string(raw), fit)
+		return describeText(status, string(raw))
 	}
 
 	if text, isText := body.(string); isText {
-		return describeString(status, text, fit)
+		return describeString(status, text)
 	}
 
 	if detail := read(body); detail != "" {
-		// Fitted here rather than inside extraction, so a hostile body cannot reach a log line at
-		// full length.
-		return fmt.Sprintf("%d %s", status, fit(detail))
+		return description{lead: fmt.Sprintf("%d ", status), detail: detail}
 	}
 
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Sprintf("%d status code, unreadable body", status)
+		return description{lead: fmt.Sprintf("%d status code, unreadable body", status)}
 	}
 
-	return fmt.Sprintf("%d %s", status, fit(string(encoded)))
+	return description{lead: fmt.Sprintf("%d ", status), detail: string(encoded)}
+}
+
+type description struct {
+	lead   string
+	detail string
+}
+
+func (d description) whole() string {
+	return d.lead + d.detail
+}
+
+func (d description) fitted() string {
+	// Only the detail is cut, since it comes from the body, so a hostile body cannot reach a log line
+	// at full length.
+	return d.lead + truncate(d.detail)
 }
 
 func redirected(status int, header http.Header) bool {
@@ -165,26 +175,26 @@ func describeRedirect(status int, location string) string {
 	return fmt.Sprintf("%d redirect to %s", status, printable(shownOf(parsed))) + refusal
 }
 
-func describeText(status int, body string, fit func(string) string) string {
+func describeText(status int, body string) description {
 	message := statusLine(status) + ", with a response body that is not JSON"
 
 	// An HTML page from a proxy or a web server says nothing one line can show, while a line of text
 	// may name the cause.
 	line := firstLine(body)
 	if line == "" || strings.HasPrefix(line, "<") || repeatsStatus(line, status) {
-		return message
+		return description{lead: message}
 	}
 
-	return message + ": " + fit(line)
+	return description{lead: message + ": ", detail: line}
 }
 
-func describeString(status int, text string, fit func(string) string) string {
+func describeString(status int, text string) description {
 	line := firstLine(text)
 	if line == "" || strings.HasPrefix(line, "<") {
-		return statusLine(status)
+		return description{lead: statusLine(status)}
 	}
 
-	return fmt.Sprintf("%d %s", status, fit(line))
+	return description{lead: fmt.Sprintf("%d ", status), detail: line}
 }
 
 func statusLine(status int) string {
