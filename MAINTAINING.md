@@ -4,8 +4,12 @@
 
 Run `make check` before pushing. It runs `golangci-lint` and the race enabled unit suite.
 Run `make vuln` to scan the module with `govulncheck`, which CI also runs.
-Run `make tidy` after changing imports or the Go version. Run `make test-integration` for the
-live API suite.
+Run `make tidy` after changing imports or the Go version.
+
+Run `make test-integration` for the live API suite. It reads `TYPESAFE_API_KEY`,
+`OPENROUTER_API_KEY`, `BERGET_API_KEY`, `LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` from the environment or a local `.env` file, and skips the cases whose keys
+are missing.
 
 ## Repository settings
 
