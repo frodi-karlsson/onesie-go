@@ -53,7 +53,7 @@ func describe(status int, header http.Header, body any, raw []byte, read func(an
 		return describeString(status, text)
 	}
 
-	if detail := read(body); detail != "" {
+	if detail := read(body); firstLine(detail) != "" {
 		return description{lead: fmt.Sprintf("%d ", status), detail: detail}
 	}
 
@@ -76,8 +76,8 @@ func (d description) whole() string {
 
 func (d description) fitted() string {
 	// Only the detail is cut, since it comes from the body, so a hostile body cannot reach a log line
-	// at full length.
-	return d.lead + truncate(d.detail)
+	// at full length or with its own control characters. Classifying still reads the whole detail.
+	return d.lead + truncate(firstLine(d.detail))
 }
 
 func redirected(status int, header http.Header) bool {

@@ -601,25 +601,45 @@ func TestNewAPIError(t *testing.T) {
 		via      route
 		needs    Needs
 		sentinel error
+		reason   string
 	}{
-		{name: "should read typesafe's unknown model", file: "typesafe-unknown-model.json", status: 400, via: typesafe, sentinel: ErrUnknownModel},
-		{name: "should read typesafe's context limit", file: "typesafe-context-too-long.json", status: 400, via: typesafe, sentinel: ErrContextTooLong},
-		{name: "should read typesafe's box refusal", file: "typesafe-box-not-served.json", status: 400, via: typesafe, needs: boxed, sentinel: ErrNotServed},
-		{name: "should read typesafe's count refusal", file: "typesafe-question-limit.json", status: 422, via: typesafe, sentinel: ErrQuestionLimit},
-		{name: "should read openrouter's unknown model", file: "openrouter-unknown-model.json", status: 400, via: openrouter, sentinel: ErrUnknownModel},
-		{name: "should read openrouter's context limit", file: "openrouter-context-too-long.json", status: 400, via: openrouter, sentinel: ErrContextTooLong},
-		{name: "should read openrouter's box refusal", file: "openrouter-box-not-served.json", status: 400, via: openrouter, needs: boxed, sentinel: ErrNotServed},
-		{name: "should read openrouter's count refusal", file: "openrouter-question-limit.json", status: 422, via: openrouter, sentinel: ErrQuestionLimit},
-		{name: "should read berget's unknown model", file: "berget-unknown-model.json", status: 404, via: Berget().route(bergetModel), sentinel: ErrUnknownModel},
-		{name: "should read levanto's unknown model", file: "levanto-unknown-model.json", status: 422, via: Levanto().route(levantoModel), sentinel: ErrUnknownModel},
-		{name: "should read the gateway's unknown model", file: "gateway-unknown-model.json", status: 404, via: gateway, sentinel: ErrUnknownModel},
-		{name: "should read the gateway's context limit", file: "gateway-context-too-long.json", status: 400, via: gateway, sentinel: ErrContextTooLong},
-		{name: "should read the gateway's box refusal", file: "gateway-box-not-served.json", status: 400, via: gateway, needs: boxed, sentinel: ErrNotServed},
-		{name: "should read the gateway's count refusal", file: "gateway-question-limit.json", status: 400, via: gateway, sentinel: ErrQuestionLimit},
-		{name: "should read cloudflare's refused token", file: "cloudflare-auth.json", status: 401, via: gateway, sentinel: ErrAuthentication},
-		{name: "should read the models search's refused token", file: "cloudflare-models-auth.json", status: 400, via: workers, sentinel: ErrAuthentication},
-		{name: "should read workers ai's unknown model", file: "workers-unknown-model.json", status: 400, via: workers, sentinel: ErrUnknownModel},
+		{name: "should read typesafe's unknown model", file: "typesafe-unknown-model.json", status: 400, via: typesafe, sentinel: ErrUnknownModel, reason: "400 Unknown model: onesie-does-not-exist"},
+		{name: "should read typesafe's context limit", file: "typesafe-context-too-long.json", status: 400, via: typesafe, sentinel: ErrContextTooLong, reason: "400 max_tokens_exceeded"},
+		{name: "should read typesafe's box refusal", file: "typesafe-box-not-served.json", status: 400, via: typesafe, needs: boxed, sentinel: ErrNotServed, reason: "400 Invalid request."},
+		{name: "should read typesafe's count refusal", file: "typesafe-question-limit.json", status: 422, via: typesafe, sentinel: ErrQuestionLimit, reason: "422 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"},
+		{name: "should read openrouter's unknown model", file: "openrouter-unknown-model.json", status: 400, via: openrouter, sentinel: ErrUnknownModel, reason: "400 Model onesie-does-not-exist does not exist"},
+		{name: "should read openrouter's context limit", file: "openrouter-context-too-long.json", status: 400, via: openrouter, sentinel: ErrContextTooLong, reason: "400 max_tokens_exceeded"},
+		{name: "should read openrouter's box refusal", file: "openrouter-box-not-served.json", status: 400, via: openrouter, needs: boxed, sentinel: ErrNotServed, reason: "400 Invalid request."},
+		{name: "should read openrouter's count refusal", file: "openrouter-question-limit.json", status: 422, via: openrouter, sentinel: ErrQuestionLimit, reason: "422 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"},
+		{name: "should read berget's unknown model", file: "berget-unknown-model.json", status: 404, via: Berget().route(bergetModel), sentinel: ErrUnknownModel, reason: "404 Model not found: jev-latest"},
+		{name: "should read levanto's unknown model", file: "levanto-unknown-model.json", status: 422, via: Levanto().route(levantoModel), sentinel: ErrUnknownModel, reason: "422 model: unknown model 'jev-latest'; GET /v1/models lists the accepted names (levanto-sage-v1.4, sage-latest)"},
+		{name: "should read the gateway's unknown model", file: "gateway-unknown-model.json", status: 404, via: gateway, sentinel: ErrUnknownModel, reason: "404 Model not found: typesafe/jev-nope"},
+		{name: "should read the gateway's context limit", file: "gateway-context-too-long.json", status: 400, via: gateway, sentinel: ErrContextTooLong, reason: "400 max_tokens_exceeded"},
+		{name: "should read the gateway's box refusal", file: "gateway-box-not-served.json", status: 400, via: gateway, needs: boxed, sentinel: ErrNotServed, reason: "400 Invalid request."},
+		{name: "should read the gateway's count refusal", file: "gateway-question-limit.json", status: 400, via: gateway, sentinel: ErrQuestionLimit, reason: "400 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"},
+		{name: "should read cloudflare's refused token", file: "cloudflare-auth.json", status: 401, via: gateway, sentinel: ErrAuthentication, reason: "401 Authentication error"},
+		{name: "should read the models search's refused token", file: "cloudflare-models-auth.json", status: 400, via: workers, sentinel: ErrAuthentication, reason: "400 Authentication failed (status: 400)"},
+		{name: "should read workers ai's unknown model", file: "workers-unknown-model.json", status: 400, via: workers, sentinel: ErrUnknownModel, reason: "400 No such model: No such model @cf/cloudflare/clef-nope or task (72980980-d159-4205-859d-0aca1986d075)"},
 	}
+
+	t.Run("should show only the first line of a detail, without control characters, on every route", func(t *testing.T) {
+		t.Parallel()
+
+		routes := map[string]route{
+			"typesafe": typesafe, "openrouter": openrouter, "berget": Berget().route(bergetModel),
+			"levanto": Levanto().route(levantoModel), "gateway": gateway, "workers": workers,
+		}
+		const hostile = `"a\u001b[31mb\nline2"`
+		bodies := []string{`{"error":` + hostile + `}`, `{"error":{"message":` + hostile + `}}`, `{"errors":[{"message":` + hostile + `}]}`}
+
+		for name, via := range routes {
+			for _, body := range bodies {
+				if got := newAPIError(via, Needs{}, 400, http.Header{}, []byte(body), time.Now()); got.Reason() != "400 a[31mb" {
+					t.Errorf("Reason = %q on %s for %s, want %q", got.Reason(), name, body, "400 a[31mb")
+				}
+			}
+		}
+	})
 
 	refusals := []error{ErrUnknownModel, ErrContextTooLong, ErrNotServed, ErrQuestionLimit}
 
@@ -633,8 +653,8 @@ func TestNewAPIError(t *testing.T) {
 			}
 
 			got := newAPIError(tc.via, tc.needs, tc.status, http.Header{}, body, time.Now())
-			if !errors.Is(got, tc.sentinel) {
-				t.Fatalf("error = %v, want %v", got, tc.sentinel)
+			if !errors.Is(got, tc.sentinel) || got.Reason() != tc.reason {
+				t.Fatalf("error = %v, want %v reading %q", got, tc.sentinel, tc.reason)
 			}
 
 			for _, other := range refusals {
