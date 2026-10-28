@@ -90,6 +90,16 @@ func TestProviderPrepareRaw(t *testing.T) {
 			body: `{"model":"m","questions":{"pick":{"type":"choice","criteria":` + manyOptions(255)[:len(manyOptions(255))-1] + `,"option 0":"y"}}}}`,
 			want: `{"model":"m","questions":{"pick":{"type":"choice","criteria":` + manyOptions(255)[:len(manyOptions(255))-1] + `,"option 0":"y"}}}}`,
 		},
+		{
+			name:    "should refuse a question of an unknown type",
+			body:    `{"state":"s","questions":{"q":{"type":"tarot"}}}`,
+			wantErr: "onesie: question 'q' has the type 'tarot', which is not noul, choice, score or box",
+		},
+		{
+			name:    "should refuse choice criteria that are not an object",
+			body:    `{"state":"s","questions":{"t":{"type":"choice","criteria":["a","b"]}}}`,
+			wantErr: "onesie: choice question 't' needs criteria as an object",
+		},
 		{name: "should refuse a failing option", body: `{}`, opts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(0)}, wantErr: "onesie: attempt timeout must be positive"},
 	}
 

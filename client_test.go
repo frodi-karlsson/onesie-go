@@ -3313,6 +3313,10 @@ func TestClientSystemOneRaw(t *testing.T) {
 	}{
 		{name: "a body that is not JSON", body: `{"state":1,`, want: "onesie: the request body is not JSON: "},
 		{name: "a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", want: "onesie: the request body is not valid UTF-8"},
+		{
+			name: "a question of an unknown type", body: `{"state":"s","questions":{"q":{"type":"tarot"}}}`,
+			want: "onesie: question 'q' has the type 'tarot', which is not noul, choice, score or box",
+		},
 	} {
 		for _, provider := range onesie.Providers() {
 			t.Run("should refuse "+bad.name+" on "+provider.Name()+" before any request", func(t *testing.T) {
@@ -3585,15 +3589,16 @@ func TestClientSendPrepared(t *testing.T) {
 		}
 	})
 
-	t.Run("should run only the decoding checks when the prepared questions do not read", func(t *testing.T) {
+	t.Run("should never prepare a body whose questions do not read", func(t *testing.T) {
 		t.Parallel()
 
-		transport := &recordingTransport{body: `{"model":"m","answers":{},"usage":{}}`}
-		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
-
 		body := `{"state":"s","questions":{"q":{"type":"tarot"}}}`
-		if _, _, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, body)); err != nil {
-			t.Fatalf("unexpected error: %v", err)
+
+		_, err := onesie.TypeSafe().PrepareRaw(json.RawMessage(body), "")
+
+		var refused *onesie.ValidationError
+		if !errors.As(err, &refused) || refused.Question != "q" {
+			t.Fatalf("error = %v, want a ValidationError naming q", err)
 		}
 	})
 }

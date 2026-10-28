@@ -42,7 +42,11 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 		return nil, err
 	}
 
-	asked, count := questionsIn(b.members)
+	asked, err := questionsIn(b.members)
+	if err != nil {
+		return nil, err
+	}
+
 	if err = checkQuestionCounts(asked); err != nil {
 		return nil, err
 	}
@@ -76,7 +80,7 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 		return nil, err
 	}
 
-	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked, count: count}, nil
+	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked}, nil
 }
 
 // PreparedBody is a raw body PrepareRaw checked and encoded for one provider, which SendPrepared
@@ -87,7 +91,6 @@ type PreparedBody struct {
 	sent     encoded
 	model    string
 	asked    Questions
-	count    int
 }
 
 // Bytes returns a copy of the prepared body, as a print of the request shows it.
@@ -110,30 +113,24 @@ func (b *PreparedBody) Box() bool {
 	return b.sent.needs.box
 }
 
-// QuestionCount is the number of distinct ids in the body's questions member, or 0 when that member
-// is not an object.
+// QuestionCount is the number of distinct ids in the body's questions member, each of which a send
+// checks the answer to, or 0 when that member is absent or not an object.
 func (b *PreparedBody) QuestionCount() int {
-	return b.count
+	return len(b.asked)
 }
 
-func questionsIn(members []member) (Questions, int) {
+func questionsIn(members []member) (Questions, error) {
 	at := slices.IndexFunc(members, named("questions"))
-	if at < 0 {
-		return nil, 0
+	if at < 0 || members[at].value.Kind() != '{' {
+		return nil, nil
 	}
 
-	entries, err := readMembers(members[at].value)
-	if err != nil {
-		return nil, 0
-	}
-
-	// A body whose questions do not read is forwarded, so the server reports it.
 	var asked Questions
-	if asked.UnmarshalJSON(members[at].value) != nil {
-		return nil, len(lastOf(entries))
+	if err := asked.UnmarshalJSON(members[at].value); err != nil {
+		return nil, err
 	}
 
-	return asked, len(asked)
+	return asked, nil
 }
 
 func lastWins(b jsonBody) jsonBody {
