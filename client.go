@@ -256,6 +256,45 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 	return c.checkedResult(res, decoded, req.Questions)
 }
 
+// SendPrepared sends a body PrepareRaw prepared for this client's provider without preparing it again,
+// and returns its checked result and the response body as SystemOneRaw returns it.
+func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...RequestOption) (*Result, json.RawMessage, error) {
+	if body == nil {
+		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Provider.PrepareRaw"}
+	}
+
+	if body.provider != c.provider.name {
+		return nil, nil, &ValidationError{Message: fmt.Sprintf(
+			"the body was prepared for the %s provider, and this client sends to %s", body.provider, c.provider.name)}
+	}
+
+	cfg, err := c.resolve(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if cfg.longContext {
+		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw"}
+	}
+
+	var decoded json.RawMessage
+
+	res, err := c.do(ctx, cfg, call{
+		method: http.MethodPost, path: body.sent.via.path, payload: body.sent.body, out: &decoded, decode: body.sent.via.decode,
+		via: body.sent.via, needs: body.sent.needs.asNeeds(), imagesHeader: body.sent.images,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	result, err := c.checkedResult(res, decoded, body.asked)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return result, decoded, nil
+}
+
 func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
 	return applyOptions(requestConfig{
 		attemptTimeout: c.attemptTimeout,
@@ -327,8 +366,8 @@ type Request struct {
 	LongContext bool
 }
 
-// SystemOneRaw prepares body as PrepareRaw does, sends it through the SystemOne retry loop and returns
-// the response body unchanged. A body PrepareRaw already prepared is sent the same.
+// SystemOneRaw prepares body as PrepareRaw does with the client's default model, sends it through the
+// SystemOne retry loop and returns the response body unchecked, as the route decoded it.
 func (c *Client) SystemOneRaw(
 	ctx context.Context,
 	body json.RawMessage,
@@ -344,10 +383,7 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	sent, err := encodeBody(prepared.via, prepared.needs, withoutLongContext(prepared.body))
-	if err != nil {
-		return nil, err
-	}
+	sent := prepared.sent
 
 	res, err := c.do(ctx, cfg, call{
 		method: http.MethodPost, path: sent.via.path, payload: sent.body, decode: identity,
@@ -364,11 +400,6 @@ func (c *Client) SystemOneRaw(
 	}
 
 	return decoded, nil
-}
-
-// PrepareRaw is Provider.PrepareRaw with the client's provider and default model.
-func (c *Client) PrepareRaw(body json.RawMessage, opts ...RequestOption) (json.RawMessage, error) {
-	return c.provider.PrepareRaw(body, c.defaultModel, opts...)
 }
 
 // ListModels reports the model names this account may send.

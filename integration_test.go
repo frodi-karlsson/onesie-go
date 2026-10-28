@@ -505,6 +505,33 @@ func TestLiveSystemOne(t *testing.T) {
 		}
 	})
 
+	t.Run("should send a prepared body and return its checked result", func(t *testing.T) {
+		t.Parallel()
+
+		client := liveClient(t)
+
+		body, err := onesie.MarshalBody(onesie.Request{State: urgentState, Questions: onesie.Questions{
+			{ID: "urgent", Question: onesie.Noul{Instructions: "Is this urgent?"}},
+		}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		prepared, err := client.Provider().PrepareRaw(body, client.DefaultModel())
+		if err != nil {
+			t.Fatalf("PrepareRaw: unexpected error: %v", err)
+		}
+
+		result, raw, err := client.SendPrepared(liveContext(t, time.Minute), prepared)
+		if err != nil {
+			t.Fatalf("SendPrepared: unexpected error: %v", err)
+		}
+
+		if got, _ := result.Noul("urgent"); got == nil || got.Noul < 0.5 || len(raw) == 0 {
+			t.Errorf("urgent = %+v with body %s, want a yes and the response body", got, raw)
+		}
+	})
+
 	t.Run("should answer all three question types through cloudflare's jev", func(t *testing.T) {
 		t.Parallel()
 

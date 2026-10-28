@@ -1,17 +1,19 @@
 package onesie
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
 	"unicode/utf8"
 )
 
-// PrepareRaw returns body as SystemOneRaw sees it before provider encoding, refusing what a send
-// refuses. Repeated keys resolve to the last, a blank model to defaultModel, WithLongContext to long_context.
-func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...RequestOption) (json.RawMessage, error) {
+// PrepareRaw prepares body as SystemOneRaw sends it, refusing what a send refuses. Repeated keys
+// resolve to the last, a blank model to defaultModel, and WithLongContext to long_context.
+func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...RequestOption) (*PreparedBody, error) {
 	if err := p.check(); err != nil {
 		return nil, err
 	}
@@ -21,25 +23,16 @@ func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...
 		return nil, err
 	}
 
-	prepared, err := p.prepare(body, defaultModel, cfg.longContext)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err = encodeBody(prepared.via, prepared.needs, withoutLongContext(prepared.body)); err != nil {
-		return nil, err
-	}
-
-	return prepared.body.bytes()
+	return p.prepare(bytes.Clone(body), defaultModel, cfg.longContext)
 }
 
-func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (preparedBody, error) {
+func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*PreparedBody, error) {
 	if _, err := compactBody(raw); err != nil {
-		return preparedBody{}, err
+		return nil, err
 	}
 
 	if !utf8.Valid(raw) {
-		return preparedBody{}, &ValidationError{Message: "the request body is not valid UTF-8"}
+		return nil, &ValidationError{Message: "the request body is not valid UTF-8"}
 	}
 
 	model := orDefault(strings.TrimSpace(defaultModel), p.defaultModel)
@@ -47,11 +40,11 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (pr
 
 	bodyLongContext, err := longContextOf(b.members)
 	if err != nil {
-		return preparedBody{}, err
+		return nil, err
 	}
 
 	if err = checkQuestionCounts(b.members); err != nil {
-		return preparedBody{}, err
+		return nil, err
 	}
 
 	if longContext {
@@ -65,21 +58,149 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (pr
 
 	if needs.images || needs.box {
 		if fault := checkBodyImages(b.members); fault != nil {
-			return preparedBody{}, fault
+			return nil, fault
 		}
 	}
 
 	if refusal := via.refuse(p.name, model, needs); refusal != nil {
-		return preparedBody{}, refusal
+		return nil, refusal
 	}
 
-	return preparedBody{body: b, via: via, needs: needs}, nil
+	sent, err := encodeBody(via, needs, withoutLongContext(b))
+	if err != nil {
+		return nil, err
+	}
+
+	shown, err := b.bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	asked, count := questionsIn(b.members)
+
+	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked, count: count}, nil
 }
 
-type preparedBody struct {
-	body  jsonBody
-	via   route
-	needs capabilities
+// PreparedBody is a raw body PrepareRaw checked and encoded for one provider, which SendPrepared
+// sends as it is. Its facts are the ones that send uses.
+type PreparedBody struct {
+	provider string
+	shown    []byte
+	sent     encoded
+	model    string
+	asked    Questions
+	count    int
+}
+
+// Bytes returns a copy of the prepared body, as a print of the request shows it.
+func (b *PreparedBody) Bytes() json.RawMessage {
+	return bytes.Clone(b.shown)
+}
+
+// Model is the model the send names, the body's own or the default it was prepared with.
+func (b *PreparedBody) Model() string {
+	return b.model
+}
+
+// LongContext reports whether the send raises the context limits, from the body or WithLongContext.
+func (b *PreparedBody) LongContext() bool {
+	return b.sent.needs.longContext
+}
+
+// Box reports whether the body asks a box question.
+func (b *PreparedBody) Box() bool {
+	return b.sent.needs.box
+}
+
+// QuestionCount is the number of distinct ids in the body's questions member, or 0 when that member
+// is not an object.
+func (b *PreparedBody) QuestionCount() int {
+	return b.count
+}
+
+func questionsIn(members []member) (Questions, int) {
+	for _, m := range members {
+		if m.name != "questions" {
+			continue
+		}
+
+		var ids map[string]json.RawMessage
+		if json.Unmarshal(m.value, &ids) != nil {
+			return nil, 0
+		}
+
+		asked, err := readQuestions(m.value)
+		if err != nil {
+			return nil, len(ids)
+		}
+
+		return asked, len(ids)
+	}
+
+	return nil, 0
+}
+
+func readQuestions(value jsontext.Value) (Questions, error) {
+	entries, err := readMembers(value)
+	if err != nil {
+		return nil, err
+	}
+
+	asked := make(Questions, 0, len(entries))
+
+	for _, entry := range entries {
+		if slices.ContainsFunc(asked, func(named NamedQuestion) bool { return named.ID == entry.name }) {
+			return nil, errors.New("a question id is repeated")
+		}
+
+		question, err := readQuestion(entry.value)
+		if err != nil {
+			return nil, err
+		}
+
+		asked = append(asked, NamedQuestion{ID: entry.name, Question: question})
+	}
+
+	return asked, nil
+}
+
+func readQuestion(value jsontext.Value) (Question, error) {
+	var wire struct {
+		Type     string          `json:"type"`
+		Criteria json.RawMessage `json:"criteria"`
+	}
+
+	if err := json.Unmarshal(value, &wire); err != nil {
+		return nil, err
+	}
+
+	switch wire.Type {
+	case "noul":
+		return Noul{}, nil
+	case "box":
+		return Box{}, nil
+	case "choice":
+		options, err := readMembers(wire.Criteria)
+		if err != nil {
+			return nil, err
+		}
+
+		criteria := make(Criteria, 0, len(options))
+		for _, option := range options {
+			criteria = append(criteria, NamedCriterion{Name: option.name})
+		}
+
+		return Choice{Criteria: criteria}, nil
+	case "score":
+		var levels []json.RawMessage
+		if err := json.Unmarshal(wire.Criteria, &levels); err != nil {
+			return nil, err
+		}
+
+		return Score{Criteria: make([]any, len(levels))}, nil
+	default:
+		return nil, errors.New("the question type is not noul, choice, score or box")
+	}
 }
 
 func lastWins(b jsonBody) jsonBody {

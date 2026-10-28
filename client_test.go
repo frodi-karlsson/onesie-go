@@ -3190,12 +3190,12 @@ func TestClientSystemOneRaw(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			prepared, err := client.PrepareRaw(json.RawMessage(tc.body))
+			prepared, err := onesie.TypeSafe().PrepareRaw(json.RawMessage(tc.body), client.DefaultModel())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if got := transport.lastBody(); got != tc.want || got != string(prepared) {
+			if got := transport.lastBody(); got != tc.want || got != string(prepared.Bytes()) {
 				t.Errorf("body = %s, want %s, as PrepareRaw prints it", got, tc.want)
 			}
 		})
@@ -3214,12 +3214,12 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 		direct := transport.lastBody()
 
-		prepared, err := client.PrepareRaw(body)
+		prepared, err := onesie.TypeSafe().PrepareRaw(body, client.DefaultModel())
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if _, err := client.SystemOneRaw(t.Context(), prepared); err != nil {
+		if _, err := client.SystemOneRaw(t.Context(), prepared.Bytes()); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -3362,6 +3362,197 @@ func TestClientSystemOneRaw(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestClientSendPrepared(t *testing.T) {
+	t.Parallel()
+
+	const asked = `{"state":"s","questions":{"q":{"type":"noul","instructions":"Urgent?"}}}`
+
+	prepare := func(t *testing.T, provider onesie.Provider, client *onesie.Client, body string, opts ...onesie.RequestOption) *onesie.PreparedBody {
+		t.Helper()
+
+		prepared, err := provider.PrepareRaw(json.RawMessage(body), client.DefaultModel(), opts...)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		return prepared
+	}
+
+	t.Run("should send the prepared body and return the checked result and the response body", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		result, raw, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, asked))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if noul, _ := result.Noul("q"); noul == nil || noul.Noul != 0.1 || string(raw) != shortAnswer {
+			t.Errorf("result = %+v and body %s, want q at 0.1 and %s", result.Answers, raw, shortAnswer)
+		}
+
+		if got := transport.lastBody(); got != `{"model":"jev-latest",`+asked[1:] {
+			t.Errorf("sent %s, want the prepared body", got)
+		}
+	})
+
+	t.Run("should send a provider's own encoding and return the decoded body", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: `{"result":` + shortAnswer + `,"success":true}`}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithProvider(onesie.Cloudflare()),
+			onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, raw, err := client.SendPrepared(t.Context(), prepare(t, onesie.Cloudflare(), client, `{"model":"clef",`+asked[1:]))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if transport.last().URL.Path != "/run" || string(raw) != shortAnswer {
+			t.Errorf("sent to %s and got %s, want /run and %s", transport.last().URL.Path, raw, shortAnswer)
+		}
+	})
+
+	t.Run("should send long context as it was prepared", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		if _, _, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, asked, onesie.WithLongContext())); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "true" || strings.Contains(transport.lastBody(), "long_context") {
+			t.Errorf("header = %q and body %s, want the header and no long_context member", got, transport.lastBody())
+		}
+	})
+
+	refusals := []struct {
+		name    string
+		body    func(t *testing.T, client *onesie.Client) *onesie.PreparedBody
+		opts    []onesie.RequestOption
+		wantErr string
+	}{
+		{
+			name:    "should refuse a nil body",
+			body:    func(*testing.T, *onesie.Client) *onesie.PreparedBody { return nil },
+			wantErr: "onesie: the prepared body is nil. Use Provider.PrepareRaw",
+		},
+		{
+			name: "should refuse a body prepared for another provider",
+			body: func(t *testing.T, client *onesie.Client) *onesie.PreparedBody {
+				t.Helper()
+
+				return prepare(t, onesie.OpenRouter(), client, asked)
+			},
+			wantErr: "onesie: the body was prepared for the openrouter provider, and this client sends to typesafe",
+		},
+		{
+			name: "should refuse WithLongContext, since long context is fixed when the body is prepared",
+			body: func(t *testing.T, client *onesie.Client) *onesie.PreparedBody {
+				t.Helper()
+
+				return prepare(t, onesie.TypeSafe(), client, asked)
+			},
+			opts:    []onesie.RequestOption{onesie.WithLongContext()},
+			wantErr: "onesie: long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw",
+		},
+	}
+
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: shortAnswer}
+			client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			_, _, err := client.SendPrepared(t.Context(), tc.body(t, client), tc.opts...)
+			if !errors.Is(err, onesie.ErrValidation) || err.Error() != tc.wantErr {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+
+			if len(transport.requests) != 0 {
+				t.Errorf("sent %d requests, want none", len(transport.requests))
+			}
+		})
+	}
+
+	faults := []struct {
+		name     string
+		body     string
+		response string
+		wantErr  string
+	}{
+		{
+			name: "should check the answers against the prepared questions", body: asked,
+			response: `{"model":"m","answers":{"q":{"type":"noul","noul":1.5}},"usage":{"input_tokens":7,"output_tokens":3}}`,
+			wantErr:  "onesie: 200 response could not be used: question 'q' answered 1.5, which lies outside [0,1]",
+		},
+		{
+			name: "should refuse a response that does not answer a prepared question", body: asked,
+			response: `{"model":"m","answers":{"v":{"type":"noul","noul":0.5}},"usage":{}}`,
+			wantErr:  "onesie: 200 response could not be used: question 'q' has no answer",
+		},
+		{
+			name: "should refuse a response with no answers", body: `{"state":"s"}`, response: `{"x":1}`,
+			wantErr: "onesie: 200 response could not be used: the response is not a System One result, since it has no answers",
+		},
+		{
+			name: "should refuse an answer that does not decode", body: asked, response: `{"answers":{"q":{"type":"noul"}}}`,
+			wantErr: "onesie: 200 response could not be used: answer 'q' has no noul, or it is null",
+		},
+		{
+			name: "should keep the base URL hint for a response that is not JSON", body: asked, response: "garbage",
+			wantErr: "onesie: 200 response could not be used: the response is not JSON, check the base URL https://api.example/v1/systemone",
+		},
+	}
+
+	for _, tc := range faults {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			transport := &recordingTransport{body: tc.response}
+			client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+			_, raw, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, tc.body))
+
+			var unusable *onesie.ResponseError
+			if !errors.As(err, &unusable) || err.Error() != tc.wantErr || raw != nil {
+				t.Fatalf("error = %v and body %s, want %q and no body", err, raw, tc.wantErr)
+			}
+		})
+	}
+
+	t.Run("should carry the usage of an answer that does not fit", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: `{"answers":{"q":{"type":"noul","noul":2}},"usage":{"input_tokens":10,"output_tokens":2}}`}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		_, _, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, asked))
+
+		var unusable *onesie.ResponseError
+		if !errors.As(err, &unusable) || unusable.Usage == nil || unusable.Usage.InputTokens != 10 {
+			t.Fatalf("error = %v, want a ResponseError carrying 10 input tokens", err)
+		}
+	})
+
+	t.Run("should run only the decoding checks when the prepared questions do not read", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: `{"model":"m","answers":{},"usage":{}}`}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		body := `{"state":"s","questions":{"q":{"type":"tarot"}}}`
+		if _, _, err := client.SendPrepared(t.Context(), prepare(t, onesie.TypeSafe(), client, body)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
 
 func TestClientProvider(t *testing.T) {

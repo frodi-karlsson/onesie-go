@@ -111,8 +111,8 @@ func TestProviderPrepareRaw(t *testing.T) {
 				return
 			}
 
-			if err != nil || string(got) != tc.want {
-				t.Errorf("PrepareRaw = %s, %v, want %s", got, err, tc.want)
+			if err != nil || string(got.Bytes()) != tc.want {
+				t.Errorf("PrepareRaw = %+v, %v, want %s", got, err, tc.want)
 			}
 		})
 	}
@@ -126,12 +126,83 @@ func TestProviderPrepareRaw(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			twice, err := onesie.TypeSafe().PrepareRaw(once, "", longContext...)
-			if err != nil || string(twice) != string(once) {
-				t.Errorf("PrepareRaw twice = %s, %v, want %s", twice, err, once)
+			twice, err := onesie.TypeSafe().PrepareRaw(once.Bytes(), "", longContext...)
+			if err != nil || string(twice.Bytes()) != string(once.Bytes()) {
+				t.Errorf("PrepareRaw twice = %s, %v, want %s", twice.Bytes(), err, once.Bytes())
 			}
 		}
 	})
+
+	t.Run("should fill the default model a client passes", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "https://api.example", onesie.WithDefaultModel("custom"))
+
+		got, err := onesie.TypeSafe().PrepareRaw(json.RawMessage(`{"state":"s"}`), client.DefaultModel())
+		if err != nil || string(got.Bytes()) != `{"model":"custom","state":"s"}` {
+			t.Errorf("PrepareRaw = %+v, %v, want the client's model", got, err)
+		}
+	})
+
+	t.Run("should hand out a copy of the body", func(t *testing.T) {
+		t.Parallel()
+
+		body := []byte(`{"model":"m","state":"s"}`)
+
+		prepared, err := onesie.TypeSafe().PrepareRaw(body, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		body[len(`{"model":"`)] = 'x'
+		printed := prepared.Bytes()
+		printed[0] = '['
+
+		if got := string(prepared.Bytes()); got != `{"model":"m","state":"s"}` {
+			t.Errorf("Bytes = %s, want the body as it was prepared", got)
+		}
+	})
+
+	facts := []struct {
+		name          string
+		body          string
+		opts          []onesie.RequestOption
+		model         string
+		longContext   bool
+		box           bool
+		questionCount int
+	}{
+		{name: "should report the default model for a body that names none", body: `{"state":"s"}`, model: "jev-latest"},
+		{name: "should report the body's trimmed model", body: `{"model":" jev-1.13.0 "}`, model: "jev-1.13.0"},
+		{name: "should report long context from the body", body: `{"long_context":true}`, model: "jev-latest", longContext: true},
+		{name: "should report long context from WithLongContext", body: `{}`, opts: longContext, model: "jev-latest", longContext: true},
+		{
+			name: "should report a box question", model: "jev-latest", box: true, questionCount: 1,
+			body: `{"state":"r","questions":{"b":{"type":"box"}},"assets":{"r":{"format":"png","data_base64":"AQ=="}}}`,
+		},
+		{
+			name: "should count each question id once", model: "jev-latest", questionCount: 2,
+			body: `{"questions":{"a":{"type":"noul"},"b":{"type":"noul"},"a":{"type":"noul"}}}`,
+		},
+		{name: "should count no questions in a member that is not an object", body: `{"questions":[1]}`, model: "jev-latest"},
+		{name: "should report the default model for an array", body: `[1]`, model: "jev-latest"},
+	}
+
+	for _, tc := range facts {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := onesie.TypeSafe().PrepareRaw(json.RawMessage(tc.body), "", tc.opts...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got.Model() != tc.model || got.LongContext() != tc.longContext || got.Box() != tc.box || got.QuestionCount() != tc.questionCount {
+				t.Errorf("facts = %q, %v, %v, %d, want %q, %v, %v, %d", got.Model(), got.LongContext(), got.Box(), got.QuestionCount(),
+					tc.model, tc.longContext, tc.box, tc.questionCount)
+			}
+		})
+	}
 
 	t.Run("should refuse a zero provider", func(t *testing.T) {
 		t.Parallel()
@@ -140,21 +211,6 @@ func TestProviderPrepareRaw(t *testing.T) {
 
 		if _, err := zero.PrepareRaw(json.RawMessage(`{}`), ""); !errors.Is(err, onesie.ErrValidation) {
 			t.Fatalf("error = %v, want ErrValidation", err)
-		}
-	})
-}
-
-func TestClientPrepareRaw(t *testing.T) {
-	t.Parallel()
-
-	t.Run("should fill the client's default model", func(t *testing.T) {
-		t.Parallel()
-
-		client, _ := newTestClient(t, "https://api.example", onesie.WithDefaultModel("custom"))
-
-		got, err := client.PrepareRaw(json.RawMessage(`{"state":"s"}`))
-		if err != nil || string(got) != `{"model":"custom","state":"s"}` {
-			t.Errorf("PrepareRaw = %s, %v, want the client's model", got, err)
 		}
 	})
 }
