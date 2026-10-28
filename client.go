@@ -244,9 +244,12 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	result, _, err := c.send(ctx, cfg, sent, req.Questions)
+	res, decoded, err := c.send(ctx, cfg, sent)
+	if err != nil {
+		return nil, err
+	}
 
-	return result, err
+	return c.checkedResult(res, decoded, req.Questions)
 }
 
 // SendPrepared sends a body PrepareRaw prepared for this client's provider without preparing it again,
@@ -270,15 +273,25 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw"}
 	}
 
-	result, decoded, err := c.send(ctx, cfg, body.sent, body.asked)
+	res, decoded, err := c.send(ctx, cfg, body.sent)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return result, oneLine(decoded), nil
+	var line bytes.Buffer
+	if err = json.Compact(&line, decoded); err != nil {
+		return nil, nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
+	}
+
+	result, err := c.checkedResult(res, line.Bytes(), body.asked)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return result, line.Bytes(), nil
 }
 
-func (c *Client) send(ctx context.Context, cfg requestConfig, sent encoded, questions Questions) (*Result, json.RawMessage, error) {
+func (c *Client) send(ctx context.Context, cfg requestConfig, sent encoded) (*rawResponse, json.RawMessage, error) {
 	var decoded json.RawMessage
 
 	res, err := c.do(ctx, cfg, sent.post(&decoded))
@@ -286,20 +299,7 @@ func (c *Client) send(ctx context.Context, cfg requestConfig, sent encoded, ques
 		return nil, nil, err
 	}
 
-	result, err := c.checkedResult(res, decoded, questions)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return result, decoded, nil
-}
-
-func oneLine(decoded json.RawMessage) json.RawMessage {
-	var line bytes.Buffer
-
-	_ = json.Compact(&line, decoded) //nolint:errcheck // Compact fails only on JSON that does not parse, and checkedResult parsed this body.
-
-	return line.Bytes()
+	return res, decoded, nil
 }
 
 func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
