@@ -85,10 +85,15 @@ var (
 	ErrBaseURLUserInfo = errors.New("base URL holds userinfo")
 )
 
-// NewAPIError builds an APIError from a status and a message, for fakes and mocks. The message
-// carries no prefix, since Error adds it.
-func NewAPIError(status int, message string) *APIError {
-	return &APIError{Status: status, Header: http.Header{}, message: message}
+// NewAPIError builds the APIError a live response with this status and body gets from p's route for
+// model, sentinels included, for fakes and mocks. A blank model is p's built in default.
+func NewAPIError(p Provider, model string, needs Needs, status int, body []byte) *APIError {
+	var via route
+	if p.check() == nil {
+		via = p.route(orDefault(strings.TrimSpace(model), p.defaultModel))
+	}
+
+	return newAPIError(via, needs, status, http.Header{}, body, time.Time{})
 }
 
 func newAPIError(via route, needs Needs, status int, header http.Header, body []byte, now time.Time) *APIError {

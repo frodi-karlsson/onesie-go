@@ -373,38 +373,61 @@ func TestNewAPIError(t *testing.T) {
 
 	for _, tc := range []struct {
 		name     string
+		provider Provider
+		model    string
+		needs    Needs
 		status   int
+		body     string
+		reason   string
 		sentinel error
 		not      error
 	}{
 		{
-			name: "should build a 401 from a status and a message alone", status: 401,
-			sentinel: ErrAuthentication, not: ErrServer,
+			name: "should read a 401 with no body as a live response reads it", provider: TypeSafe(), status: 401,
+			reason: "401 status code, no body", sentinel: ErrAuthentication, not: ErrServer,
 		},
 		{
-			name: "should build a 503 from a status and a message alone", status: 503,
-			sentinel: ErrServer, not: ErrAuthentication,
+			name: "should read a 503 with no body as a live response reads it", provider: TypeSafe(), status: 503,
+			reason: "503 status code, no body", sentinel: ErrServer, not: ErrAuthentication,
+		},
+		{
+			name: "should read the route's sentinel from the body", provider: TypeSafe(), status: 400,
+			body: `{"detail":"Unknown model: jev-0.1"}`, reason: "400 Unknown model: jev-0.1", sentinel: ErrUnknownModel,
+		},
+		{
+			name: "should read a box refusal from the request's needs", provider: TypeSafe(), needs: Needs{Box: true}, status: 400,
+			body: `{"detail":"Invalid request"}`, reason: "400 Invalid request", sentinel: ErrNotServed,
+		},
+		{
+			name: "should read the body on the route the model picks", provider: Cloudflare(), model: "clef", status: 400,
+			body:   `{"errors":[{"message":"No such model @cf/cloudflare/clef-0","code":5007}],"success":false}`,
+			reason: "400 No such model @cf/cloudflare/clef-0", sentinel: ErrUnknownModel,
+		},
+		{
+			name: "should read the default model's route for a blank model", provider: Cloudflare(), status: 400,
+			body:   `{"errors":[{"message":"No such model @cf/cloudflare/clef-0","code":5007}],"success":false}`,
+			reason: "400 No such model @cf/cloudflare/clef-0", sentinel: ErrBadRequest, not: ErrUnknownModel,
+		},
+		{
+			name: "should read a status alone from a zero provider", status: 429, body: `{"error":"slow down"}`,
+			reason: "429 slow down", sentinel: ErrRateLimit,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := NewAPIError(tc.status, "mock status")
+			err := NewAPIError(tc.provider, tc.model, tc.needs, tc.status, []byte(tc.body))
 
-			if err.Status != tc.status {
-				t.Errorf("status got %d, want %d", err.Status, tc.status)
-			}
-
-			if err.Error() != "onesie: mock status" || err.Reason() != "mock status" {
-				t.Errorf("message got %q and %q", err.Error(), err.Reason())
+			if err.Status != tc.status || err.Reason() != tc.reason || string(err.RawBody) != tc.body {
+				t.Errorf("error = %d %q holding %q, want %d %q holding %q", err.Status, err.Reason(), err.RawBody, tc.status, tc.reason, tc.body)
 			}
 
 			if !errors.Is(err, tc.sentinel) {
-				t.Errorf("status %d did not match its sentinel", tc.status)
+				t.Errorf("error %q did not match %v", err.Reason(), tc.sentinel)
 			}
 
-			if errors.Is(err, tc.not) {
-				t.Errorf("status %d matched %v", tc.status, tc.not)
+			if tc.not != nil && errors.Is(err, tc.not) {
+				t.Errorf("error %q matched %v", err.Reason(), tc.not)
 			}
 		})
 	}
@@ -860,7 +883,7 @@ func TestAPIErrorReason(t *testing.T) {
 	t.Run("should give the status and the message", func(t *testing.T) {
 		t.Parallel()
 
-		checkReason(t, NewAPIError(503, "503 down"), "503 down")
+		checkReason(t, NewAPIError(TypeSafe(), "", Needs{}, 503, []byte(`{"error":"down"}`)), "503 down")
 	})
 }
 
