@@ -1,9 +1,11 @@
 package onesie
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -480,13 +482,13 @@ func (e *ConnectionError) Error() string {
 	return "onesie: " + e.Reason()
 }
 
-// Reason names the host and the innermost cause of a failed request, and never its URL or a proxy
-// address. A failure with no request reads connection error.
+// Reason names the host and the innermost cause of a failed request, and never a URL, a proxy
+// address or a credential. A failure with no request reads connection error.
 func (e *ConnectionError) Reason() string {
 	var failed *url.Error
 	if errors.As(e.Err, &failed) {
 		if parsed, err := url.Parse(failed.URL); err == nil && parsed.Host != "" {
-			return "could not reach " + parsed.Host + ": " + innermostCause(failed.Err)
+			return "could not reach " + parsed.Host + throughProxy(failed.Err) + ": " + causeOf(failed.Err)
 		}
 	}
 
@@ -494,22 +496,82 @@ func (e *ConnectionError) Reason() string {
 		return "connection error"
 	}
 
-	return "connection error: " + e.Err.Error()
+	if shown := withoutAddresses(firstLine(e.Err.Error())); shown != "" {
+		return "connection error: " + shown
+	}
+
+	return "connection error"
 }
 
-func innermostCause(err error) string {
+func throughProxy(err error) string {
+	var dial *net.OpError
+	for errors.As(err, &dial) {
+		if dial.Op == "proxyconnect" {
+			return " through a proxy"
+		}
+
+		err = dial.Err
+	}
+
+	return ""
+}
+
+func causeOf(err error) string {
+	if problem := certificateProblem(err); problem != "" {
+		return problem
+	}
+
 	for next := errors.Unwrap(err); next != nil; next = errors.Unwrap(err) {
 		err = next
 	}
 
 	// The text after the last colon, since the net package writes the address it dialled or the
 	// name it looked up before one.
-	text := err.Error()
+	text, _, _ := strings.Cut(err.Error(), "\n")
 	if at := strings.LastIndex(text, ": "); at >= 0 {
-		return text[at+len(": "):]
+		text = text[at+len(": "):]
 	}
 
-	return text
+	if shown := withoutAddresses(firstLine(text)); shown != "" {
+		return shown
+	}
+
+	return "connection failed"
+}
+
+func certificateProblem(err error) string {
+	var invalid x509.CertificateInvalidError
+	if errors.As(err, &invalid) && invalid.Reason == x509.Expired {
+		switch {
+		case strings.Contains(invalid.Detail, " is after "):
+			return "certificate has expired"
+		case strings.Contains(invalid.Detail, " is before "):
+			return "certificate is not yet valid"
+		}
+	}
+
+	for ; err != nil; err = errors.Unwrap(err) {
+		if text, isCertificate := strings.CutPrefix(err.Error(), "x509: "); isCertificate {
+			problem, _, _ := strings.Cut(firstLine(text), ": ")
+			problem, _, _ = strings.Cut(problem, " (")
+
+			return withoutAddresses(problem)
+		}
+	}
+
+	return ""
+}
+
+func withoutAddresses(text string) string {
+	kept := make([]string, 0, strings.Count(text, " ")+1)
+
+	for _, token := range strings.Fields(text) {
+		if !strings.Contains(token, "://") && !strings.Contains(token, "@") {
+			kept = append(kept, token)
+		}
+	}
+
+	return strings.Join(kept, " ")
 }
 
 // Unwrap returns the underlying transport error.

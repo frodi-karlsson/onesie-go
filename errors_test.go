@@ -952,7 +952,58 @@ func TestConnectionErrorReason(t *testing.T) {
 			err: &url.Error{Op: "Get", URL: "https://api.example/v1/models", Err: &net.OpError{
 				Op: "proxyconnect", Net: "tcp", Err: &net.OpError{Op: "dial", Net: "tcp", Addr: proxy, Err: errors.New("connection refused")},
 			}},
-			want: "could not reach api.example: connection refused",
+			want: "could not reach api.example through a proxy: connection refused",
+		},
+		{
+			name: "should name an expired certificate in plain words",
+			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
+				Reason: x509.Expired, Detail: "current time 2026-10-28T12:00:00Z is after 2026-01-01T00:00:00Z",
+			}}),
+			want: "could not reach api.example: certificate has expired",
+		},
+		{
+			name: "should name a certificate that is not yet valid in plain words",
+			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
+				Reason: x509.Expired, Detail: "current time 2026-10-28T12:00:00Z is before 2027-01-01T00:00:00Z",
+			}}),
+			want: "could not reach api.example: certificate is not yet valid",
+		},
+		{
+			name: "should name another certificate problem without its detail",
+			err: models(&tls.CertificateVerificationError{Err: x509.CertificateInvalidError{
+				Reason: x509.NameConstraintsWithoutSANs, Detail: "ignored detail",
+			}}),
+			want: "could not reach api.example: issuer has name constraints but leaf doesn't have a SAN extension",
+		},
+		{
+			name: "should drop a URL with credentials from a cause with no colon",
+			err:  models(errors.New("proxy http://u:p@proxy.local:3128 refused")),
+			want: "could not reach api.example: proxy refused",
+		},
+		{
+			name: "should drop a cause whose tail is a URL",
+			err:  models(errors.New("dial: https://api.example/v1/models?key=1")),
+			want: "could not reach api.example: connection failed",
+		},
+		{
+			name: "should drop a host with credentials and no scheme",
+			err:  models(errors.New("refused by u:p@proxy.local:3128 upstream")),
+			want: "could not reach api.example: refused by upstream",
+		},
+		{
+			name: "should give the first line of a joined cause",
+			err:  models(errors.Join(errors.New("connection reset"), errors.New("second failure"))),
+			want: "could not reach api.example: connection reset",
+		},
+		{
+			name: "should fall back when a cause ends in a colon",
+			err:  models(errors.New("dial tcp: ")),
+			want: "could not reach api.example: connection failed",
+		},
+		{
+			name: "should drop a URL from an error with no request",
+			err:  errors.New("stopped at http://u:p@proxy.local:3128"),
+			want: "connection error: stopped at",
 		},
 	}
 
@@ -1094,4 +1145,8 @@ func TestDescribeShape(t *testing.T) {
 			}
 		})
 	}
+}
+
+func models(cause error) error {
+	return &url.Error{Op: "Get", URL: "https://api.example/v1/models", Err: cause}
 }
