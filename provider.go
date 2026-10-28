@@ -36,7 +36,7 @@ func ProviderNamed(name string) (Provider, error) {
 		}
 	}
 
-	return Provider{}, &ValidationError{Message: "unknown provider " + name + ". Use " + joinNames(providerNames(), "or")}
+	return Provider{}, &ValidationError{Message: "unknown provider '" + printable(name) + "'. Use " + joinNames(providerNames(), "or")}
 }
 
 func providerNames() []string {

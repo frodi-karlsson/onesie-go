@@ -50,7 +50,7 @@ func ValidateImage(name string, img Image) error {
 	if len(img.Data) > MaxImageBytes {
 		return &ValidationError{Message: fmt.Sprintf(
 			"image '%s' is %d bytes, and an image is at most %d. Resize it to at most %d pixels a side "+
-				"or save it as a smaller JPEG", name, len(img.Data), MaxImageBytes, MaxImageSide)}
+				"or save it as a smaller JPEG", printable(name), len(img.Data), MaxImageBytes, MaxImageSide)}
 	}
 
 	config, err := configOf(format, img.Data)
@@ -61,7 +61,7 @@ func ValidateImage(name string, img Image) error {
 	if !sideFits(config.Width) || !sideFits(config.Height) {
 		return &ValidationError{Message: fmt.Sprintf(
 			"image '%s' is %d by %d pixels, and each side must be %d to %d. Resize it first",
-			name, config.Width, config.Height, MinImageSide, MaxImageSide)}
+			printable(name), config.Width, config.Height, MinImageSide, MaxImageSide)}
 	}
 
 	return nil
@@ -76,7 +76,7 @@ func checkBoxes(req Request) error {
 		if _, isBox := named.Question.(Box); isBox {
 			return &ValidationError{
 				Question: named.ID,
-				Message:  fmt.Sprintf("box question '%s' needs an image in the request", named.ID),
+				Message:  fmt.Sprintf("box question '%s' needs an image in the request", printable(named.ID)),
 			}
 		}
 	}
@@ -100,7 +100,7 @@ func checkReferences(req Request) error {
 		if len(ref) > maxReferenceBytes {
 			return &ValidationError{Message: fmt.Sprintf(
 				"asset reference '%.40s...' is %d bytes, and a reference is at most %d",
-				ref, len(ref), maxReferenceBytes)}
+				printable(ref), len(ref), maxReferenceBytes)}
 		}
 
 		total += len(ref)

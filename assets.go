@@ -62,7 +62,7 @@ func (m assetMatcher) longestAt(text string) string {
 
 func notReferenced(ref string) *ValidationError {
 	return &ValidationError{Message: fmt.Sprintf(
-		"asset '%s' is not referenced in the state or the questions, and the API refuses that", ref)}
+		"asset '%s' is not referenced in the state or the questions, and the API refuses that", printable(ref))}
 }
 
 func checkFormat(ref, format string) *ValidationError {
@@ -70,5 +70,6 @@ func checkFormat(ref, format string) *ValidationError {
 		return nil
 	}
 
-	return &ValidationError{Message: fmt.Sprintf("image '%s' has format '%s', and an image must be png or jpg", ref, format)}
+	return &ValidationError{Message: fmt.Sprintf(
+		"image '%s' has format '%s', and an image must be png or jpg", printable(ref), printable(format))}
 }

@@ -139,7 +139,7 @@ func dataURLOf(ref string, asset rawAsset) (string, error) {
 
 	encoded, err := textOf(asset.data)
 	if err != nil {
-		return "", validationOr(err, fmt.Sprintf("asset '%s' needs data_base64 as a string", ref))
+		return "", validationOr(err, fmt.Sprintf("asset '%s' needs data_base64 as a string", printable(ref)))
 	}
 
 	mime := "image/png"

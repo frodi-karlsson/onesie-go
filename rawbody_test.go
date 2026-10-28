@@ -73,7 +73,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{
 			name:    "should refuse a raw score over the levels limit",
 			body:    `{"state":"s","questions":{"rate":{"type":"score","instructions":"x","criteria":["0","1","2","3","4","5","6","7","8","9","10"]}}}`,
-			wantErr: `onesie: score question "rate" has 11 levels, and at most 10 are allowed`,
+			wantErr: `onesie: score question 'rate' has 11 levels, and at most 10 are allowed`,
 		},
 		{
 			name: "should take a raw score at the levels limit",
@@ -83,7 +83,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{
 			name:    "should refuse a raw choice over the options limit",
 			body:    `{"state":"s","questions":{"pick":{"type":"choice","criteria":` + manyOptions(256) + `}}}`,
-			wantErr: `onesie: choice question "pick" has 256 options, and at most 255 are allowed`,
+			wantErr: `onesie: choice question 'pick' has 256 options, and at most 255 are allowed`,
 		},
 		{
 			name: "should count a repeated raw option name once",

@@ -50,10 +50,9 @@ func TestProviderNamed(t *testing.T) {
 			t.Fatalf("error got %v, want ErrValidation", err)
 		}
 
-		for _, want := range []string{"nope", "typesafe", "openrouter", "berget", "levanto", "cloudflare"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("error = %q, want it to name %q", err.Error(), want)
-			}
+		const want = "onesie: unknown provider 'nope'. Use typesafe, openrouter, berget, levanto or cloudflare"
+		if err.Error() != want {
+			t.Errorf("error = %q, want %q", err.Error(), want)
 		}
 	})
 }

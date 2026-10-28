@@ -178,7 +178,7 @@ func (a rawAsset) fault(ref string) *ValidationError {
 	}
 
 	if a.data == nil {
-		return &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", ref)}
+		return &ValidationError{Message: fmt.Sprintf("asset '%s' needs data_base64 as a string", printable(ref))}
 	}
 
 	return nil

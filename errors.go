@@ -632,10 +632,10 @@ func (e *AnswerError) Error() string {
 // Reason says whether the answer was absent or of the wrong type.
 func (e *AnswerError) Reason() string {
 	if e.Missing {
-		return fmt.Sprintf("no answer named %q", e.Name)
+		return fmt.Sprintf("no answer named '%s'", printable(e.Name))
 	}
 
-	return fmt.Sprintf("answer %q is a %s, not a %s", e.Name, e.Got, e.Want)
+	return fmt.Sprintf("answer '%s' is a %s, not a %s", printable(e.Name), e.Got, e.Want)
 }
 
 type resultShapeError struct {

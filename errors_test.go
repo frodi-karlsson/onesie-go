@@ -794,12 +794,12 @@ func TestAnswerError(t *testing.T) {
 		{
 			name: "should report a missing answer",
 			err:  &AnswerError{Name: "absent", Missing: true},
-			want: `onesie: no answer named "absent"`,
+			want: `onesie: no answer named 'absent'`,
 		},
 		{
 			name: "should report a type mismatch",
 			err:  &AnswerError{Name: "department", Want: "noul", Got: "choice"},
-			want: `onesie: answer "department" is a choice, not a noul`,
+			want: `onesie: answer 'department' is a choice, not a noul`,
 		},
 	}
 
@@ -917,7 +917,7 @@ func TestAnswerErrorReason(t *testing.T) {
 	t.Run("should say the answer is missing", func(t *testing.T) {
 		t.Parallel()
 
-		checkReason(t, &AnswerError{Name: "a", Missing: true}, `no answer named "a"`)
+		checkReason(t, &AnswerError{Name: "a", Missing: true}, `no answer named 'a'`)
 	})
 }
 

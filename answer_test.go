@@ -552,7 +552,7 @@ func TestResultNoul(t *testing.T) {
 			t.Fatalf("expected an error, got none")
 		}
 
-		want := `onesie: answer "department" is a choice, not a noul`
+		want := `onesie: answer 'department' is a choice, not a noul`
 		if err.Error() != want {
 			t.Errorf("\n got: %s\nwant: %s", err.Error(), want)
 		}
