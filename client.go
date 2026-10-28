@@ -270,7 +270,12 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw"}
 	}
 
-	return c.send(ctx, cfg, body.sent, body.asked)
+	result, decoded, err := c.send(ctx, cfg, body.sent, body.asked)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return result, oneLine(decoded), nil
 }
 
 func (c *Client) send(ctx context.Context, cfg requestConfig, sent encoded, questions Questions) (*Result, json.RawMessage, error) {
@@ -286,12 +291,15 @@ func (c *Client) send(ctx context.Context, cfg requestConfig, sent encoded, ques
 		return nil, nil, err
 	}
 
-	var line bytes.Buffer
-	if err := json.Compact(&line, decoded); err != nil {
-		return nil, nil, &ResponseError{Status: res.status, Body: res.body, Err: err}
-	}
+	return result, decoded, nil
+}
 
-	return result, line.Bytes(), nil
+func oneLine(decoded json.RawMessage) json.RawMessage {
+	var line bytes.Buffer
+
+	_ = json.Compact(&line, decoded) //nolint:errcheck // Compact fails only on JSON that does not parse, and checkedResult parsed this body.
+
+	return line.Bytes()
 }
 
 func (c *Client) resolve(opts []RequestOption) (requestConfig, error) {
