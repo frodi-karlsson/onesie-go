@@ -1442,25 +1442,49 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
-	t.Run("should cap an oversized response body", func(t *testing.T) {
+	t.Run("should classify an oversized response body by its status", func(t *testing.T) {
 		t.Parallel()
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			for range 200 {
-				_, _ = io.WriteString(w, `{"padding":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
-			}
-		}))
-		defer server.Close()
+		oversized := "<html>" + strings.Repeat("a", 300) + "</html>"
 
-		policy := onesie.DefaultRetryPolicy()
-		policy.MaxRetries = 0
+		tests := []struct {
+			name      string
+			status    int
+			wantCalls int
+			wantErr   string
+			sentinel  error
+		}{
+			{
+				name: "should keep a 401 an authentication error", status: http.StatusUnauthorized, wantCalls: 1,
+				wantErr: "onesie: 401 Unauthorized, with a response body over the 256 byte limit", sentinel: onesie.ErrAuthentication,
+			},
+			{
+				name: "should retry a retryable status", status: http.StatusServiceUnavailable, wantCalls: 3,
+				wantErr: "onesie: 503 Service Unavailable, with a response body over the 256 byte limit", sentinel: onesie.ErrServer,
+			},
+			{
+				name: "should refuse a 2xx as a response error without retrying", status: http.StatusOK, wantCalls: 1,
+				wantErr: "onesie: 200 response could not be used: the response body exceeded 256 bytes", sentinel: onesie.ErrResponse,
+			},
+		}
 
-		client, _ := newTestClient(t, server.URL, onesie.WithMaxResponseBytes(256), onesie.WithRetry(policy))
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
 
-		_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+				client, _, transport := newScriptedClient(t, []scriptedReply{{status: tc.status, body: oversized}},
+					onesie.WithMaxResponseBytes(256))
 
-		if !errors.Is(err, onesie.ErrConnection) {
-			t.Errorf("error got %v, want ErrConnection", err)
+				_, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+
+				if err == nil || err.Error() != tc.wantErr || !errors.Is(err, tc.sentinel) || errors.Is(err, onesie.ErrConnection) {
+					t.Errorf("error = %v, want %q matching %v", err, tc.wantErr, tc.sentinel)
+				}
+
+				if transport.calls() != tc.wantCalls {
+					t.Errorf("call count got %d, want %d, %s", transport.calls(), tc.wantCalls, transport.attempts())
+				}
+			})
 		}
 	})
 

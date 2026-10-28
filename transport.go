@@ -67,10 +67,14 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 		}
 
 		if res.status >= 200 && res.status < 300 {
+			if res.oversized {
+				return nil, &ResponseError{Status: res.status, Err: fmt.Errorf("the response body exceeded %d bytes", c.maxResponseBytes)}
+			}
+
 			return res, decodeInto(res, withoutQuery(target), req.out, req.decode)
 		}
 
-		apiErr := newAPIError(req.via, req.needs, res.status, res.header, res.body, c.clock.Now())
+		apiErr := c.apiError(req, res)
 
 		if retriesLeft <= 0 || !cfg.retry.RetryStatus(res.status) {
 			return nil, apiErr
@@ -91,6 +95,14 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 			return nil, waitErr
 		}
 	}
+}
+
+func (c *Client) apiError(req call, res *rawResponse) *APIError {
+	if res.oversized {
+		return oversizedAPIError(req.via, req.needs, res.status, res.header, c.maxResponseBytes, c.clock.Now())
+	}
+
+	return newAPIError(req.via, req.needs, res.status, res.header, res.body, c.clock.Now())
 }
 
 func compactBody(body []byte) ([]byte, error) {
@@ -207,7 +219,7 @@ func (c *Client) exchange(ctx, actx context.Context, tag string, req *http.Reque
 	}
 
 	if int64(len(data)) > c.maxResponseBytes {
-		return nil, &ConnectionError{Err: fmt.Errorf("response body exceeded %d bytes", c.maxResponseBytes)}
+		return &rawResponse{status: resp.StatusCode, header: resp.Header, oversized: true}, nil
 	}
 
 	return &rawResponse{status: resp.StatusCode, header: resp.Header, body: data}, nil
@@ -331,9 +343,10 @@ func decodeInto(res *rawResponse, shown string, out any, decode func([]byte) ([]
 }
 
 type rawResponse struct {
-	status int
-	header http.Header
-	body   []byte
+	status    int
+	header    http.Header
+	body      []byte
+	oversized bool
 }
 
 func classify(ctx, actx context.Context, err error, cfg requestConfig, now time.Time) error {

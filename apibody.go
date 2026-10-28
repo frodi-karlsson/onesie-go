@@ -39,6 +39,14 @@ func newAPIError(via route, needs Needs, status int, header http.Header, body []
 	}
 }
 
+func oversizedAPIError(via route, needs Needs, status int, header http.Header, limit int64, now time.Time) *APIError {
+	apiErr := newAPIError(via, needs, status, header, nil, now)
+	apiErr.message = fmt.Sprintf("%s, with a response body over the %d byte limit", statusLine(status), limit)
+	apiErr.sentinel = via.classify(status, nil, apiErr.message, needs)
+
+	return apiErr
+}
+
 func describe(status int, header http.Header, body any, raw []byte, read func(any) string) description {
 	switch {
 	case redirected(status, header):

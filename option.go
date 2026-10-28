@@ -180,8 +180,8 @@ func WithTotalTimeout(d time.Duration) Option {
 	}
 }
 
-// WithMaxResponseBytes caps how much of a response body is read, so a misbehaving server cannot
-// drive this client to allocate without bound.
+// WithMaxResponseBytes caps how much of a response body is read. A longer body with a 2xx status is a
+// *ResponseError, and with any other status an *APIError for that status, retried as the status is.
 func WithMaxResponseBytes(n int64) Option {
 	return func(c *Client) error {
 		if n <= 0 {
