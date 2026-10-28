@@ -7,9 +7,13 @@ import (
 	"fmt"
 )
 
-// UnmarshalJSON reads the wire format in order, the last of a repeated id winning at its position. An
-// object or array inside a question stays a json.RawMessage, so its key order reaches the wire.
+// UnmarshalJSON reads the wire format in order, the last of a repeated id winning at its position. Null
+// leaves q as it is. An object or array inside a question stays a json.RawMessage, keeping its key order.
 func (q *Questions) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+
 	entries, err := readMembers(bytes.Clone(data))
 	if err != nil {
 		return &ValidationError{Message: "questions must be an object"}

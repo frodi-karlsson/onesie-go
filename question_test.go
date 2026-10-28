@@ -213,6 +213,7 @@ func TestQuestionsUnmarshalJSON(t *testing.T) {
 			want: onesie.Questions{{ID: "q", Question: onesie.Noul{}}},
 		},
 		{name: "should read an empty object as no questions", body: `{}`, want: onesie.Questions{}},
+		{name: "should read null as no questions", body: `null`},
 	}
 
 	for _, tc := range tests {
@@ -229,6 +230,15 @@ func TestQuestionsUnmarshalJSON(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should leave questions it holds unchanged on null, as encoding/json does", func(t *testing.T) {
+		t.Parallel()
+
+		held := onesie.Questions{{ID: "q", Question: onesie.Box{}}}
+		if err := json.Unmarshal([]byte(`null`), &held); err != nil || len(held) != 1 {
+			t.Fatalf("Unmarshal = %#v, %v, want the held question kept", held, err)
+		}
+	})
 
 	t.Run("should write an object it read back in its written key order", func(t *testing.T) {
 		t.Parallel()
