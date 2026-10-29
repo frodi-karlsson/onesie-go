@@ -12,7 +12,8 @@ const (
 	DefaultAttemptTimeout = 10 * time.Second
 	// AssetAttemptTimeout bounds one HTTP attempt of a request that carries images.
 	AssetAttemptTimeout = 60 * time.Second
-	// DefaultMaxResponseBytes caps how much of a response body is read.
+	// DefaultMaxResponseBytes caps how much of a response body is read, unless WithMaxResponseBytes
+	// sets another cap.
 	DefaultMaxResponseBytes = 8 << 20
 	// DefaultMaxRetryAfter is the longest server requested retry delay the client waits out.
 	DefaultMaxRetryAfter = time.Minute

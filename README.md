@@ -49,7 +49,9 @@ Each provider reads its key from the variable `Provider.EnvAPIKey` names, unless
 
 A request the client refuses before sending matches `onesie.ErrValidation`.
 A response outside 2xx is an `*onesie.APIError`, matched with `errors.Is` against a sentinel such as `onesie.ErrUnknownModel`.
+Its `Detail()` is what the response said beyond its status, and is empty when it said nothing more.
 `SystemOne` and `SendPrepared` return a `ResponseError` matching `ErrResponse` when an answer does not fit its question.
+A response body over `onesie.DefaultMaxResponseBytes`, 8 MiB, is an error, and `onesie.WithMaxResponseBytes` sets another cap.
 Every error type the package defines has `Reason()`, its message without the `onesie: ` prefix.
 An error from the function passed to `onesie.WithAPIKeyFunc` is returned as it is, without one.
 

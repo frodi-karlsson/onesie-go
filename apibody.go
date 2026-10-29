@@ -35,6 +35,7 @@ func newAPIError(via route, needs Needs, status int, header http.Header, body []
 		RetryAfter: retryAfter,
 		Code:       codeOf(parsed),
 		message:    described.fitted(),
+		detail:     described.said(),
 		sentinel:   via.classify(status, parsed, described.whole(), needs),
 	}
 }
@@ -53,13 +54,20 @@ func oversizedAPIError(via route, needs Needs, status int, header http.Header, l
 		Header:     header,
 		RetryAfter: retryAfter,
 		message:    lead + ", and " + overLimit(limit),
+		detail:     capitalised(overLimit(limit)),
 		// Classified on the status alone, since the note is onesie's own text and no text rule may match it.
 		sentinel: via.classify(status, nil, "", needs),
 	}
 }
 
 func overLimit(limit int64) string {
-	return fmt.Sprintf("the response body is over the %d byte limit, which WithMaxResponseBytes raises", limit)
+	const mebibyte = 1 << 20
+
+	if limit%mebibyte == 0 {
+		return fmt.Sprintf("the response body is over the %d MiB limit", limit/mebibyte)
+	}
+
+	return fmt.Sprintf("the response body is over the %d byte limit", limit)
 }
 
 func describe(status int, header http.Header, body any, raw []byte, read func(any) string) description {
@@ -85,12 +93,13 @@ func describe(status int, header http.Header, body any, raw []byte, read func(an
 		return description{lead: fmt.Sprintf("%d status code, unreadable body", status)}
 	}
 
-	return description{lead: fmt.Sprintf("%d ", status), detail: string(encoded)}
+	return description{lead: fmt.Sprintf("%d ", status), detail: string(encoded), encoded: true}
 }
 
 type description struct {
-	lead   string
-	detail string
+	lead    string
+	detail  string
+	encoded bool
 }
 
 func (d description) whole() string {
@@ -101,6 +110,15 @@ func (d description) fitted() string {
 	// Only the detail is cut, since it comes from the body, so a hostile body cannot reach a log line
 	// at full length or with its own control characters. Classifying still reads the whole detail.
 	return d.lead + truncate(firstLine(d.detail))
+}
+
+func (d description) said() string {
+	// An encoded body is shown so a reader sees something, but the response said nothing readable.
+	if d.encoded {
+		return ""
+	}
+
+	return truncate(firstLine(d.detail))
 }
 
 func redirected(status int, header http.Header) bool {

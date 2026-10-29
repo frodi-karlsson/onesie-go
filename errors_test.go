@@ -807,6 +807,31 @@ func TestOversizedAPIError(t *testing.T) {
 	})
 }
 
+func TestOverLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		limit int64
+		want  string
+	}{
+		{name: "should write the default limit in MiB", limit: DefaultMaxResponseBytes, want: "the response body is over the 8 MiB limit"},
+		{name: "should write a whole number of MiB in MiB", limit: 3 << 20, want: "the response body is over the 3 MiB limit"},
+		{name: "should write a limit under a MiB in bytes", limit: 1000, want: "the response body is over the 1000 byte limit"},
+		{name: "should write a limit that is not a whole number of MiB in bytes", limit: 1<<20 + 1, want: "the response body is over the 1048577 byte limit"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := overLimit(tc.limit); got != tc.want {
+				t.Errorf("overLimit(%d) = %q, want %q", tc.limit, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDescribe(t *testing.T) {
 	t.Parallel()
 
@@ -821,7 +846,7 @@ func TestDescribe(t *testing.T) {
 		{name: "should lead with the status and keep the read message as the detail", status: 400, body: `{"error":"bad question"}`, want: description{lead: "400 ", detail: "bad question"}},
 		{name: "should keep a body that is not JSON as the detail", status: 529, body: "overloaded", want: description{lead: "529 status code, with a response body that is not JSON: ", detail: "overloaded"}},
 		{name: "should lead with the whole message when there is no body", status: 500, want: description{lead: "500 status code, no body"}},
-		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`}},
+		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`, encoded: true}},
 	}
 
 	for _, tc := range tests {
@@ -1051,6 +1076,98 @@ func TestAPIErrorReason(t *testing.T) {
 		t.Parallel()
 
 		checkReason(t, NewAPIError(TypeSafe(), "", Needs{}, 503, []byte(`{"error":"down"}`)), "503 down")
+	})
+}
+
+func TestAPIErrorDetail(t *testing.T) {
+	t.Parallel()
+
+	typesafe := TypeSafe().route(jevLatest)
+
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{name: "should give no detail for a response with no body", status: 401},
+		{name: "should give no detail for an html page", status: 502, body: "<html><body>Bad Gateway</body></html>"},
+		{name: "should give no detail for text that repeats the status", status: 401, body: "Unauthorized\n"},
+		{name: "should give no detail for a JSON body with nothing readable", status: 418, body: `{"a":1}`},
+		{name: "should give the first line of a text body", status: 401, body: "bad key\nsecond line", want: "bad key"},
+		{name: "should give the first line of a JSON string body", status: 502, body: `"upstream timed out\nretry later"`, want: "upstream timed out"},
+		{name: "should give a nested message without the status", status: 401, body: `{"error":{"message":"No auth credentials found","code":401}}`, want: "No auth credentials found"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := newAPIError(typesafe, Needs{}, tc.status, http.Header{}, []byte(tc.body), time.Now())
+			if got.Detail() != tc.want {
+				t.Errorf("Detail = %q, want %q", got.Detail(), tc.want)
+			}
+		})
+	}
+
+	t.Run("should give the first line of a provider's message", func(t *testing.T) {
+		t.Parallel()
+
+		openrouter := OpenRouter().route(jevLatest)
+		gateway := Cloudflare().route(cloudflareJev)
+		workers := Cloudflare().route("clef")
+		countDetail := "questions.rate.score.criteria: List should have at most 10 items after validation, not 11"
+
+		recorded := []struct {
+			file   string
+			status int
+			via    route
+			want   string
+		}{
+			{file: "typesafe-unknown-model.json", status: 400, via: typesafe, want: "Unknown model: onesie-does-not-exist"},
+			{file: "typesafe-context-too-long.json", status: 400, via: typesafe, want: "max_tokens_exceeded"},
+			{file: "typesafe-box-not-served.json", status: 400, via: typesafe, want: "Invalid request."},
+			{file: "typesafe-question-limit.json", status: 422, via: typesafe, want: countDetail},
+			{file: "openrouter-unknown-model.json", status: 400, via: openrouter, want: "Model onesie-does-not-exist does not exist"},
+			{file: "openrouter-context-too-long.json", status: 400, via: openrouter, want: "max_tokens_exceeded"},
+			{file: "openrouter-box-not-served.json", status: 400, via: openrouter, want: "Invalid request."},
+			{file: "openrouter-question-limit.json", status: 422, via: openrouter, want: countDetail},
+			{file: "berget-unknown-model.json", status: 404, via: Berget().route(bergetModel), want: "Model not found: jev-latest"},
+			{
+				file: "levanto-unknown-model.json", status: 422, via: Levanto().route(levantoModel),
+				want: "model: unknown model 'jev-latest'; GET /v1/models lists the accepted names (levanto-sage-v1.4, sage-latest)",
+			},
+			{file: "gateway-unknown-model.json", status: 404, via: gateway, want: "Model not found: typesafe/jev-nope"},
+			{file: "gateway-context-too-long.json", status: 400, via: gateway, want: "max_tokens_exceeded"},
+			{file: "gateway-box-not-served.json", status: 400, via: gateway, want: "Invalid request."},
+			{file: "gateway-question-limit.json", status: 400, via: gateway, want: countDetail},
+			{file: "cloudflare-auth.json", status: 401, via: gateway, want: "Authentication error"},
+			{file: "cloudflare-models-auth.json", status: 400, via: workers, want: "Authentication failed (status: 400)"},
+			{
+				file: "workers-unknown-model.json", status: 400, via: workers,
+				want: "No such model: No such model @cf/cloudflare/clef-nope or task (72980980-d159-4205-859d-0aca1986d075)",
+			},
+		}
+
+		for _, tc := range recorded {
+			body, err := os.ReadFile(filepath.Join("testdata", "errors", tc.file))
+			if err != nil {
+				t.Fatalf("reading the fixture: %v", err)
+			}
+
+			if got := newAPIError(tc.via, Needs{}, tc.status, http.Header{}, body, time.Now()).Detail(); got != tc.want {
+				t.Errorf("Detail = %q for %s, want %q", got, tc.file, tc.want)
+			}
+		}
+	})
+
+	t.Run("should give the over limit text for an oversized body", func(t *testing.T) {
+		t.Parallel()
+
+		got := oversizedAPIError(typesafe, Needs{}, 502, http.Header{}, DefaultMaxResponseBytes, time.Now())
+		if want := "The response body is over the 8 MiB limit"; got.Detail() != want {
+			t.Errorf("Detail = %q, want %q", got.Detail(), want)
+		}
 	})
 }
 

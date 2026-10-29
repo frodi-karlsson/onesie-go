@@ -84,6 +84,7 @@ type APIError struct {
 	Code string
 
 	message  string
+	detail   string
 	sentinel error
 }
 
@@ -95,6 +96,11 @@ func (e *APIError) Error() string {
 // Reason returns the status and the message read from the response body.
 func (e *APIError) Reason() string {
 	return e.message
+}
+
+// Detail returns what the response said beyond its status, empty when it said nothing more.
+func (e *APIError) Detail() string {
+	return e.detail
 }
 
 // Is reports whether this error matches one of the package sentinels.
