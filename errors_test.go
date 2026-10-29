@@ -846,7 +846,8 @@ func TestDescribe(t *testing.T) {
 		{name: "should lead with the status and keep the read message as the detail", status: 400, body: `{"error":"bad question"}`, want: description{lead: "400 ", detail: "bad question"}},
 		{name: "should keep a body that is not JSON as the detail", status: 529, body: "overloaded", want: description{lead: "529 status code, with a response body that is not JSON: ", detail: "overloaded"}},
 		{name: "should lead with the whole message when there is no body", status: 500, want: description{lead: "500 status code, no body"}},
-		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`, encoded: true}},
+		{name: "should keep a message that repeats the status as an unsaid detail", status: 401, body: `{"error":"Unauthorized"}`, want: description{lead: "401 ", detail: "Unauthorized", unsaid: true}},
+		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`, unsaid: true}},
 	}
 
 	for _, tc := range tests {
@@ -1094,6 +1095,9 @@ func TestAPIErrorDetail(t *testing.T) {
 		{name: "should give no detail for an html page", status: 502, body: "<html><body>Bad Gateway</body></html>"},
 		{name: "should give no detail for text that repeats the status", status: 401, body: "Unauthorized\n"},
 		{name: "should give no detail for a JSON body with nothing readable", status: 418, body: `{"a":1}`},
+		{name: "should give no detail for a JSON message that repeats the status", status: 401, body: `{"error":"Unauthorized"}`},
+		{name: "should give no detail for a nested JSON message that repeats the status and its code", status: 401, body: `{"error":{"message":"401 unauthorized."}}`},
+		{name: "should give no detail for a JSON string that repeats the status", status: 503, body: `"Service Unavailable"`},
 		{name: "should give the first line of a text body", status: 401, body: "bad key\nsecond line", want: "bad key"},
 		{name: "should give the first line of a JSON string body", status: 502, body: `"upstream timed out\nretry later"`, want: "upstream timed out"},
 		{name: "should give a nested message without the status", status: 401, body: `{"error":{"message":"No auth credentials found","code":401}}`, want: "No auth credentials found"},

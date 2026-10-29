@@ -90,7 +90,7 @@ func describe(status int, header http.Header, body any, raw []byte, read func(an
 	}
 
 	if detail := read(body); firstLine(detail) != "" {
-		return description{lead: fmt.Sprintf("%d ", status), detail: detail}
+		return description{lead: fmt.Sprintf("%d ", status), detail: detail, unsaid: repeatsStatus(firstLine(detail), status)}
 	}
 
 	encoded, err := json.Marshal(body)
@@ -98,13 +98,14 @@ func describe(status int, header http.Header, body any, raw []byte, read func(an
 		return description{lead: fmt.Sprintf("%d status code, unreadable body", status)}
 	}
 
-	return description{lead: fmt.Sprintf("%d ", status), detail: string(encoded), encoded: true}
+	// An encoded body is shown so a reader sees something, but the response said nothing readable.
+	return description{lead: fmt.Sprintf("%d ", status), detail: string(encoded), unsaid: true}
 }
 
 type description struct {
 	lead        string
 	detail      string
-	encoded     bool
+	unsaid      bool
 	explanation string
 }
 
@@ -122,8 +123,7 @@ func (d description) said() string {
 	switch {
 	case d.explanation != "":
 		return d.explanation
-	// An encoded body is shown so a reader sees something, but the response said nothing readable.
-	case d.encoded:
+	case d.unsaid:
 		return ""
 	}
 
@@ -166,7 +166,7 @@ func describeString(status int, text string) description {
 		return description{lead: statusLine(status)}
 	}
 
-	return description{lead: fmt.Sprintf("%d ", status), detail: line}
+	return description{lead: fmt.Sprintf("%d ", status), detail: line, unsaid: repeatsStatus(line, status)}
 }
 
 func statusLine(status int) string {
