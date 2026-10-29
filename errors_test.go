@@ -1169,6 +1169,40 @@ func TestAPIErrorDetail(t *testing.T) {
 			t.Errorf("Detail = %q, want %q", got.Detail(), want)
 		}
 	})
+
+	const refusal = ", which onesie does not follow, since the request carries the API key. Point the base URL at where the API is"
+
+	redirects := []struct {
+		name     string
+		location string
+		want     string
+	}{
+		{name: "should give the target and the advice of a redirect", location: "https://elsewhere.example/v1/models?key=secret", want: "Redirect to https://elsewhere.example" + refusal},
+		{name: "should give the advice of a relative redirect", location: "/v2/models?key=secret", want: "Redirect" + refusal},
+	}
+
+	for _, tc := range redirects {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := newAPIError(typesafe, Needs{}, 302, http.Header{"Location": {tc.location}}, nil, time.Now())
+			if got.Detail() != tc.want {
+				t.Errorf("Detail = %q, want %q", got.Detail(), tc.want)
+			}
+		})
+	}
+
+	t.Run("should give the redirect and the over limit text for an oversized redirect", func(t *testing.T) {
+		t.Parallel()
+
+		header := http.Header{"Location": {"https://elsewhere.example/v1"}}
+		want := "Redirect to https://elsewhere.example" + refusal + ", and the response body is over the 8 MiB limit"
+
+		got := oversizedAPIError(typesafe, Needs{}, 302, header, DefaultMaxResponseBytes, time.Now())
+		if got.Detail() != want {
+			t.Errorf("Detail = %q, want %q", got.Detail(), want)
+		}
+	})
 }
 
 func TestRetryAfterErrorReason(t *testing.T) {

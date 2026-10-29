@@ -98,7 +98,8 @@ func (e *APIError) Reason() string {
 	return e.message
 }
 
-// Detail returns what the response said beyond its status, empty when it said nothing more.
+// Detail returns what the response said beyond its status, or onesie's own note on a redirect or an
+// oversized body. It is empty when there is nothing more to say.
 func (e *APIError) Detail() string {
 	return e.detail
 }
