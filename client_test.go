@@ -1445,7 +1445,7 @@ func TestClientSystemOne(t *testing.T) {
 	t.Run("should classify an oversized response body by its status", func(t *testing.T) {
 		t.Parallel()
 
-		const note = ", and the response body is over the 256 byte limit, which WithMaxResponseBytes raises"
+		const note = ", and the response body is over the 256 byte limit"
 
 		oversized := "<html>" + strings.Repeat("a", 300) + "</html>"
 
@@ -1486,7 +1486,7 @@ func TestClientSystemOne(t *testing.T) {
 			},
 			{
 				name: "should refuse a 2xx as a response error without retrying", status: http.StatusOK, wantCalls: 1,
-				wantErr:  "onesie: 200 response could not be used: the response body is over the 256 byte limit, which WithMaxResponseBytes raises",
+				wantErr:  "onesie: 200 response could not be used: the response body is over the 256 byte limit",
 				sentinel: onesie.ErrResponse,
 			},
 		}

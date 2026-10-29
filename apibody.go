@@ -59,7 +59,13 @@ func oversizedAPIError(via route, needs Needs, status int, header http.Header, l
 }
 
 func overLimit(limit int64) string {
-	return fmt.Sprintf("the response body is over the %d byte limit, which WithMaxResponseBytes raises", limit)
+	const mebibyte = 1 << 20
+
+	if limit%mebibyte == 0 {
+		return fmt.Sprintf("the response body is over the %d MiB limit", limit/mebibyte)
+	}
+
+	return fmt.Sprintf("the response body is over the %d byte limit", limit)
 }
 
 func describe(status int, header http.Header, body any, raw []byte, read func(any) string) description {

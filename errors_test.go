@@ -807,6 +807,31 @@ func TestOversizedAPIError(t *testing.T) {
 	})
 }
 
+func TestOverLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		limit int64
+		want  string
+	}{
+		{name: "should write the default limit in MiB", limit: DefaultMaxResponseBytes, want: "the response body is over the 8 MiB limit"},
+		{name: "should write a whole number of MiB in MiB", limit: 3 << 20, want: "the response body is over the 3 MiB limit"},
+		{name: "should write a limit under a MiB in bytes", limit: 1000, want: "the response body is over the 1000 byte limit"},
+		{name: "should write a limit that is not a whole number of MiB in bytes", limit: 1<<20 + 1, want: "the response body is over the 1048577 byte limit"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := overLimit(tc.limit); got != tc.want {
+				t.Errorf("overLimit(%d) = %q, want %q", tc.limit, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDescribe(t *testing.T) {
 	t.Parallel()
 
