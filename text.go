@@ -15,6 +15,10 @@ func printable(text string) string {
 	return truncate(withoutControls(text))
 }
 
+func capitalised(text string) string {
+	return strings.ToUpper(text[:1]) + text[1:]
+}
+
 func firstLine(body string) string {
 	line, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(body), byteOrderMark), "\n")
 
