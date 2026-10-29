@@ -846,7 +846,8 @@ func TestDescribe(t *testing.T) {
 		{name: "should lead with the status and keep the read message as the detail", status: 400, body: `{"error":"bad question"}`, want: description{lead: "400 ", detail: "bad question"}},
 		{name: "should keep a body that is not JSON as the detail", status: 529, body: "overloaded", want: description{lead: "529 status code, with a response body that is not JSON: ", detail: "overloaded"}},
 		{name: "should lead with the whole message when there is no body", status: 500, want: description{lead: "500 status code, no body"}},
-		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`, encoded: true}},
+		{name: "should keep a message that repeats the status as an unsaid detail", status: 401, body: `{"error":"Unauthorized"}`, want: description{lead: "401 ", detail: "Unauthorized", unsaid: true}},
+		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`, unsaid: true}},
 	}
 
 	for _, tc := range tests {
@@ -1059,6 +1060,34 @@ func TestTruncate(t *testing.T) {
 	})
 }
 
+func TestWithoutControls(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{name: "should drop C0 and C1 controls", text: "a\x1b[31mb\x00c\u0085d", want: "a[31mbcd"},
+		{name: "should drop bidi embeddings and overrides", text: "a\u202ab\u202bc\u202cd\u202de\u202ef", want: "abcdef"},
+		{name: "should drop bidi isolates", text: "a\u2066b\u2067c\u2068d\u2069e", want: "abcde"},
+		{name: "should drop bidi marks", text: "a\u200eb\u200fc\u061cd", want: "abcd"},
+		{name: "should drop other invisible format characters", text: "a\u200bb\u2060c\ufeffd\u00ade\U000E0041f", want: "abcdef"},
+		{name: "should keep joiners inside emoji and scripts", text: "\U0001F468\u200d\U0001F469 \u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", want: "\U0001F468\u200d\U0001F469 \u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"},
+		{name: "should keep ordinary text, accents and right to left letters", text: "café \u05e9\u05dc\u05d5\u05dd \u2764\ufe0f", want: "café \u05e9\u05dc\u05d5\u05dd \u2764\ufe0f"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := withoutControls(tc.text); got != tc.want {
+				t.Errorf("withoutControls = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidationErrorReason(t *testing.T) {
 	t.Parallel()
 
@@ -1094,7 +1123,12 @@ func TestAPIErrorDetail(t *testing.T) {
 		{name: "should give no detail for an html page", status: 502, body: "<html><body>Bad Gateway</body></html>"},
 		{name: "should give no detail for text that repeats the status", status: 401, body: "Unauthorized\n"},
 		{name: "should give no detail for a JSON body with nothing readable", status: 418, body: `{"a":1}`},
+		{name: "should give no detail for a JSON message that repeats the status", status: 401, body: `{"error":"Unauthorized"}`},
+		{name: "should give no detail for a nested JSON message that repeats the status and its code", status: 401, body: `{"error":{"message":"401 unauthorized."}}`},
+		{name: "should give no detail for a JSON string that repeats the status", status: 503, body: `"Service Unavailable"`},
 		{name: "should give the first line of a text body", status: 401, body: "bad key\nsecond line", want: "bad key"},
+		{name: "should give a text body without its bidi controls", status: 401, body: "bad \u202ekey\u2069 here", want: "bad key here"},
+		{name: "should give a JSON message without its bidi controls", status: 400, body: `{"error":"bad \u202ekey\u200f here"}`, want: "bad key here"},
 		{name: "should give the first line of a JSON string body", status: 502, body: `"upstream timed out\nretry later"`, want: "upstream timed out"},
 		{name: "should give a nested message without the status", status: 401, body: `{"error":{"message":"No auth credentials found","code":401}}`, want: "No auth credentials found"},
 	}
@@ -1166,6 +1200,40 @@ func TestAPIErrorDetail(t *testing.T) {
 
 		got := oversizedAPIError(typesafe, Needs{}, 502, http.Header{}, DefaultMaxResponseBytes, time.Now())
 		if want := "The response body is over the 8 MiB limit"; got.Detail() != want {
+			t.Errorf("Detail = %q, want %q", got.Detail(), want)
+		}
+	})
+
+	const refusal = ", which onesie does not follow, since the request carries the API key. Point the base URL at where the API is"
+
+	redirects := []struct {
+		name     string
+		location string
+		want     string
+	}{
+		{name: "should give the target and the advice of a redirect", location: "https://elsewhere.example/v1/models?key=secret", want: "Redirect to https://elsewhere.example" + refusal},
+		{name: "should give the advice of a relative redirect", location: "/v2/models?key=secret", want: "Redirect" + refusal},
+	}
+
+	for _, tc := range redirects {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := newAPIError(typesafe, Needs{}, 302, http.Header{"Location": {tc.location}}, nil, time.Now())
+			if got.Detail() != tc.want {
+				t.Errorf("Detail = %q, want %q", got.Detail(), tc.want)
+			}
+		})
+	}
+
+	t.Run("should give the redirect and the over limit text for an oversized redirect", func(t *testing.T) {
+		t.Parallel()
+
+		header := http.Header{"Location": {"https://elsewhere.example/v1"}}
+		want := "Redirect to https://elsewhere.example" + refusal + ", and the response body is over the 8 MiB limit"
+
+		got := oversizedAPIError(typesafe, Needs{}, 302, header, DefaultMaxResponseBytes, time.Now())
+		if got.Detail() != want {
 			t.Errorf("Detail = %q, want %q", got.Detail(), want)
 		}
 	})

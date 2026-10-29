@@ -9,6 +9,9 @@ import (
 const (
 	maxBodyInError = 200
 	byteOrderMark  = "\ufeff"
+
+	zeroWidthNonJoiner = '\u200c'
+	zeroWidthJoiner    = '\u200d'
 )
 
 func printable(text string) string {
@@ -27,12 +30,18 @@ func firstLine(body string) string {
 
 func withoutControls(text string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if misusable(r) {
 			return -1
 		}
 
 		return r
 	}, text)
+}
+
+func misusable(r rune) bool {
+	// Every format character goes, bidi controls and tag characters among them, since a terminal lets one
+	// reorder or hide text. The two joiners stay, since they can do neither and emoji and scripts need them.
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) && r != zeroWidthJoiner && r != zeroWidthNonJoiner
 }
 
 func truncate(raw string) string {

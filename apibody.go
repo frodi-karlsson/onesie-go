@@ -44,8 +44,12 @@ func oversizedAPIError(via route, needs Needs, status int, header http.Header, l
 	retryAfter, _ := parseRetryAfter(header, now)
 
 	lead := statusLine(status)
+	detail := capitalised(overLimit(limit))
+
 	if redirected(status, header) {
-		lead = describeRedirect(status, header.Get("Location"))
+		explanation := explainRedirect(header.Get("Location"))
+		lead = fmt.Sprintf("%d %s", status, explanation)
+		detail = capitalised(explanation) + ", and " + overLimit(limit)
 	}
 
 	return &APIError{
@@ -54,7 +58,7 @@ func oversizedAPIError(via route, needs Needs, status int, header http.Header, l
 		Header:     header,
 		RetryAfter: retryAfter,
 		message:    lead + ", and " + overLimit(limit),
-		detail:     capitalised(overLimit(limit)),
+		detail:     detail,
 		// Classified on the status alone, since the note is onesie's own text and no text rule may match it.
 		sentinel: via.classify(status, nil, "", needs),
 	}
@@ -73,7 +77,8 @@ func overLimit(limit int64) string {
 func describe(status int, header http.Header, body any, raw []byte, read func(any) string) description {
 	switch {
 	case redirected(status, header):
-		return description{lead: describeRedirect(status, header.Get("Location"))}
+		explanation := explainRedirect(header.Get("Location"))
+		return description{lead: fmt.Sprintf("%d %s", status, explanation), explanation: capitalised(explanation)}
 	case body == nil && len(raw) == 0:
 		return description{lead: fmt.Sprintf("%d status code, no body", status)}
 	case body == nil:
@@ -85,7 +90,7 @@ func describe(status int, header http.Header, body any, raw []byte, read func(an
 	}
 
 	if detail := read(body); firstLine(detail) != "" {
-		return description{lead: fmt.Sprintf("%d ", status), detail: detail}
+		return description{lead: fmt.Sprintf("%d ", status), detail: detail, unsaid: repeatsStatus(firstLine(detail), status)}
 	}
 
 	encoded, err := json.Marshal(body)
@@ -93,13 +98,15 @@ func describe(status int, header http.Header, body any, raw []byte, read func(an
 		return description{lead: fmt.Sprintf("%d status code, unreadable body", status)}
 	}
 
-	return description{lead: fmt.Sprintf("%d ", status), detail: string(encoded), encoded: true}
+	// An encoded body is shown so a reader sees something, but the response said nothing readable.
+	return description{lead: fmt.Sprintf("%d ", status), detail: string(encoded), unsaid: true}
 }
 
 type description struct {
-	lead    string
-	detail  string
-	encoded bool
+	lead        string
+	detail      string
+	unsaid      bool
+	explanation string
 }
 
 func (d description) whole() string {
@@ -113,8 +120,10 @@ func (d description) fitted() string {
 }
 
 func (d description) said() string {
-	// An encoded body is shown so a reader sees something, but the response said nothing readable.
-	if d.encoded {
+	switch {
+	case d.explanation != "":
+		return d.explanation
+	case d.unsaid:
 		return ""
 	}
 
@@ -125,17 +134,17 @@ func redirected(status int, header http.Header) bool {
 	return status >= 300 && status < 400 && header.Get("Location") != ""
 }
 
-func describeRedirect(status int, location string) string {
+func explainRedirect(location string) string {
 	const refusal = ", which onesie does not follow, since the request carries the API key. " +
 		"Point the base URL at where the API is"
 
 	// Only the origin, since the rest of a location may carry a token.
 	parsed, err := url.Parse(location)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Sprintf("%d redirect", status) + refusal
+		return "redirect" + refusal
 	}
 
-	return fmt.Sprintf("%d redirect to %s", status, printable(shownOf(parsed))) + refusal
+	return "redirect to " + printable(shownOf(parsed)) + refusal
 }
 
 func describeText(status int, body string) description {
@@ -157,7 +166,7 @@ func describeString(status int, text string) description {
 		return description{lead: statusLine(status)}
 	}
 
-	return description{lead: fmt.Sprintf("%d ", status), detail: line}
+	return description{lead: fmt.Sprintf("%d ", status), detail: line, unsaid: repeatsStatus(line, status)}
 }
 
 func statusLine(status int) string {
