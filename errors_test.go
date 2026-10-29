@@ -1060,6 +1060,34 @@ func TestTruncate(t *testing.T) {
 	})
 }
 
+func TestWithoutControls(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{name: "should drop C0 and C1 controls", text: "a\x1b[31mb\x00c\u0085d", want: "a[31mbcd"},
+		{name: "should drop bidi embeddings and overrides", text: "a\u202ab\u202bc\u202cd\u202de\u202ef", want: "abcdef"},
+		{name: "should drop bidi isolates", text: "a\u2066b\u2067c\u2068d\u2069e", want: "abcde"},
+		{name: "should drop bidi marks", text: "a\u200eb\u200fc\u061cd", want: "abcd"},
+		{name: "should drop other invisible format characters", text: "a\u200bb\u2060c\ufeffd\u00ade\U000E0041f", want: "abcdef"},
+		{name: "should keep joiners inside emoji and scripts", text: "\U0001F468\u200d\U0001F469 \u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", want: "\U0001F468\u200d\U0001F469 \u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"},
+		{name: "should keep ordinary text, accents and right to left letters", text: "café \u05e9\u05dc\u05d5\u05dd \u2764\ufe0f", want: "café \u05e9\u05dc\u05d5\u05dd \u2764\ufe0f"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := withoutControls(tc.text); got != tc.want {
+				t.Errorf("withoutControls = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidationErrorReason(t *testing.T) {
 	t.Parallel()
 
@@ -1099,6 +1127,8 @@ func TestAPIErrorDetail(t *testing.T) {
 		{name: "should give no detail for a nested JSON message that repeats the status and its code", status: 401, body: `{"error":{"message":"401 unauthorized."}}`},
 		{name: "should give no detail for a JSON string that repeats the status", status: 503, body: `"Service Unavailable"`},
 		{name: "should give the first line of a text body", status: 401, body: "bad key\nsecond line", want: "bad key"},
+		{name: "should give a text body without its bidi controls", status: 401, body: "bad \u202ekey\u2069 here", want: "bad key here"},
+		{name: "should give a JSON message without its bidi controls", status: 400, body: `{"error":"bad \u202ekey\u200f here"}`, want: "bad key here"},
 		{name: "should give the first line of a JSON string body", status: 502, body: `"upstream timed out\nretry later"`, want: "upstream timed out"},
 		{name: "should give a nested message without the status", status: 401, body: `{"error":{"message":"No auth credentials found","code":401}}`, want: "No auth credentials found"},
 	}
