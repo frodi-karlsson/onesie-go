@@ -335,8 +335,8 @@ func (p Provider) DefaultBaseURL() string {
 	return p.defaultBaseURL
 }
 
-// CustomBaseURL reports whether baseURL is not the provider's own. A cloudflare account URL counts
-// as its own.
+// CustomBaseURL reports whether baseURL is not the provider's own, a cloudflare account URL counting as
+// its own. The compare is exact after trailing slashes and spaces are trimmed, so a change of case or port is custom.
 func (p Provider) CustomBaseURL(baseURL string) bool {
 	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 

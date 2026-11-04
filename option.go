@@ -46,8 +46,8 @@ func WithAPIKeyFunc(key func() (string, error)) Option {
 	}
 }
 
-// WithOptionalAPIKey lets New build a client with no key when the base URL is custom, and that
-// client sends no API key. On the provider's own base URL a missing key is still refused.
+// WithOptionalAPIKey lets New build a client that sends no API key when Provider.CustomBaseURL holds
+// on the resolved base URL. On the provider's own base URL a missing key is still refused.
 func WithOptionalAPIKey() Option {
 	return func(c *Client) error {
 		c.optionalKey = true

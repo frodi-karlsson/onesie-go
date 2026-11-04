@@ -148,7 +148,7 @@ func (c *Client) BaseURLSource() BaseURLSource {
 	return c.baseURLSource
 }
 
-// SendsKey reports whether the client sends an API key.
+// SendsKey reports whether the client sends a resolved API key. A header from WithHeader does not count.
 func (c *Client) SendsKey() bool {
 	return c.apiKey != ""
 }
@@ -197,8 +197,8 @@ func (c *Client) AttemptTimeout() time.Duration {
 	return c.attemptTimeout
 }
 
-// VerifyKey lists the models, which proves the key on TypeSafe, Levanto and Cloudflare, or lists them
-// with no key on a keyless client. Berget also answers one small question, and OpenRouter its key endpoint.
+// VerifyKey lists the models, which proves the key on TypeSafe, Levanto and Cloudflare, or lists them with no
+// key on a keyless client. Berget also answers one question that spends a few tokens, OpenRouter its key endpoint.
 func (c *Client) VerifyKey(ctx context.Context, opts ...RequestOption) ([]ModelCard, error) {
 	models, err := c.ListModels(ctx, opts...)
 	if err != nil {
