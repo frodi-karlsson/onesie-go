@@ -335,6 +335,21 @@ func (p Provider) DefaultBaseURL() string {
 	return p.defaultBaseURL
 }
 
+// CustomBaseURL reports whether baseURL is not the provider's own. A cloudflare account URL counts
+// as its own.
+func (p Provider) CustomBaseURL(baseURL string) bool {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+
+	switch {
+	case trimmed == "":
+		return false
+	case p.accountBaseURL != nil:
+		return !isCloudflareBaseURL(trimmed)
+	default:
+		return trimmed != p.defaultBaseURL
+	}
+}
+
 // Pinned reports whether model names one fixed version whose answers never change. Only a TypeSafe
 // name ending in a two or three part version, such as jev-1.13.0, is pinned.
 func (p Provider) Pinned(model string) bool {
@@ -439,11 +454,17 @@ func (p Provider) checkAccountID(account, subject string) error {
 		return &ValidationError{Message: "the " + p.name + " provider takes no account id"}
 	}
 
-	if decoded, err := hex.DecodeString(account); err != nil || len(decoded) != 16 {
+	if !isAccountID(account) {
 		return &ValidationError{Message: subject + " must be 32 hexadecimal characters"}
 	}
 
 	return nil
+}
+
+func isAccountID(account string) bool {
+	decoded, err := hex.DecodeString(account)
+
+	return err == nil && len(decoded) == 16
 }
 
 func decodeTypeSafeModels(body []byte) ([]ModelCard, error) {

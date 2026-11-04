@@ -159,6 +159,60 @@ func TestProviderPinned(t *testing.T) {
 	}
 }
 
+func TestProviderCustomBaseURL(t *testing.T) {
+	t.Parallel()
+
+	const account = "0123456789abcdef0123456789abcdef"
+
+	accountURL := "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai"
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		baseURL  string
+		want     bool
+	}{
+		{name: "should treat the default as not custom on typesafe", provider: onesie.TypeSafe(), baseURL: "https://api.typesafe.ai"},
+		{name: "should treat the default as not custom on openrouter", provider: onesie.OpenRouter(), baseURL: "https://openrouter.ai/api"},
+		{name: "should treat the default as not custom on berget", provider: onesie.Berget(), baseURL: "https://api.berget.ai"},
+		{name: "should treat the default as not custom on levanto", provider: onesie.Levanto(), baseURL: "https://sage.levanto.ai"},
+		{name: "should ignore a trailing slash", provider: onesie.TypeSafe(), baseURL: "https://api.typesafe.ai//"},
+		{name: "should treat another host as custom", provider: onesie.TypeSafe(), baseURL: "http://localhost:8080", want: true},
+		{name: "should treat another provider's default as custom", provider: onesie.TypeSafe(), baseURL: "https://openrouter.ai/api", want: true},
+		{name: "should treat a different scheme as custom", provider: onesie.TypeSafe(), baseURL: "http://api.typesafe.ai", want: true},
+		{name: "should treat a different case as custom", provider: onesie.TypeSafe(), baseURL: "HTTPS://API.TYPESAFE.AI", want: true},
+		{name: "should treat a cloudflare account URL as not custom", provider: onesie.Cloudflare(), baseURL: accountURL},
+		{name: "should treat a cloudflare account URL with a trailing slash as not custom", provider: onesie.Cloudflare(), baseURL: accountURL + "/"},
+		{name: "should treat a cloudflare proxy URL as custom", provider: onesie.Cloudflare(), baseURL: "https://gateway.example/ai", want: true},
+		{name: "should treat a local server as custom on cloudflare", provider: onesie.Cloudflare(), baseURL: "http://localhost:8080", want: true},
+		{
+			name: "should treat a cloudflare account URL with a malformed account as custom", provider: onesie.Cloudflare(),
+			baseURL: "https://api.cloudflare.com/client/v4/accounts/not-an-account/ai", want: true,
+		},
+		{
+			name: "should treat a cloudflare account URL with a short account as custom", provider: onesie.Cloudflare(),
+			baseURL: "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef/ai", want: true,
+		},
+		{
+			name: "should treat a cloudflare account URL with a longer path as custom", provider: onesie.Cloudflare(),
+			baseURL: accountURL + "/extra", want: true,
+		},
+		{name: "should treat a blank URL as not custom", provider: onesie.TypeSafe(), baseURL: ""},
+		{name: "should treat a whitespace URL as not custom", provider: onesie.TypeSafe(), baseURL: "  "},
+		{name: "should treat a blank URL as not custom on cloudflare", provider: onesie.Cloudflare(), baseURL: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.provider.CustomBaseURL(tc.baseURL); got != tc.want {
+				t.Errorf("%s CustomBaseURL(%q) = %v, want %v", tc.provider.Name(), tc.baseURL, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProviderBoxModel(t *testing.T) {
 	t.Parallel()
 
