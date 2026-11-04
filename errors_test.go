@@ -714,12 +714,12 @@ func TestNewAPIError(t *testing.T) {
 	}{
 		{
 			name: "should show only the scheme and host of a redirect", location: "https://elsewhere.example/v1/models?key=secret#top",
-			want: "onesie: 302 redirect to https://elsewhere.example, which onesie does not follow, since the request carries the API key. " +
+			want: "onesie: 302 redirect to https://elsewhere.example, which onesie does not follow, since the request may carry the API key. " +
 				"Point the base URL at where the API is",
 		},
 		{
 			name: "should show no location for a relative redirect", location: "/v2/models?key=secret",
-			want: "onesie: 302 redirect, which onesie does not follow, since the request carries the API key. Point the base URL at where the API is",
+			want: "onesie: 302 redirect, which onesie does not follow, since the request may carry the API key. Point the base URL at where the API is",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1204,7 +1204,7 @@ func TestAPIErrorDetail(t *testing.T) {
 		}
 	})
 
-	const refusal = ", which onesie does not follow, since the request carries the API key. Point the base URL at where the API is"
+	const refusal = ", which onesie does not follow, since the request may carry the API key. Point the base URL at where the API is"
 
 	redirects := []struct {
 		name     string

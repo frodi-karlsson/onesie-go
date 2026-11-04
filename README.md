@@ -44,6 +44,9 @@ a constructor such as `onesie.OpenRouter()` to use OpenRouter, Berget, Levanto o
 Each provider reads its key from the variable `Provider.EnvAPIKey` names, unless
 `onesie.WithAPIKey` or `onesie.WithAPIKeyFunc` supplies it. Cloudflare also needs an account, from
 `onesie.WithAccountID` or the variable `Provider.EnvAccountID` names.
+`onesie.WithOptionalAPIKey` lets a client on a custom base URL, such as a server on this machine,
+go without a key, and such a client sends no API key.
+`Provider.CustomBaseURL` tells a custom base URL from the provider's own.
 
 ## Errors
 

@@ -371,6 +371,100 @@ func TestNew(t *testing.T) {
 		})
 	})
 
+	t.Run("should resolve an optional key", func(t *testing.T) {
+		t.Parallel()
+
+		const account = "0123456789abcdef0123456789abcdef"
+
+		locked := errors.New("the keychain is locked")
+		emptyKey := onesie.WithAPIKeyFunc(func() (string, error) { return " ", nil })
+
+		tests := []struct {
+			name    string
+			env     map[string]string
+			opts    []onesie.Option
+			wantErr error
+		}{
+			{
+				name:    "should refuse a missing key on the default URL with WithOptionalAPIKey",
+				opts:    []onesie.Option{onesie.WithOptionalAPIKey()},
+				wantErr: onesie.ErrNoAPIKey,
+			},
+			{
+				name:    "should refuse a missing key on the default URL given by hand with WithOptionalAPIKey",
+				opts:    []onesie.Option{onesie.WithOptionalAPIKey(), onesie.WithBaseURL("https://api.typesafe.ai/")},
+				wantErr: onesie.ErrNoAPIKey,
+			},
+			{
+				name: "should accept a missing key on a custom URL with WithOptionalAPIKey",
+				opts: []onesie.Option{onesie.WithOptionalAPIKey(), onesie.WithBaseURL("http://localhost:8080")},
+			},
+			{
+				name: "should accept an empty key func result on a custom URL with WithOptionalAPIKey",
+				opts: []onesie.Option{onesie.WithOptionalAPIKey(), onesie.WithBaseURL("http://localhost:8080"), emptyKey},
+			},
+			{
+				name: "should accept a missing key on a custom TYPESAFE_BASE_URL with WithOptionalAPIKey",
+				env:  map[string]string{"TYPESAFE_BASE_URL": "http://localhost:8080"},
+				opts: []onesie.Option{onesie.WithOptionalAPIKey()},
+			},
+			{
+				name: "should refuse a missing key on a cloudflare account URL with WithOptionalAPIKey",
+				opts: []onesie.Option{
+					onesie.WithOptionalAPIKey(), onesie.WithProvider(onesie.Cloudflare()), onesie.WithAccountID(account),
+				},
+				wantErr: onesie.ErrNoAPIKey,
+			},
+			{
+				name: "should accept a missing key on a cloudflare proxy URL with WithOptionalAPIKey",
+				opts: []onesie.Option{
+					onesie.WithOptionalAPIKey(), onesie.WithProvider(onesie.Cloudflare()), onesie.WithBaseURL("http://localhost:8080"),
+				},
+			},
+			{
+				name:    "should refuse a missing key on a custom URL without WithOptionalAPIKey",
+				opts:    []onesie.Option{onesie.WithBaseURL("http://localhost:8080")},
+				wantErr: onesie.ErrNoAPIKey,
+			},
+			{
+				name:    "should refuse an empty key func result on a custom URL without WithOptionalAPIKey",
+				opts:    []onesie.Option{onesie.WithBaseURL("http://localhost:8080"), emptyKey},
+				wantErr: onesie.ErrNoAPIKey,
+			},
+			{
+				name: "should return a key func error as it is with WithOptionalAPIKey",
+				opts: []onesie.Option{
+					onesie.WithOptionalAPIKey(), onesie.WithBaseURL("http://localhost:8080"),
+					onesie.WithAPIKeyFunc(func() (string, error) { return "", locked }),
+				},
+				wantErr: locked,
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				client, err := onesie.New(append([]onesie.Option{onesie.WithEnv(lookupFrom(tc.env))}, tc.opts...)...)
+				if tc.wantErr != nil {
+					if !errors.Is(err, tc.wantErr) {
+						t.Fatalf("error = %v, want %v", err, tc.wantErr)
+					}
+
+					return
+				}
+
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if client.SendsKey() {
+					t.Errorf("SendsKey = true, want false for a keyless client")
+				}
+			})
+		}
+	})
+
 	mockEnv := func(values map[string]string) func(string) (string, bool) {
 		return func(name string) (string, bool) {
 			value, ok := values[name]
@@ -1481,7 +1575,7 @@ func TestClientSystemOne(t *testing.T) {
 			{
 				name: "should keep the redirect message of an oversized redirect", status: http.StatusFound,
 				header: http.Header{"Location": {"https://elsewhere.example/v1"}}, wantCalls: 1,
-				wantErr: "onesie: 302 redirect to https://elsewhere.example, which onesie does not follow, since the request carries " +
+				wantErr: "onesie: 302 redirect to https://elsewhere.example, which onesie does not follow, since the request may carry " +
 					"the API key. Point the base URL at where the API is" + note,
 			},
 			{
@@ -2241,6 +2335,50 @@ func TestClientSystemOne(t *testing.T) {
 			t.Errorf("%s = %q on the second call, want it absent", onesie.HeaderLongContext, got)
 		}
 	})
+
+	t.Run("should send the Authorization header only when there is a key", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			opts []onesie.Option
+			want []string
+		}{
+			{name: "should send the key as a bearer token", opts: []onesie.Option{onesie.WithAPIKey("KEY")}, want: []string{"Bearer KEY"}},
+			{name: "should send no Authorization header when the key is empty", opts: []onesie.Option{onesie.WithOptionalAPIKey()}},
+			{
+				name: "should keep a caller's Authorization header when the key is empty",
+				opts: []onesie.Option{onesie.WithOptionalAPIKey(), onesie.WithHeader("Authorization", "Basic own")},
+				want: []string{"Basic own"},
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				authorization := make(chan []string, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					authorization <- r.Header.Values("Authorization")
+					_, _ = io.WriteString(w, shortAnswer)
+				}))
+				defer server.Close()
+
+				client, err := onesie.New(append([]onesie.Option{onesie.WithEnv(lookupFrom(nil)), onesie.WithBaseURL(server.URL)}, tc.opts...)...)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if got := <-authorization; !slices.Equal(got, tc.want) {
+					t.Errorf("Authorization = %q, want %q", got, tc.want)
+				}
+			})
+		}
+	})
 }
 
 func TestClientListModels(t *testing.T) {
@@ -2402,7 +2540,7 @@ func TestClientListModels(t *testing.T) {
 			}
 
 			want := "onesie: 302 redirect to " + target.URL + ", which onesie does not follow, " +
-				"since the request carries the API key. Point the base URL at where the API is"
+				"since the request may carry the API key. Point the base URL at where the API is"
 			if err.Error() != want {
 				t.Errorf("%s client: error = %q, want %q", name, err.Error(), want)
 			}
@@ -2442,6 +2580,50 @@ func TestClientListModels(t *testing.T) {
 
 		if got := transport.last().Header.Get(onesie.HeaderLongContext); got != "" {
 			t.Errorf("long context header = %q, want none on a GET that sends no question", got)
+		}
+	})
+
+	t.Run("should send the Authorization header only when there is a key", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			opts []onesie.Option
+			want []string
+		}{
+			{name: "should send the key as a bearer token", opts: []onesie.Option{onesie.WithAPIKey("KEY")}, want: []string{"Bearer KEY"}},
+			{name: "should send no Authorization header when the key is empty", opts: []onesie.Option{onesie.WithOptionalAPIKey()}},
+			{
+				name: "should keep a caller's Authorization header when the key is empty",
+				opts: []onesie.Option{onesie.WithOptionalAPIKey(), onesie.WithHeader("Authorization", "Basic own")},
+				want: []string{"Basic own"},
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				authorization := make(chan []string, 1)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					authorization <- r.Header.Values("Authorization")
+					_, _ = io.WriteString(w, `{"models":[]}`)
+				}))
+				defer server.Close()
+
+				client, err := onesie.New(append([]onesie.Option{onesie.WithEnv(lookupFrom(nil)), onesie.WithBaseURL(server.URL)}, tc.opts...)...)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if _, err := client.ListModels(t.Context()); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				if got := <-authorization; !slices.Equal(got, tc.want) {
+					t.Errorf("Authorization = %q, want %q", got, tc.want)
+				}
+			})
 		}
 	})
 }
@@ -3795,6 +3977,37 @@ func TestClientProvider(t *testing.T) {
 			t.Errorf("Provider().Name() = %q, want levanto", got)
 		}
 	})
+}
+
+func TestClientSendsKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []onesie.Option
+		want bool
+	}{
+		{name: "should report true with a key", opts: []onesie.Option{onesie.WithAPIKey("k")}, want: true},
+		{name: "should report true with a key and WithOptionalAPIKey", opts: []onesie.Option{onesie.WithAPIKey("k"), onesie.WithOptionalAPIKey()}, want: true},
+		{name: "should report false on a keyless custom URL", opts: []onesie.Option{onesie.WithOptionalAPIKey()}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := append([]onesie.Option{onesie.WithEnv(lookupFrom(nil)), onesie.WithBaseURL("http://localhost:8080")}, tc.opts...)
+
+			client, err := onesie.New(opts...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if got := client.SendsKey(); got != tc.want {
+				t.Errorf("SendsKey = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestClientDefaultModel(t *testing.T) {

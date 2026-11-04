@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+const (
+	cloudflareAccountsURL = "https://api.cloudflare.com/client/v4/accounts/"
+	cloudflareAISuffix    = "/ai"
+)
+
 func cloudflareRoute(model string) route {
 	if wireID, isClef := clefWireID(model); isClef {
 		return route{
@@ -90,7 +95,18 @@ func clefWireID(model string) (string, bool) {
 }
 
 func cloudflareBaseURL(account string) string {
-	return "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai"
+	return cloudflareAccountsURL + account + cloudflareAISuffix
+}
+
+func isCloudflareBaseURL(baseURL string) bool {
+	account, found := strings.CutPrefix(baseURL, cloudflareAccountsURL)
+	if !found {
+		return false
+	}
+
+	account, found = strings.CutSuffix(account, cloudflareAISuffix)
+
+	return found && isAccountID(account)
 }
 
 func encodeClef(wireID string) func(jsonBody) ([]byte, error) {
