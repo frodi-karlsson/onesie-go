@@ -135,7 +135,7 @@ func redirected(status int, header http.Header) bool {
 }
 
 func explainRedirect(location string) string {
-	const refusal = ", which onesie does not follow, since the request carries the API key. " +
+	const refusal = ", which onesie does not follow, since the request may carry the API key. " +
 		"Point the base URL at where the API is"
 
 	// Only the origin, since the rest of a location may carry a token.

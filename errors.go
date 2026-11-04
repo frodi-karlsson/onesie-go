@@ -46,7 +46,8 @@ var (
 	ErrResponse = errors.New("unusable response")
 	// ErrValidation matches a ValidationError.
 	ErrValidation = errors.New("invalid request")
-	// ErrNoAPIKey matches the ValidationError New returns when it finds no API key, or an empty one.
+	// ErrNoAPIKey matches the ValidationError New returns when it finds no API key, or an empty one. New
+	// skips it on a custom base URL under WithOptionalAPIKey.
 	ErrNoAPIKey = errors.New("no API key")
 	// ErrNoAccountID matches the ValidationError New returns when a provider with accounts has none.
 	ErrNoAccountID = errors.New("no account id")

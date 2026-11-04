@@ -18,8 +18,8 @@ import (
 
 const systemOnePath = "/v1/systemone"
 
-// New builds a client. Resolution order is an explicit option, then the environment, then a
-// default. Blank values are ignored at every level, except an explicit API key, which is refused.
+// New builds a client. Resolution order is an explicit option, then the environment, then a default.
+// Blank values are ignored, except an API key: a missing or empty one is refused unless WithOptionalAPIKey allows it.
 func New(opts ...Option) (*Client, error) {
 	c := &Client{
 		httpClient:       &http.Client{},
@@ -74,7 +74,7 @@ func (c *Client) resolveKey() (string, error) {
 			return key, nil
 		}
 
-		return "", &ValidationError{Message: "no API key. Set " + c.provider.envAPIKey, kind: ErrNoAPIKey}
+		return c.withoutKey(&ValidationError{Message: "no API key. Set " + c.provider.envAPIKey, kind: ErrNoAPIKey})
 	}
 
 	key, err := c.keyFunc()
@@ -83,10 +83,18 @@ func (c *Client) resolveKey() (string, error) {
 	}
 
 	if strings.TrimSpace(key) == "" {
-		return "", &ValidationError{Message: "the API key is empty", kind: ErrNoAPIKey}
+		return c.withoutKey(&ValidationError{Message: "the API key is empty", kind: ErrNoAPIKey})
 	}
 
 	return strings.TrimSpace(key), nil
+}
+
+func (c *Client) withoutKey(refusal error) (string, error) {
+	if c.optionalKey && c.provider.CustomBaseURL(c.baseURL) {
+		return "", nil
+	}
+
+	return "", refusal
 }
 
 func withoutRedirects(hc *http.Client) *http.Client {
@@ -105,6 +113,7 @@ func withoutRedirects(hc *http.Client) *http.Client {
 type Client struct {
 	apiKey           string
 	keyFunc          func() (string, error)
+	optionalKey      bool
 	accountID        string
 	baseURL          string
 	baseURLSource    BaseURLSource
@@ -137,6 +146,11 @@ func (c *Client) BaseURL() string {
 // the default.
 func (c *Client) BaseURLSource() BaseURLSource {
 	return c.baseURLSource
+}
+
+// SendsKey reports whether the client sends an API key.
+func (c *Client) SendsKey() bool {
+	return c.apiKey != ""
 }
 
 // Provider returns the provider passed to WithProvider, or TypeSafe when none was.
@@ -183,8 +197,8 @@ func (c *Client) AttemptTimeout() time.Duration {
 	return c.attemptTimeout
 }
 
-// VerifyKey lists the models, which proves the key on TypeSafe, Levanto and Cloudflare. Berget also
-// answers one small question that spends a few tokens, and OpenRouter also answers its key endpoint.
+// VerifyKey lists the models, which proves the key on TypeSafe, Levanto and Cloudflare, or lists them
+// with no key on a keyless client. Berget also answers one small question, and OpenRouter its key endpoint.
 func (c *Client) VerifyKey(ctx context.Context, opts ...RequestOption) ([]ModelCard, error) {
 	models, err := c.ListModels(ctx, opts...)
 	if err != nil {

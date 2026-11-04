@@ -46,6 +46,16 @@ func WithAPIKeyFunc(key func() (string, error)) Option {
 	}
 }
 
+// WithOptionalAPIKey lets New build a client with no key when the base URL is custom, and that
+// client sends no API key. On the provider's own base URL a missing key is still refused.
+func WithOptionalAPIKey() Option {
+	return func(c *Client) error {
+		c.optionalKey = true
+
+		return nil
+	}
+}
+
 // WithAccountID sets the account for a provider that has accounts, ahead of its account variable.
 // A blank id is ignored.
 func WithAccountID(id string) Option {
@@ -81,7 +91,7 @@ func WithBaseURL(raw string) Option {
 }
 
 // WithInsecureHTTP lets New take a plain http base URL to a host other than this machine, which
-// sends the API key unencrypted.
+// sends the request, and any API key, unencrypted.
 func WithInsecureHTTP() Option {
 	return func(c *Client) error {
 		c.insecureHTTP = true

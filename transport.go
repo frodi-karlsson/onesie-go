@@ -251,7 +251,10 @@ func (c *Client) setHeaders(req *http.Request, header http.Header, sent call, at
 		req.Header.Set(HeaderLongContext, "true")
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("X-TypeSafe-SDK", c.userAgent)
