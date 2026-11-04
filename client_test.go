@@ -2593,6 +2593,11 @@ func TestClientListModels(t *testing.T) {
 		}{
 			{name: "should send the key as a bearer token", opts: []onesie.Option{onesie.WithAPIKey("KEY")}, want: []string{"Bearer KEY"}},
 			{name: "should send no Authorization header when the key is empty", opts: []onesie.Option{onesie.WithOptionalAPIKey()}},
+			{
+				name: "should keep a caller's Authorization header when the key is empty",
+				opts: []onesie.Option{onesie.WithOptionalAPIKey(), onesie.WithHeader("Authorization", "Basic own")},
+				want: []string{"Basic own"},
+			},
 		}
 
 		for _, tc := range tests {

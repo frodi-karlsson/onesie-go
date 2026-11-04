@@ -197,6 +197,12 @@ func TestProviderCustomBaseURL(t *testing.T) {
 			name: "should treat a cloudflare account URL with a longer path as custom", provider: onesie.Cloudflare(),
 			baseURL: accountURL + "/extra", want: true,
 		},
+		{
+			name: "should treat an upper case cloudflare account URL as not custom", provider: onesie.Cloudflare(),
+			baseURL: "https://api.cloudflare.com/client/v4/accounts/0123456789ABCDEF0123456789ABCDEF/ai",
+		},
+		{name: "should treat a padded default as not custom", provider: onesie.TypeSafe(), baseURL: "  https://api.typesafe.ai/ "},
+		{name: "should treat the default with a port as custom", provider: onesie.TypeSafe(), baseURL: "https://api.typesafe.ai:443", want: true},
 		{name: "should treat a blank URL as not custom", provider: onesie.TypeSafe(), baseURL: ""},
 		{name: "should treat a whitespace URL as not custom", provider: onesie.TypeSafe(), baseURL: "  "},
 		{name: "should treat a blank URL as not custom on cloudflare", provider: onesie.Cloudflare(), baseURL: ""},
