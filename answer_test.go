@@ -86,7 +86,7 @@ func TestResultUnmarshalJSON(t *testing.T) {
 		}
 	})
 
-	t.Run("should reject an unknown answer type", func(t *testing.T) {
+	t.Run("should refuse an unknown answer type", func(t *testing.T) {
 		t.Parallel()
 
 		body := `{"model":"m","answers":{"x":{"type":"tarot"}},"usage":{}}`

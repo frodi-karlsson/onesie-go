@@ -306,29 +306,29 @@ func TestValidateQuestions(t *testing.T) {
 		wantErr   string
 	}{
 		{
-			name:      "should reject an empty question set",
+			name:      "should refuse an empty question set",
 			questions: onesie.Questions{},
 			wantErr:   "onesie: at least one question is required",
 		},
 		{
-			name:      "should reject a nil question set",
+			name:      "should refuse a nil question set",
 			questions: nil,
 			wantErr:   "onesie: at least one question is required",
 		},
 		{
-			name: "should reject a score with one level",
+			name: "should refuse a score with one level",
 			questions: onesie.Questions{
 				{ID: "severity", Question: onesie.Score{Criteria: onesie.Levels("Only one")}},
 			},
 			wantErr: `onesie: score question 'severity' has 1 criteria, at least two are required`,
 		},
 		{
-			name:      "should reject a score with no levels",
+			name:      "should refuse a score with no levels",
 			questions: onesie.Questions{{ID: "severity", Question: onesie.Score{}}},
 			wantErr:   `onesie: score question 'severity' has 0 criteria, at least two are required`,
 		},
 		{
-			name: "should reject a score behind a pointer",
+			name: "should refuse a score behind a pointer",
 			questions: onesie.Questions{
 				{ID: "severity", Question: &onesie.Score{Criteria: onesie.Levels("Only one")}},
 			},
@@ -343,7 +343,7 @@ func TestValidateQuestions(t *testing.T) {
 			wantErr: `onesie: score question 'zebra' has 1 criteria, at least two are required`,
 		},
 		{
-			name: "should reject a duplicate question id",
+			name: "should refuse a duplicate question id",
 			questions: onesie.Questions{
 				{ID: "a", Question: onesie.Noul{Instructions: "one"}},
 				{ID: "a", Question: onesie.Noul{Instructions: "two"}},
@@ -359,12 +359,12 @@ func TestValidateQuestions(t *testing.T) {
 			wantErr: `onesie: duplicate question id 'ab'`,
 		},
 		{
-			name:      "should reject a nil question",
+			name:      "should refuse a nil question",
 			questions: onesie.Questions{{ID: "a", Question: nil}},
 			wantErr:   `onesie: question 'a' must not be nil`,
 		},
 		{
-			name:      "should reject a typed nil question",
+			name:      "should refuse a typed nil question",
 			questions: onesie.Questions{{ID: "a", Question: (*onesie.Score)(nil)}},
 			wantErr:   `onesie: question 'a' must not be nil`,
 		},
@@ -393,7 +393,7 @@ func TestValidateQuestions(t *testing.T) {
 			questions: onesie.Questions{{ID: "pick", Question: onesie.Choice{Criteria: options(onesie.MaxChoiceOptions)}}},
 		},
 		{
-			name:      "should reject a choice over the options limit",
+			name:      "should refuse a choice over the options limit",
 			questions: onesie.Questions{{ID: "pick", Question: onesie.Choice{Criteria: options(onesie.MaxChoiceOptions + 1)}}},
 			wantErr:   `onesie: choice question 'pick' has 256 options, and at most 255 are allowed`,
 		},
@@ -406,7 +406,7 @@ func TestValidateQuestions(t *testing.T) {
 			questions: onesie.Questions{{ID: "rate", Question: onesie.Score{Criteria: levels(onesie.MaxScoreLevels)}}},
 		},
 		{
-			name:      "should reject a score over the levels limit",
+			name:      "should refuse a score over the levels limit",
 			questions: onesie.Questions{{ID: "rate", Question: onesie.Score{Criteria: levels(onesie.MaxScoreLevels + 1)}}},
 			wantErr:   `onesie: score question 'rate' has 11 levels, and at most 10 are allowed`,
 		},

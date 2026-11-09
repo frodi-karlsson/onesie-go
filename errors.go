@@ -134,7 +134,7 @@ func (e *RetryAfterError) Error() string {
 	return "onesie: " + e.Reason()
 }
 
-// Reason names the delay the server asked for and the cap that rejected it.
+// Reason names the delay the server asked for and the cap it went past.
 func (e *RetryAfterError) Reason() string {
 	return fmt.Sprintf("status %d, the server asked to retry after %s, above the %s cap", e.Status, e.RetryAfter, e.Cap)
 }
@@ -332,7 +332,7 @@ func (e *CapabilityError) Unwrap() error {
 	return &e.ValidationError
 }
 
-// ValidationError is a request this package rejected before sending it. Question names the
+// ValidationError is a request this package refused before sending it. Question names the
 // offending question when one is to blame.
 type ValidationError struct {
 	Question string
@@ -351,7 +351,7 @@ func (e *ValidationError) Reason() string {
 	return e.Message
 }
 
-// Is matches ErrValidation, and the more specific sentinel the rejection carries.
+// Is matches ErrValidation, and the more specific sentinel the refusal carries.
 func (e *ValidationError) Is(target error) bool {
 	return target == ErrValidation || (e.kind != nil && target == e.kind)
 }

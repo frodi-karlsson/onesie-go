@@ -25,7 +25,7 @@ func Levels(levels ...string) []any {
 	return widened
 }
 
-// ValidateQuestions rejects a request the API would reject, before it is sent.
+// ValidateQuestions refuses a request the API would refuse, before it is sent.
 func ValidateQuestions(questions Questions) error {
 	if len(questions) == 0 {
 		return &ValidationError{Message: "at least one question is required"}
@@ -168,7 +168,7 @@ type NamedCriterion struct {
 }
 
 // MarshalJSON writes the set as a JSON object in slice order. A nil set is null, so the zero value
-// encodes to something the API rejects cleanly.
+// encodes to something the API refuses cleanly.
 func (c Criteria) MarshalJSON() ([]byte, error) {
 	if c == nil {
 		return []byte("null"), nil

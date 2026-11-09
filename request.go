@@ -14,7 +14,7 @@ const (
 	maxAllReferencesBytes = 65536
 )
 
-// ValidateRequest rejects a request the API would reject, before it is sent. It checks the
+// ValidateRequest refuses a request the API would refuse, before it is sent. It checks the
 // questions, then the assets, then the size of the body.
 func ValidateRequest(req Request) error {
 	if err := ValidateQuestions(req.Questions); err != nil {
@@ -38,7 +38,7 @@ func ValidateRequest(req Request) error {
 	return checkBodySize(req)
 }
 
-// ValidateImage rejects an image the API would reject, naming it in the message. It checks the
+// ValidateImage refuses an image the API would refuse, naming it in the message. It checks the
 // format, the file size and the sides, reading only the file's header.
 func ValidateImage(name string, img Image) error {
 	if fault := checkFormat(name, img.Format); fault != nil {
