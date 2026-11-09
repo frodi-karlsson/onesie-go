@@ -50,7 +50,7 @@ func TestParseRetryAfter(t *testing.T) {
 			ok:     true,
 		},
 		{
-			name:   "should reject a negative seconds value",
+			name:   "should refuse a negative seconds value",
 			header: http.Header{"Retry-After": {"-5"}},
 			want:   0,
 			ok:     false,
@@ -322,11 +322,11 @@ func TestRetryPolicyValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "should accept the defaults", mutate: func(*RetryPolicy) {}},
-		{name: "should reject negative MaxRetries", mutate: func(p *RetryPolicy) { p.MaxRetries = -1 }, wantErr: true},
-		{name: "should reject jitter above one", mutate: func(p *RetryPolicy) { p.BackoffJitter = 1.5 }, wantErr: true},
-		{name: "should reject jitter below zero", mutate: func(p *RetryPolicy) { p.BackoffJitter = -0.1 }, wantErr: true},
-		{name: "should reject a negative backoff", mutate: func(p *RetryPolicy) { p.BackoffInitial = -time.Second }, wantErr: true},
-		{name: "should reject a nil RetryStatus", mutate: func(p *RetryPolicy) { p.RetryStatus = nil }, wantErr: true},
+		{name: "should refuse negative MaxRetries", mutate: func(p *RetryPolicy) { p.MaxRetries = -1 }, wantErr: true},
+		{name: "should refuse jitter above one", mutate: func(p *RetryPolicy) { p.BackoffJitter = 1.5 }, wantErr: true},
+		{name: "should refuse jitter below zero", mutate: func(p *RetryPolicy) { p.BackoffJitter = -0.1 }, wantErr: true},
+		{name: "should refuse a negative backoff", mutate: func(p *RetryPolicy) { p.BackoffInitial = -time.Second }, wantErr: true},
+		{name: "should refuse a nil RetryStatus", mutate: func(p *RetryPolicy) { p.RetryStatus = nil }, wantErr: true},
 	}
 
 	for _, tc := range tests {

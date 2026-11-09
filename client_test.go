@@ -558,11 +558,11 @@ func TestNew(t *testing.T) {
 		})))
 
 		if err == nil {
-			t.Fatalf("a whitespace only key should be rejected")
+			t.Fatalf("a whitespace only key should be refused")
 		}
 	})
 
-	t.Run("should reject an invalid base url", func(t *testing.T) {
+	t.Run("should refuse an invalid base url", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := onesie.New(
@@ -641,7 +641,7 @@ func TestNew(t *testing.T) {
 		}
 	})
 
-	t.Run("should reject an invalid retry policy", func(t *testing.T) {
+	t.Run("should refuse an invalid retry policy", func(t *testing.T) {
 		t.Parallel()
 
 		policy := onesie.DefaultRetryPolicy()
@@ -652,7 +652,7 @@ func TestNew(t *testing.T) {
 		}
 	})
 
-	t.Run("should reject a non positive attempt timeout", func(t *testing.T) {
+	t.Run("should refuse a non positive attempt timeout", func(t *testing.T) {
 		t.Parallel()
 
 		if _, err := onesie.New(onesie.WithEnv(mockEnv(nil)), onesie.WithAPIKey("sk"), onesie.WithAttemptTimeout(0)); err == nil {
@@ -834,7 +834,7 @@ func TestNew(t *testing.T) {
 		}
 	})
 
-	t.Run("should reject a zero provider", func(t *testing.T) {
+	t.Run("should refuse a zero provider", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := onesie.New(onesie.WithEnv(mockEnv(nil)), onesie.WithAPIKey("sk"), onesie.WithProvider(onesie.Provider{}))
@@ -1376,7 +1376,7 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
-	t.Run("should reject a response missing an answer that was asked for", func(t *testing.T) {
+	t.Run("should refuse a response missing an answer that was asked for", func(t *testing.T) {
 		t.Parallel()
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1498,7 +1498,7 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
-	t.Run("should reject an empty body on a 200", func(t *testing.T) {
+	t.Run("should refuse an empty body on a 200", func(t *testing.T) {
 		t.Parallel()
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -2551,7 +2551,7 @@ func TestClientListModels(t *testing.T) {
 		}
 	})
 
-	t.Run("should reject an unexpected response shape", func(t *testing.T) {
+	t.Run("should refuse an unexpected response shape", func(t *testing.T) {
 		t.Parallel()
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

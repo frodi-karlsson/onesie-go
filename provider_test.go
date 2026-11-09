@@ -43,7 +43,7 @@ func TestProviderNamed(t *testing.T) {
 		})
 	}
 
-	t.Run("should reject an unknown name and list the valid ones", func(t *testing.T) {
+	t.Run("should refuse an unknown name and list the valid ones", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := onesie.ProviderNamed("nope")
@@ -699,7 +699,7 @@ func TestProviderEncode(t *testing.T) {
 		}
 	})
 
-	t.Run("should encode a box question with no assets on typesafe, which ValidateRequest rejects", func(t *testing.T) {
+	t.Run("should encode a box question with no assets on typesafe, which ValidateRequest refuses", func(t *testing.T) {
 		t.Parallel()
 
 		req := onesie.Request{State: "s", Questions: box}
@@ -712,7 +712,7 @@ func TestProviderEncode(t *testing.T) {
 		}
 	})
 
-	t.Run("should inline a one byte image on openrouter, which ValidateRequest rejects", func(t *testing.T) {
+	t.Run("should inline a one byte image on openrouter, which ValidateRequest refuses", func(t *testing.T) {
 		t.Parallel()
 
 		if onesie.ValidateRequest(tiny) == nil {

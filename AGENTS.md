@@ -112,19 +112,19 @@ if !errors.Is(err, context.Canceled) {
 **Do** start every test name with `should `. In Go that is the subtest name, since the function
 name has to start with `Test`.
 
-**Do** name the test function exactly after the code unit it covers. `NewRootCmd` is covered by
-`TestNewRootCmd`.
+**Do** name the test function exactly after the code unit it covers. `ValidateQuestions` is covered
+by `TestValidateQuestions`.
 
 **Don't** write a flat test function with no subtests.
 
 ```go
 // Do
-func TestNewRootCmd(t *testing.T) {
+func TestValidateQuestions(t *testing.T) {
 	tests := []struct {
 		name string
 	}{
-		{name: "should print help when given no arguments"},
-		{name: "should fail on an unknown command"},
+		{name: "should accept a valid mixed set"},
+		{name: "should refuse an empty question set"},
 	}
 
 	for _, tc := range tests {
@@ -133,9 +133,29 @@ func TestNewRootCmd(t *testing.T) {
 }
 
 // Don't
-func TestRootCmd(t *testing.T) {
-	t.Run("bare invocation prints help", func(t *testing.T) {})
+func TestQuestions(t *testing.T) {
+	t.Run("empty set is an error", func(t *testing.T) {})
 }
+```
+
+**Do** test a case at the layer that owns it. A question's shape rules belong to the question tests.
+What a send does, its request, its retries and the error it returns, belongs to the client's tests.
+
+**Don't** repeat a case at a second layer unless it covers something the first cannot. The wiring
+between two layers is such a thing, and one case per wiring path covers it.
+
+**Do** pin a rule that holds for every row of a table with one loop over the table, not one case
+per row.
+
+```go
+// Do
+// question_test.go: TestValidateQuestions refuses a choice over the options limit.
+// client_test.go: TestClientSystemOne validates before sending anything, with one invalid request.
+// client_test.go: one loop sends each broken answer through every route.
+
+// Don't
+// question_test.go and client_test.go each refusing a choice over the options limit.
+// client_test.go: a hand written case per route for the same broken answer.
 ```
 
 ## Writing
@@ -156,6 +176,20 @@ Don't: Build metadata is stamped at link time (via ldflags) — nothing reads it
 
 **Do** keep identifiers and tool names as they are spelled. `golangci-lint`, `homebrew-tap` and
 `go-version-file` are names, not hyphenated prose.
+
+## Words
+
+**Do** say refuse when the client declines a request before sending it, or a response it cannot use.
+A provider that declines a key or a body refuses it too.
+
+**Don't** say reject. onesie, which uses this client, says refuse for the same thing, and one word
+for one thing keeps the two readable side by side. A tool's own word stays as the tool says it, such
+as a push git rejects.
+
+```
+Do:    should refuse a choice over the options limit
+Don't: should reject a choice over the options limit
+```
 
 ## Commits
 
