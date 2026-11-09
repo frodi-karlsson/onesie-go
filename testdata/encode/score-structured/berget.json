@@ -1,0 +1,1 @@
+{"state":"s","model":"systemone","questions":{"mood":{"type":"score","instructions":"how cross","criteria":[{"calm":"no anger"},{"furious":"shouting"}]}}}

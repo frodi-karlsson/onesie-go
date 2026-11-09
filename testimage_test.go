@@ -16,13 +16,13 @@ const (
 	canvasHeight = 480
 )
 
-func squarePNG(t *testing.T) []byte {
+func squarePNG(t testing.TB) []byte {
 	t.Helper()
 
 	return encodePNG(t, canvas(canvasWidth, canvasHeight, image.Rect(160, 120, 320, 240)))
 }
 
-func squareJPEG(t *testing.T) []byte {
+func squareJPEG(t testing.TB) []byte {
 	t.Helper()
 
 	var buf bytes.Buffer
@@ -33,19 +33,19 @@ func squareJPEG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func emptyPNG(t *testing.T) []byte {
+func emptyPNG(t testing.TB) []byte {
 	t.Helper()
 
 	return encodePNG(t, canvas(canvasWidth, canvasHeight, image.Rectangle{}))
 }
 
-func sizedPNG(t *testing.T, width, height int) []byte {
+func sizedPNG(t testing.TB, width, height int) []byte {
 	t.Helper()
 
 	return encodePNG(t, canvas(width, height, image.Rectangle{}))
 }
 
-func encodePNG(t *testing.T, img image.Image) []byte {
+func encodePNG(t testing.TB, img image.Image) []byte {
 	t.Helper()
 
 	var buf bytes.Buffer

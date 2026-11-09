@@ -2379,6 +2379,17 @@ func TestClientSystemOne(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("should send each corpus case through each route as its golden records", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			for _, route := range encodeRoutes() {
+				sent, err := sentPayload(t, route, tc.req)
+				checkEncodeGolden(t, tc.name, route.name, sent, err)
+			}
+		}
+	})
 }
 
 func TestClientListModels(t *testing.T) {
@@ -4220,6 +4231,108 @@ func TestMarshalBody(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should encode each corpus case as its golden records", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			got, err := onesie.MarshalBody(tc.req)
+			checkEncodeGolden(t, tc.name, "marshal-body", got, err)
+		}
+	})
+}
+
+func BenchmarkMarshalBody(b *testing.B) {
+	for _, tc := range benchCases(b) {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for b.Loop() {
+				if _, err := onesie.MarshalBody(tc.req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkClientSystemOne(b *testing.B) {
+	for _, tc := range benchCases(b) {
+		b.Run(tc.name, func(b *testing.B) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.response)
+			}))
+			defer server.Close()
+
+			client, err := onesie.New(
+				onesie.WithEnv(func(string) (string, bool) { return "", false }), onesie.WithAPIKey("sk-test"),
+				onesie.WithBaseURL(server.URL), onesie.WithProvider(tc.provider),
+			)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+
+			for b.Loop() {
+				if _, err := client.SystemOne(b.Context(), tc.req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func benchCases(b *testing.B) []benchCase {
+	b.Helper()
+
+	square, err := onesie.NewImage(squarePNG(b))
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	shellSafety := onesie.Questions{
+		{ID: "destroys", Question: onesie.Noul{
+			Instructions: "would running exactly this command destroy data that would be hard to get back",
+			Criteria: &onesie.NoulCriteria{
+				True:  "running this exact command destroys data that would be hard to restore",
+				False: "printing or quoting a command is not running it",
+			},
+		}},
+		{ID: "secrets", Question: onesie.Noul{Instructions: "does this command send credentials or secrets to another machine"}},
+		{ID: "network", Question: onesie.Noul{Instructions: "does this command reach the network"}},
+	}
+	state := strings.Repeat("the server is down and billing charged me twice please refund the order ", 2)
+	answers := `{"model":"m","answers":{"destroys":{"type":"noul","noul":0.1},"secrets":{"type":"noul","noul":0.02},` +
+		`"network":{"type":"noul","noul":0.3}},"usage":{"input_tokens":120,"output_tokens":6}}`
+	urgent := onesie.Questions{{ID: "urgent", Question: onesie.Noul{Instructions: "is this photo urgent"}}}
+	urgentAnswer := `{"model":"m","answers":{"urgent":{"type":"noul","noul":0.5}},"usage":{"input_tokens":9,"output_tokens":1}}`
+	withPhoto := onesie.Request{State: map[string]any{"photo": "image-a"}, Questions: urgent, Assets: onesie.Assets{"image-a": square}}
+
+	return []benchCase{
+		{
+			name: "typesafe shell-safety", provider: onesie.TypeSafe(), response: answers,
+			req: onesie.Request{State: state, Questions: shellSafety},
+		},
+		{name: "openrouter image", provider: onesie.OpenRouter(), response: urgentAnswer, req: withPhoto},
+		{
+			name: "cloudflare", provider: onesie.Cloudflare(),
+			response: `{"result":{"state":"Completed","result":` + answers + `},"success":true}`,
+			req:      onesie.Request{State: state, Questions: shellSafety, Model: "typesafe/jev"},
+		},
+		{
+			name: "cloudflare clef image", provider: onesie.Cloudflare(),
+			response: `{"result":` + urgentAnswer + `,"success":true}`,
+			req:      onesie.Request{State: withPhoto.State, Questions: urgent, Assets: withPhoto.Assets, Model: "clef"},
+		},
+	}
+}
+
+type benchCase struct {
+	name     string
+	provider onesie.Provider
+	response string
+	req      onesie.Request
 }
 
 func TestMarshalQuestionsBody(t *testing.T) {

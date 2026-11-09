@@ -1,0 +1,1 @@
+onesie: score question 'mood' has 0 criteria, at least two are required

@@ -1,0 +1,1 @@
+{"model":"typesafe/jev","input":{"state":"s","questions":{"mood":{"type":"score","instructions":"how cross","criteria":[{"calm":"no anger"},{"furious":"shouting"}]}}}}

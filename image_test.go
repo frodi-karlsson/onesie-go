@@ -14,7 +14,7 @@ func TestNewImage(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		data       func(t *testing.T) []byte
+		data       func(t testing.TB) []byte
 		wantFormat string
 		wantErr    string
 	}{
@@ -23,17 +23,17 @@ func TestNewImage(t *testing.T) {
 		{name: "should read a jpeg as jpg", data: squareJPEG, wantFormat: "jpg"},
 		{
 			name:    "should refuse bytes that are neither png nor jpeg",
-			data:    func(*testing.T) []byte { return []byte("GIF89a not an image") },
+			data:    func(testing.TB) []byte { return []byte("GIF89a not an image") },
 			wantErr: "an image must be PNG or JPEG",
 		},
 		{
 			name:    "should refuse a png whose header is cut short",
-			data:    func(t *testing.T) []byte { return squarePNG(t)[:12] },
+			data:    func(t testing.TB) []byte { return squarePNG(t)[:12] },
 			wantErr: "the PNG header cannot be read",
 		},
 		{
 			name:    "should refuse empty bytes",
-			data:    func(*testing.T) []byte { return nil },
+			data:    func(testing.TB) []byte { return nil },
 			wantErr: "an image must be PNG or JPEG",
 		},
 	}
