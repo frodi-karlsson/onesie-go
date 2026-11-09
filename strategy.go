@@ -41,34 +41,36 @@ func (p Provider) Check(req Request, opts ...RequestOption) error {
 		return err
 	}
 
-	_, err = p.validated(req, cfg.longContext)
+	_, _, err = p.validated(req, cfg.longContext)
 
 	return err
 }
 
-func (p Provider) validated(req Request, longContext bool) (encoded, error) {
+func (p Provider) validated(req Request, longContext bool) (encoded, []byte, error) {
 	if err := checkRequest(req); err != nil {
-		return encoded{}, err
+		return encoded{}, nil, err
 	}
 
 	plan := p.plan(req, longContext)
 
 	body, err := marshalRequest(req, plan.model)
 	if err != nil {
-		return encoded{}, err
+		return encoded{}, nil, err
 	}
 
 	if len(req.Assets) > 0 {
 		if err = checkBodySize(len(body)); err != nil {
-			return encoded{}, err
+			return encoded{}, nil, err
 		}
 	}
 
 	if err = plan.via.refuse(p.name, plan.model, plan.needs); err != nil {
-		return encoded{}, err
+		return encoded{}, nil, err
 	}
 
-	return encodeBody(plan.via, plan.needs, parseBody(body))
+	sent, err := encodeBody(plan.via, plan.needs, parseBody(body))
+
+	return sent, body, err
 }
 
 // Encode returns the body SystemOne sends for req, without the headers it adds, and refuses a request

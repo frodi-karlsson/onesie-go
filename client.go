@@ -250,14 +250,12 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	req.Model = modelOr(req.Model, c.defaultModel)
-
-	sent, err := c.provider.validated(req, cfg.longContext)
+	prepared, err := c.prepared(req, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	res, decoded, err := c.send(ctx, cfg, sent)
+	res, decoded, err := c.send(ctx, cfg, prepared.sent)
 	if err != nil {
 		return nil, err
 	}
@@ -265,11 +263,44 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 	return c.checkedResult(res, decoded, req.Questions)
 }
 
-// SendPrepared sends a body PrepareRaw prepared for this client's provider without preparing it again,
-// and returns its checked result and the response body as the route decoded it, on one line.
+// Prepare validates req and encodes it once, as SystemOne sends it from this client, so a caller can
+// key on the body before SendPrepared sends it. Of opts only WithLongContext applies, and the per call
+// options go to SendPrepared.
+//
+// The body's Bytes, its LongContext, this client's provider and base URL, and any header set with
+// WithHeader decide what the send carries, so a caller that deduplicates or caches keys on them.
+func (c *Client) Prepare(req Request, opts ...RequestOption) (*PreparedBody, error) {
+	cfg, err := c.resolve(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.prepared(req, cfg)
+}
+
+func (c *Client) prepared(req Request, cfg requestConfig) (*PreparedBody, error) {
+	req.Model = modelOr(req.Model, c.defaultModel)
+
+	sent, body, err := c.provider.validated(req, cfg.longContext)
+	if err != nil {
+		return nil, err
+	}
+
+	shown := body
+	if sent.needs.longContext {
+		if shown, err = setLongContext(parseBody(body)).bytes(); err != nil {
+			return nil, err
+		}
+	}
+
+	return &PreparedBody{provider: c.provider.name, shown: shown, sent: sent, model: req.Model, asked: req.Questions}, nil
+}
+
+// SendPrepared sends a body Prepare or PrepareRaw prepared for this client's provider without preparing
+// it again, and returns its checked result and the response body as the route decoded it, on one line.
 func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...RequestOption) (*Result, json.RawMessage, error) {
 	if body == nil {
-		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Provider.PrepareRaw"}
+		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Client.Prepare or Provider.PrepareRaw"}
 	}
 
 	if body.provider != c.provider.name {
@@ -283,7 +314,7 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 	}
 
 	if cfg.longContext {
-		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw"}
+		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to Prepare or PrepareRaw"}
 	}
 
 	res, decoded, err := c.send(ctx, cfg, body.sent)

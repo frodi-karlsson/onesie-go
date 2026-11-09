@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -2385,7 +2386,11 @@ func TestClientSystemOne(t *testing.T) {
 
 		for _, tc := range encodeCorpus(t) {
 			for _, route := range encodeRoutes() {
-				sent, err := sentPayload(t, route, tc.req)
+				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
+					_, err := client.SystemOne(t.Context(), req)
+
+					return err
+				})
 				checkEncodeGolden(t, tc.name, route.name, sent, err)
 			}
 		}
@@ -2430,6 +2435,142 @@ func TestClientSystemOne(t *testing.T) {
 		_, err := client.SystemOne(t.Context(), requestOfSize(t, onesie.MaxBodyBytes+1, client.DefaultModel(), false))
 		if err == nil || !strings.Contains(err.Error(), "the request body is 33554433 bytes") {
 			t.Errorf("error = %v, want the size refusal", err)
+		}
+	})
+}
+
+func TestClientPrepare(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should send each corpus case through each route as SystemOne does", func(t *testing.T) {
+		t.Parallel()
+
+		if *updateEncode {
+			t.Skip("the goldens are being rewritten from SystemOne")
+		}
+
+		for _, tc := range encodeCorpus(t) {
+			for _, route := range encodeRoutes() {
+				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
+					prepared, err := client.Prepare(req)
+					if err != nil {
+						return err
+					}
+
+					_, _, err = client.SendPrepared(t.Context(), prepared)
+
+					return err
+				})
+				checkEncodeGolden(t, tc.name, route.name, sent, err)
+			}
+		}
+	})
+
+	t.Run("should refuse what SystemOne refuses, with the same error", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		withImage := onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}}
+
+		for _, tc := range []struct {
+			name     string
+			provider onesie.Provider
+			req      onesie.Request
+			opts     []onesie.RequestOption
+		}{
+			{name: "invalid questions", provider: onesie.TypeSafe(), req: onesie.Request{State: "s"}},
+			{name: "an unencodable state", provider: onesie.TypeSafe(), req: onesie.Request{State: math.NaN(), Questions: oneNoul()}},
+			{name: "images on berget", provider: onesie.Berget(), req: withImage},
+			{name: "a box on levanto", provider: onesie.Levanto(), req: onesie.Request{
+				State: "image-a", Assets: withImage.Assets,
+				Questions: onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug"}}},
+			}},
+			{
+				name: "long context on cloudflare", provider: onesie.Cloudflare(),
+				req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()},
+			},
+		} {
+			client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(tc.provider))
+
+			_, prepareErr := client.Prepare(tc.req, tc.opts...)
+			_, sendErr := client.SystemOne(t.Context(), tc.req, tc.opts...)
+
+			if prepareErr == nil || sendErr == nil || prepareErr.Error() != sendErr.Error() {
+				t.Errorf("%s: Prepare = %v, SystemOne = %v, want the same refusal", tc.name, prepareErr, sendErr)
+			}
+		}
+	})
+
+	t.Run("should report the body before the route rewrites it and the resolved default model", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(onesie.Cloudflare()))
+
+		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := `{"state":"s","model":"` + client.DefaultModel() + `","questions":{"q":{"type":"noul","instructions":"Urgent?"}}}`
+		if got := string(prepared.Bytes()); got != want || prepared.Model() != client.DefaultModel() || prepared.LongContext() {
+			t.Errorf("Bytes = %s, Model = %q, LongContext = %v, want %s, %q and false",
+				got, prepared.Model(), prepared.LongContext(), want, client.DefaultModel())
+		}
+	})
+
+	t.Run("should show long context in the body it reports, as PrepareRaw does", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1")
+
+		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()}, onesie.WithLongContext())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := `{"state":"s","model":"` + client.DefaultModel() + `","questions":{"q":{"type":"noul","instructions":"Urgent?"}},"long_context":true}`
+		if got := string(prepared.Bytes()); got != want || !prepared.LongContext() {
+			t.Errorf("Bytes = %s, LongContext = %v, want %s and true", got, prepared.LongContext(), want)
+		}
+	})
+
+	t.Run("should take long context from the request as from WithLongContext", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1")
+
+		fromRequest, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul(), LongContext: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		fromOption, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()}, onesie.WithLongContext())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !fromRequest.LongContext() || !bytes.Equal(fromRequest.Bytes(), fromOption.Bytes()) {
+			t.Errorf("from the request: %s, %v, from the option: %s", fromRequest.Bytes(), fromRequest.LongContext(), fromOption.Bytes())
+		}
+	})
+
+	t.Run("should refuse WithLongContext on SendPrepared for a body from Prepare", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1")
+
+		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, _, err = client.SendPrepared(t.Context(), prepared, onesie.WithLongContext())
+		if !errors.Is(err, onesie.ErrValidation) {
+			t.Errorf("error = %v, want ErrValidation", err)
 		}
 	})
 }
@@ -3889,7 +4030,7 @@ func TestClientSendPrepared(t *testing.T) {
 		{
 			name:    "should refuse a nil body",
 			body:    func(*testing.T, *onesie.Client) *onesie.PreparedBody { return nil },
-			wantErr: "onesie: the prepared body is nil. Use Provider.PrepareRaw",
+			wantErr: "onesie: the prepared body is nil. Use Client.Prepare or Provider.PrepareRaw",
 		},
 		{
 			name: "should refuse a body prepared for another provider",
@@ -3908,7 +4049,7 @@ func TestClientSendPrepared(t *testing.T) {
 				return prepare(t, onesie.TypeSafe(), client, asked)
 			},
 			opts:    []onesie.RequestOption{onesie.WithLongContext()},
-			wantErr: "onesie: long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw",
+			wantErr: "onesie: long context is fixed when the body is prepared. Pass WithLongContext to Prepare or PrepareRaw",
 		},
 	}
 
@@ -4318,6 +4459,28 @@ func BenchmarkClientSystemOne(b *testing.B) {
 
 			for b.Loop() {
 				if _, err := client.SystemOne(b.Context(), tc.req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkClientPrepare(b *testing.B) {
+	for _, tc := range benchCases(b) {
+		b.Run(tc.name, func(b *testing.B) {
+			client, err := onesie.New(
+				onesie.WithEnv(func(string) (string, bool) { return "", false }), onesie.WithAPIKey("sk-test"),
+				onesie.WithBaseURL("http://127.0.0.1:1"), onesie.WithProvider(tc.provider),
+			)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+
+			for b.Loop() {
+				if _, err := client.Prepare(tc.req); err != nil {
 					b.Fatal(err)
 				}
 			}

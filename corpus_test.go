@@ -65,7 +65,9 @@ func writeEncodeGolden(t *testing.T, dir, name, path string, got []byte) {
 	}
 }
 
-func sentPayload(t *testing.T, route encodeRoute, req onesie.Request) ([]byte, error) {
+func sentPayload(
+	t *testing.T, route encodeRoute, req onesie.Request, send func(*onesie.Client, onesie.Request) error,
+) ([]byte, error) {
 	t.Helper()
 
 	var (
@@ -92,7 +94,7 @@ func sentPayload(t *testing.T, route encodeRoute, req onesie.Request) ([]byte, e
 	}
 
 	client, _ := newTestClient(t, server.URL, onesie.WithProvider(route.provider))
-	_, err := client.SystemOne(t.Context(), req)
+	err := send(client, req)
 
 	mu.Lock()
 	defer mu.Unlock()

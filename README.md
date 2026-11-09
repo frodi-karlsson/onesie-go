@@ -48,6 +48,12 @@ Each provider reads its key from the variable `Provider.EnvAPIKey` names, unless
 go without a key, and such a client sends no API key.
 `Provider.CustomBaseURL` tells a custom base URL from the provider's own.
 
+## Preparing a request
+
+`Client.Prepare` validates and encodes a request once, as `SystemOne` would send it, and
+`SendPrepared` sends it. A caller that deduplicates or caches requests keys on the prepared body's
+`Bytes()` and `LongContext()`, with the client's provider and base URL.
+
 ## Errors
 
 A request the client refuses before sending matches `onesie.ErrValidation`.

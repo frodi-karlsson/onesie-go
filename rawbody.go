@@ -108,8 +108,8 @@ func checkModel(members []member) error {
 	return nil
 }
 
-// PreparedBody is a raw body PrepareRaw checked and encoded for one provider, which SendPrepared
-// sends as it is. Its facts are the ones that send uses.
+// PreparedBody is a body Client.Prepare or Provider.PrepareRaw checked and encoded for one provider,
+// which SendPrepared sends as it is. Its facts are the ones that send uses.
 type PreparedBody struct {
 	provider string
 	shown    []byte
