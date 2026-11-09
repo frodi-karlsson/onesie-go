@@ -182,6 +182,7 @@ func encodeCorpus(t *testing.T) []encodeCase {
 		{name: "html-and-separators", req: onesie.Request{State: "a < b & c > d \u2028 \u2029", Questions: urgent}},
 		{name: "non-ascii", req: onesie.Request{State: "héllo 日本 ü", Questions: urgent}},
 		{name: "raw-message-html", req: onesie.Request{State: json.RawMessage(`{"a":"<b>&"}`), Questions: urgent}},
+		{name: "raw-repeated-names", req: onesie.Request{State: json.RawMessage(`{"photo":"a", "photo":"b"}`), Questions: urgent}},
 		{name: "legacy-marshaler", req: onesie.Request{State: legacyMarshaler{}, Questions: urgent}},
 		{name: "nil-slice-and-map", req: onesie.Request{
 			State: map[string]any{"list": []string(nil), "map": map[string]int(nil)}, Questions: urgent,

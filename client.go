@@ -3,6 +3,7 @@ package onesie
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -393,23 +394,23 @@ func billedUsage(decoded []byte) *Usage {
 
 // MarshalBody encodes a request as a raw body SystemOneRaw accepts.
 func MarshalBody(req Request) ([]byte, error) {
-	return json.Marshal(struct {
+	return jsonv2.Marshal(struct {
 		State       any       `json:"state"`
 		Model       string    `json:"model"`
 		Questions   Questions `json:"questions"`
-		LongContext bool      `json:"long_context,omitempty"`
+		LongContext bool      `json:"long_context,omitzero"`
 		Assets      Assets    `json:"assets,omitempty"`
-	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
+	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets}, bodyOptions)
 }
 
 // MarshalQuestionsBody encodes req's model and questions with no state key, since a null state is a
 // state. LongContext adds long_context, and the assets are left out.
 func MarshalQuestionsBody(req Request) ([]byte, error) {
-	return json.Marshal(struct {
+	return jsonv2.Marshal(struct {
 		Model       string    `json:"model"`
 		Questions   Questions `json:"questions"`
-		LongContext bool      `json:"long_context,omitempty"`
-	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext})
+		LongContext bool      `json:"long_context,omitzero"`
+	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext}, bodyOptions)
 }
 
 // Request is one evaluation, whose questions all see the same state and are answered independently.

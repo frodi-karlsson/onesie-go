@@ -1,1 +1,1 @@
-{"state":{"b":null},"model":"systemone","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}
+{"state":{"b":""},"model":"systemone","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}

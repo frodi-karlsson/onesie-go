@@ -1,1 +1,1 @@
-{"state":{},"model":"jev-latest","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}
+{"state":{"count":0,"seen":false},"model":"jev-latest","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}

@@ -1,1 +1,1 @@
-json: unsupported value: NaN
+json: cannot marshal from Go float64 within "/state": unsupported value: NaN

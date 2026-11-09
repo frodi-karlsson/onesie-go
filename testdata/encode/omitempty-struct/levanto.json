@@ -1,1 +1,1 @@
-{"state":{},"model":"sage-latest","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}
+{"state":{"count":0,"seen":false},"model":"sage-latest","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}

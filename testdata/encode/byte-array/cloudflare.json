@@ -1,1 +1,1 @@
-{"model":"typesafe/jev","input":{"state":{"a":[1,2,3]},"questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}}
+{"model":"typesafe/jev","input":{"state":{"a":"AQID"},"questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}}

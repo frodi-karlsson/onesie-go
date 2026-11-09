@@ -1,1 +1,1 @@
-{"model":"typesafe/jev","input":{"state":{},"questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}}
+{"model":"typesafe/jev","input":{"state":{"count":0,"seen":false},"questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}}

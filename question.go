@@ -1,8 +1,8 @@
 package onesie
 
 import (
-	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"reflect"
 )
@@ -71,12 +71,7 @@ type NamedQuestion struct {
 
 // MarshalJSON writes the questions as a JSON object, keeping slice order.
 func (q Questions) MarshalJSON() ([]byte, error) {
-	pairs := make([]pair, 0, len(q))
-	for _, named := range q {
-		pairs = append(pairs, pair{key: named.ID, value: named.Question})
-	}
-
-	return marshalObject(pairs)
+	return marshalWith(func(enc *jsontext.Encoder) error { return writeQuestions(enc, q) })
 }
 
 func isNil(question Question) bool {
@@ -107,11 +102,7 @@ type Noul struct {
 
 // MarshalJSON encodes the question in the shape the API expects.
 func (q Noul) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Type         string        `json:"type"`
-		Instructions any           `json:"instructions"`
-		Criteria     *NoulCriteria `json:"criteria,omitempty"`
-	}{Type: "noul", Instructions: q.Instructions, Criteria: q.Criteria})
+	return marshalWith(func(enc *jsontext.Encoder) error { return writeNoul(enc, q) })
 }
 
 func (Noul) validate(string) error {
@@ -132,11 +123,7 @@ type Choice struct {
 
 // MarshalJSON encodes the question in the shape the API expects.
 func (q Choice) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Type         string   `json:"type"`
-		Instructions any      `json:"instructions"`
-		Criteria     Criteria `json:"criteria"`
-	}{Type: "choice", Instructions: q.Instructions, Criteria: q.Criteria})
+	return marshalWith(func(enc *jsontext.Encoder) error { return writeChoice(enc, q) })
 }
 
 func (q Choice) validate(name string) error {
@@ -170,16 +157,7 @@ type NamedCriterion struct {
 // MarshalJSON writes the set as a JSON object in slice order. A nil set is null, so the zero value
 // encodes to something the API refuses cleanly.
 func (c Criteria) MarshalJSON() ([]byte, error) {
-	if c == nil {
-		return []byte("null"), nil
-	}
-
-	pairs := make([]pair, 0, len(c))
-	for _, named := range c {
-		pairs = append(pairs, pair{key: named.Name, value: named.Desc})
-	}
-
-	return marshalObject(pairs)
+	return marshalWith(func(enc *jsontext.Encoder) error { return writeCriteria(enc, c) })
 }
 
 // Score rates the state against an ordered rubric and is answered with a weighted value.
@@ -190,11 +168,7 @@ type Score struct {
 
 // MarshalJSON encodes the question in the shape the API expects.
 func (q Score) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Type         string `json:"type"`
-		Instructions any    `json:"instructions"`
-		Criteria     []any  `json:"criteria"`
-	}{Type: "score", Instructions: q.Instructions, Criteria: q.Criteria})
+	return marshalWith(func(enc *jsontext.Encoder) error { return writeScore(enc, q) })
 }
 
 func (q Score) validate(name string) error {
@@ -233,50 +207,9 @@ type Box struct {
 
 // MarshalJSON encodes the question in the shape the API expects.
 func (q Box) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Type         string `json:"type"`
-		Instructions any    `json:"instructions"`
-	}{Type: "box", Instructions: q.Instructions})
+	return marshalWith(func(enc *jsontext.Encoder) error { return writeBox(enc, q) })
 }
 
 func (Box) validate(string) error {
 	return nil
-}
-
-func marshalObject(pairs []pair) ([]byte, error) {
-	var buf bytes.Buffer
-
-	buf.WriteByte('{')
-
-	for i, p := range pairs {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-
-		// Through json.Marshal rather than quoting by hand, because a key is not character checked
-		// here and one carrying a quote would otherwise produce a body no parser can read.
-		key, err := json.Marshal(p.key)
-		if err != nil {
-			return nil, err
-		}
-
-		buf.Write(key)
-		buf.WriteByte(':')
-
-		value, err := json.Marshal(p.value)
-		if err != nil {
-			return nil, err
-		}
-
-		buf.Write(value)
-	}
-
-	buf.WriteByte('}')
-
-	return buf.Bytes(), nil
-}
-
-type pair struct {
-	key   string
-	value any
 }

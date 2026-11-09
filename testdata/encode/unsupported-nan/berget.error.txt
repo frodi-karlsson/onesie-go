@@ -1,1 +1,1 @@
-onesie: the request cannot be encoded: json: unsupported value: NaN
+onesie: the request cannot be encoded: json: cannot marshal from Go float64 within "/state": unsupported value: NaN

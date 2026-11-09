@@ -1,1 +1,1 @@
-{"state":{"list":null,"map":null},"model":"systemone","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}
+{"state":{"list":[],"map":{}},"model":"systemone","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}

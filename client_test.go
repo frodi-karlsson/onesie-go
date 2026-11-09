@@ -4423,6 +4423,23 @@ func TestMarshalBody(t *testing.T) {
 			checkEncodeGolden(t, tc.name, "marshal-body", got, err)
 		}
 	})
+
+	t.Run("should encode each corpus case to the same bytes every time", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			first, err := onesie.MarshalBody(tc.req)
+			if err != nil {
+				continue
+			}
+
+			for range 50 {
+				if again, _ := onesie.MarshalBody(tc.req); !bytes.Equal(again, first) {
+					t.Fatalf("%s encoded to %s, then to %s", tc.name, first, again)
+				}
+			}
+		}
+	})
 }
 
 func BenchmarkMarshalBody(b *testing.B) {
@@ -4586,7 +4603,7 @@ func TestMarshalQuestionsBody(t *testing.T) {
 			Criteria: onesie.Criteria{{Name: "a", Desc: make(chan int)}},
 		}}}}
 
-		if _, err := onesie.MarshalQuestionsBody(req); err == nil || !strings.Contains(err.Error(), "unsupported type: chan int") {
+		if _, err := onesie.MarshalQuestionsBody(req); err == nil || !strings.Contains(err.Error(), "cannot marshal from Go chan int") {
 			t.Fatalf("error = %v, want an unsupported type", err)
 		}
 	})

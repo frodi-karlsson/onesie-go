@@ -1,1 +1,1 @@
-{"state":{},"model":"systemone","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}
+{"state":{"count":0,"seen":false},"model":"systemone","questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}

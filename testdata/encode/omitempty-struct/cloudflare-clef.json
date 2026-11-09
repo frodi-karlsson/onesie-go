@@ -1,1 +1,1 @@
-{"model":"@cf/cloudflare/clef","input":{"state":{},"questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}}
+{"model":"@cf/cloudflare/clef","input":{"state":{"count":0,"seen":false},"questions":{"urgent":{"type":"noul","instructions":"is this urgent"}}}}

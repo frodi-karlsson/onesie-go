@@ -132,7 +132,7 @@ func TestQuestionsMarshalJSON(t *testing.T) {
 					Criteria: onesie.Criteria{{Name: "c", Desc: make(chan int)}},
 				}},
 			},
-			wantErr: "unsupported type: chan int",
+			wantErr: "cannot marshal from Go chan int",
 		},
 	}
 

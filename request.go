@@ -1,7 +1,7 @@
 package onesie
 
 import (
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"maps"
 	"slices"
@@ -154,10 +154,10 @@ func UnreferencedAssets(req Request) ([]string, error) {
 
 func stringValues(req Request) ([]string, error) {
 	// Through JSON, so a state of any Go type, a json.RawMessage included, is walked as a raw body is.
-	encoded, err := json.Marshal(struct {
+	encoded, err := jsonv2.Marshal(struct {
 		State     any       `json:"state"`
 		Questions Questions `json:"questions"`
-	}{State: req.State, Questions: req.Questions})
+	}{State: req.State, Questions: req.Questions}, bodyOptions)
 	if err != nil {
 		return nil, unencodable(err)
 	}
