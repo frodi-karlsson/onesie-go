@@ -29,7 +29,8 @@ type Needs struct {
 }
 
 // Check refuses what SystemOne refuses before it sends req with opts, and sends nothing. It
-// validates req, then refuses what Encode refuses. A blank model is the built in default.
+// validates req, encodes it, checks the size of a body with images, then refuses what Encode refuses.
+// A blank model is the built in default.
 func (p Provider) Check(req Request, opts ...RequestOption) error {
 	if err := p.check(); err != nil {
 		return err
@@ -46,42 +47,75 @@ func (p Provider) Check(req Request, opts ...RequestOption) error {
 }
 
 func (p Provider) validated(req Request, longContext bool) (encoded, error) {
-	if err := ValidateRequest(req); err != nil {
+	if err := checkRequest(req); err != nil {
 		return encoded{}, err
 	}
 
-	return encodeRequest(p, req, longContext)
+	plan := p.plan(req, longContext)
+
+	body, err := marshalRequest(req, plan.model)
+	if err != nil {
+		return encoded{}, err
+	}
+
+	if len(req.Assets) > 0 {
+		if err = checkBodySize(len(body)); err != nil {
+			return encoded{}, err
+		}
+	}
+
+	if err = plan.via.refuse(p.name, plan.model, plan.needs); err != nil {
+		return encoded{}, err
+	}
+
+	return encodeBody(plan.via, plan.needs, parseBody(body))
 }
 
-// Encode refuses a request this provider's route does not take, then returns the body SystemOne
-// sends, without the headers it adds. A blank model is the built in default. It does not validate.
+// Encode returns the body SystemOne sends for req, without the headers it adds, and refuses a request
+// this provider's route does not take. A blank model is the built in default. It does not validate.
 func (p Provider) Encode(req Request) ([]byte, error) {
 	if err := p.check(); err != nil {
 		return nil, err
 	}
 
-	sent, err := encodeRequest(p, req, false)
+	plan := p.plan(req, false)
+
+	body, err := marshalRequest(req, plan.model)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = plan.via.refuse(p.name, plan.model, plan.needs); err != nil {
+		return nil, err
+	}
+
+	sent, err := encodeBody(plan.via, plan.needs, parseBody(body))
 
 	return sent.body, err
 }
 
-func encodeRequest(p Provider, req Request, longContext bool) (encoded, error) {
+func (p Provider) plan(req Request, longContext bool) requestPlan {
 	model := modelOr(req.Model, p.defaultModel)
-	via := p.route(model)
 	needs := requestNeeds(req)
 	needs.longContext = needs.longContext || longContext
 
-	if err := via.refuse(p.name, model, needs); err != nil {
-		return encoded{}, err
-	}
+	return requestPlan{model: model, via: p.route(model), needs: needs}
+}
 
+type requestPlan struct {
+	model string
+	via   route
+	needs capabilities
+}
+
+func marshalRequest(req Request, model string) ([]byte, error) {
 	// Long context travels as a header, so the body never carries it.
 	body, err := MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
 	if err != nil {
-		return encoded{}, unencodable(err)
+		return nil, unencodable(err)
 	}
 
-	return encodeBody(via, needs, parseBody(body))
+	return body, nil
 }
 
 type encoded struct {

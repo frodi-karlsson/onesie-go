@@ -2,6 +2,7 @@ package onesie
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -60,28 +61,39 @@ func TestParseBody(t *testing.T) {
 	}
 }
 
-func TestBodySize(t *testing.T) {
+func TestCheckBodySize(t *testing.T) {
 	t.Parallel()
 
-	t.Run("should size a request with images exactly as MarshalBody encodes it", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name    string
+		size    int
+		wantErr string
+	}{
+		{name: "should take a body of exactly the limit", size: MaxBodyBytes},
+		{
+			name: "should refuse a body one byte over the limit", size: MaxBodyBytes + 1,
+			wantErr: "onesie: the request body is 33554433 bytes, and the API takes at most 33554432. Send fewer or smaller images",
+		},
+	}
 
-		img := validImage(t)
-		req := Request{
-			State: map[string]any{"a": "image-a", "b": "image-b"}, Model: "m", LongContext: true,
-			Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}},
-			Assets:    Assets{"image-a": img, "image-b": img},
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-		body, err := MarshalBody(req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+			err := checkBodySize(tc.size)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("checkBodySize(%d) = %v, want nil", tc.size, err)
+				}
 
-		if size, err := bodySize(req); err != nil || size != len(body) {
-			t.Errorf("bodySize = %d, %v, want %d", size, err, len(body))
-		}
-	})
+				return
+			}
+
+			if err == nil || err.Error() != tc.wantErr || !errors.Is(err, ErrValidation) {
+				t.Errorf("checkBodySize(%d) = %v, want %q matching ErrValidation", tc.size, err, tc.wantErr)
+			}
+		})
+	}
 }
 
 func TestEncodedSize(t *testing.T) {

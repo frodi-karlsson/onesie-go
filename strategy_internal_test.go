@@ -109,3 +109,38 @@ func TestEncodedPost(t *testing.T) {
 		}
 	})
 }
+
+func TestMarshalRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		req   Request
+		model string
+		want  string
+	}{
+		{
+			name:  "should leave long_context out, since it travels as a header",
+			req:   Request{State: "s", Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}}, LongContext: true},
+			model: "m",
+			want:  `{"state":"s","model":"m","questions":{"q":{"type":"noul","instructions":"q"}}}`,
+		},
+		{
+			name:  "should name the model it is given over the request's own",
+			req:   Request{State: "s", Model: "own", Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}}},
+			model: "given",
+			want:  `{"state":"s","model":"given","questions":{"q":{"type":"noul","instructions":"q"}}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := marshalRequest(tc.req, tc.model)
+			if err != nil || string(got) != tc.want {
+				t.Errorf("marshalRequest = %s, %v, want %s", got, err, tc.want)
+			}
+		})
+	}
+}

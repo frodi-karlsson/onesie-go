@@ -2390,6 +2390,48 @@ func TestClientSystemOne(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("should send a body with images at the limit and refuse one a byte over before any request", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range []struct {
+			size        int
+			longContext bool
+			refused     bool
+		}{
+			{size: onesie.MaxBodyBytes, longContext: true},
+			{size: onesie.MaxBodyBytes + 1, refused: true},
+		} {
+			var calls atomic.Int32
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				_, _ = io.Copy(io.Discard, r.Body)
+				_, _ = io.WriteString(w, `{"model":"m","answers":{"q":{"type":"noul","noul":0.5}}}`)
+			}))
+
+			client, _ := newTestClient(t, server.URL)
+			_, err := client.SystemOne(t.Context(), requestOfSize(t, tc.size, client.DefaultModel(), tc.longContext))
+
+			server.Close()
+
+			if refused := errors.Is(err, onesie.ErrValidation); refused != tc.refused || (calls.Load() == 0) != tc.refused {
+				t.Errorf("SystemOne at %d bytes with long context %v = %v after %d calls, want refused %v",
+					tc.size, tc.longContext, err, calls.Load(), tc.refused)
+			}
+		}
+	})
+
+	t.Run("should refuse an oversized body with images on berget by its size before its route", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(onesie.Berget()))
+
+		_, err := client.SystemOne(t.Context(), requestOfSize(t, onesie.MaxBodyBytes+1, client.DefaultModel(), false))
+		if err == nil || !strings.Contains(err.Error(), "the request body is 33554433 bytes") {
+			t.Errorf("error = %v, want the size refusal", err)
+		}
+	})
 }
 
 func TestClientListModels(t *testing.T) {

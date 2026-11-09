@@ -1,7 +1,6 @@
 package onesie
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -15,8 +14,26 @@ const (
 )
 
 // ValidateRequest refuses a request the API would refuse, before it is sent. It checks the
-// questions, then the assets, then the size of the body.
+// questions, then the assets, then the size of a body with images. It measures the body with the model
+// as given, so it can differ from a send by the length of the default model's name.
 func ValidateRequest(req Request) error {
+	if err := checkRequest(req); err != nil {
+		return err
+	}
+
+	if len(req.Assets) == 0 {
+		return nil
+	}
+
+	body, err := marshalRequest(req, req.Model)
+	if err != nil {
+		return err
+	}
+
+	return checkBodySize(len(body))
+}
+
+func checkRequest(req Request) error {
 	if err := ValidateQuestions(req.Questions); err != nil {
 		return err
 	}
@@ -35,7 +52,7 @@ func ValidateRequest(req Request) error {
 		}
 	}
 
-	return checkBodySize(req)
+	return nil
 }
 
 // ValidateImage refuses an image the API would refuse, naming it in the message. It checks the
@@ -169,16 +186,7 @@ func sideFits(side int) bool {
 	return side >= MinImageSide && side <= MaxImageSide
 }
 
-func checkBodySize(req Request) error {
-	if len(req.Assets) == 0 {
-		return nil
-	}
-
-	size, err := bodySize(req)
-	if err != nil {
-		return err
-	}
-
+func checkBodySize(size int) error {
 	if size > MaxBodyBytes {
 		return &ValidationError{Message: fmt.Sprintf(
 			"the request body is %d bytes, and the API takes at most %d. Send fewer or smaller images",
@@ -186,23 +194,4 @@ func checkBodySize(req Request) error {
 	}
 
 	return nil
-}
-
-func bodySize(req Request) (int, error) {
-	hollow := make(Assets, len(req.Assets))
-	data := 0
-
-	for ref, img := range req.Assets {
-		hollow[ref] = Image{Format: img.Format}
-		data += base64.StdEncoding.EncodedLen(len(img.Data))
-	}
-
-	req.Assets = hollow
-
-	rest, err := MarshalBody(req)
-	if err != nil {
-		return 0, unencodable(err)
-	}
-
-	return len(rest) + data, nil
 }
