@@ -2501,32 +2501,45 @@ func TestClientPrepare(t *testing.T) {
 		}
 	})
 
-	t.Run("should show the body MarshalBody writes for the request with its model and long context", func(t *testing.T) {
+	t.Run("should report the body MarshalBody writes before any route rewrites it, with its model and long context", func(t *testing.T) {
 		t.Parallel()
 
-		client, _ := newTestClient(t, "http://127.0.0.1:1")
+		var checked int
 
-		for _, tc := range encodeCorpus(t) {
-			for _, longContext := range []bool{false, true} {
-				var opts []onesie.RequestOption
-				if longContext {
-					opts = append(opts, onesie.WithLongContext())
-				}
+		for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.Cloudflare()} {
+			client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(provider))
 
-				prepared, err := client.Prepare(tc.req, opts...)
-				if err != nil {
-					continue
-				}
+			for _, tc := range encodeCorpus(t) {
+				for _, longContext := range []bool{false, true} {
+					var opts []onesie.RequestOption
+					if longContext {
+						opts = append(opts, onesie.WithLongContext())
+					}
 
-				resolved := tc.req
-				resolved.Model = client.DefaultModel()
-				resolved.LongContext = tc.req.LongContext || longContext
+					prepared, err := client.Prepare(tc.req, opts...)
+					if err != nil {
+						continue
+					}
 
-				want, err := onesie.MarshalBody(resolved)
-				if err != nil || !bytes.Equal(prepared.Bytes(), want) {
-					t.Errorf("%s with long context %v: Bytes = %s, want %s", tc.name, longContext, prepared.Bytes(), want)
+					resolved := tc.req
+					resolved.Model = client.DefaultModel()
+					resolved.LongContext = tc.req.LongContext || longContext
+
+					want, err := onesie.MarshalBody(resolved)
+					if err != nil || !bytes.Equal(prepared.Bytes(), want) ||
+						prepared.Model() != resolved.Model || prepared.LongContext() != resolved.LongContext {
+						t.Errorf("%s %s with long context %v: Bytes = %s, Model = %q, LongContext = %v, want %s, %q and %v",
+							provider.Name(), tc.name, longContext, prepared.Bytes(), prepared.Model(), prepared.LongContext(),
+							want, resolved.Model, resolved.LongContext)
+					}
+
+					checked++
 				}
 			}
+		}
+
+		if checked == 0 {
+			t.Fatal("no corpus case prepared")
 		}
 	})
 
@@ -2595,59 +2608,6 @@ func TestClientPrepare(t *testing.T) {
 			if prepareErr == nil || sendErr == nil || prepareErr.Error() != sendErr.Error() {
 				t.Errorf("%s: Prepare = %v, SystemOne = %v, want the same refusal", tc.name, prepareErr, sendErr)
 			}
-		}
-	})
-
-	t.Run("should report the body before the route rewrites it and the resolved default model", func(t *testing.T) {
-		t.Parallel()
-
-		client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(onesie.Cloudflare()))
-
-		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		want := `{"state":"s","model":"` + client.DefaultModel() + `","questions":{"q":{"type":"noul","instructions":"Urgent?"}}}`
-		if got := string(prepared.Bytes()); got != want || prepared.Model() != client.DefaultModel() || prepared.LongContext() {
-			t.Errorf("Bytes = %s, Model = %q, LongContext = %v, want %s, %q and false",
-				got, prepared.Model(), prepared.LongContext(), want, client.DefaultModel())
-		}
-	})
-
-	t.Run("should show long context in the body it reports, as PrepareRaw does", func(t *testing.T) {
-		t.Parallel()
-
-		client, _ := newTestClient(t, "http://127.0.0.1:1")
-
-		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()}, onesie.WithLongContext())
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		want := `{"state":"s","model":"` + client.DefaultModel() + `","questions":{"q":{"type":"noul","instructions":"Urgent?"}},"long_context":true}`
-		if got := string(prepared.Bytes()); got != want || !prepared.LongContext() {
-			t.Errorf("Bytes = %s, LongContext = %v, want %s and true", got, prepared.LongContext(), want)
-		}
-	})
-
-	t.Run("should take long context from the request as from WithLongContext", func(t *testing.T) {
-		t.Parallel()
-
-		client, _ := newTestClient(t, "http://127.0.0.1:1")
-
-		fromRequest, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul(), LongContext: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		fromOption, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()}, onesie.WithLongContext())
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if !fromRequest.LongContext() || !bytes.Equal(fromRequest.Bytes(), fromOption.Bytes()) {
-			t.Errorf("from the request: %s, %v, from the option: %s", fromRequest.Bytes(), fromRequest.LongContext(), fromOption.Bytes())
 		}
 	})
 
