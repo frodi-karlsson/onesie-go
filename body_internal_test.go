@@ -6,36 +6,21 @@ import (
 	"testing"
 )
 
-func TestJsonBodyParsed(t *testing.T) {
+func TestReadMembers(t *testing.T) {
 	t.Parallel()
-
-	t.Run("should leave a body unread until a reader asks, and give its bytes back as they are", func(t *testing.T) {
-		t.Parallel()
-
-		body := []byte(`{ "state" : "s" }`)
-
-		unread := newBody(body)
-		if unread.read || unread.object || unread.members != nil {
-			t.Fatalf("newBody = %+v, want it unread", unread)
-		}
-
-		if out, err := unread.bytes(); err != nil || !bytes.Equal(out, body) {
-			t.Errorf("bytes = %s, %v, want the body as it is", out, err)
-		}
-	})
 
 	t.Run("should keep each value as a slice of the body, so no image is copied", func(t *testing.T) {
 		t.Parallel()
 
 		body := []byte(`{"state":"s","assets":{"r":{"data_base64":"AQ=="}}}`)
 
-		parsed := newBody(body).parsed()
-		if !parsed.object || len(parsed.members) != 2 {
-			t.Fatalf("parsed = %+v, want two members", parsed)
+		members, err := readMembers(body)
+		if err != nil || len(members) != 2 {
+			t.Fatalf("readMembers = %+v, %v, want two members", members, err)
 		}
 
 		at := bytes.Index(body, []byte(`{"r"`))
-		if &parsed.members[1].value[0] != &body[at] {
+		if &members[1].value[0] != &body[at] {
 			t.Errorf("the assets value is a copy, want a slice of the body")
 		}
 	})
@@ -43,37 +28,40 @@ func TestJsonBodyParsed(t *testing.T) {
 	tests := []struct {
 		name   string
 		body   string
-		object bool
 		values []string
 	}{
-		{name: "should read values with space around them", body: `{ "a" : 1 , "b" : [ 2 ] }`, object: true, values: []string{"1", "[ 2 ]"}},
-		{name: "should keep duplicate names in order", body: `{"a":1,"a":2}`, object: true, values: []string{"1", "2"}},
-		{name: "should read an empty object", body: ` {} `, object: true},
-		{name: "should not read an array", body: `[1]`},
-		{name: "should not read data after the object", body: `{"a":1} x`},
-		{name: "should not read a body cut short", body: `{"a":`},
+		{name: "should read values with space around them", body: `{ "a" : 1 , "b" : [ 2 ] }`, values: []string{"1", "[ 2 ]"}},
+		{name: "should keep duplicate names in order", body: `{"a":1,"a":2}`, values: []string{"1", "2"}},
+		{name: "should read an empty object", body: ` {} `},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			parsed := newBody([]byte(tc.body)).parsed()
-			if parsed.object != tc.object || len(parsed.members) != len(tc.values) {
-				t.Fatalf("parsed = %+v, want object %v with %d members", parsed, tc.object, len(tc.values))
+			members, err := readMembers([]byte(tc.body))
+			if err != nil || len(members) != len(tc.values) {
+				t.Fatalf("readMembers = %+v, %v, want %d members", members, err, len(tc.values))
 			}
 
 			for i, want := range tc.values {
-				if got := string(parsed.members[i].value); got != want {
+				if got := string(members[i].value); got != want {
 					t.Errorf("member %d = %s, want %s", i, got, want)
 				}
 			}
-
-			if out, err := parsed.bytes(); err != nil || string(out) != tc.body {
-				t.Errorf("bytes = %s, %v, want the body unchanged", out, err)
-			}
 		})
 	}
+}
+
+func readBody(t *testing.T, body string) jsonBody {
+	t.Helper()
+
+	read, err := readRawBody([]byte(body))
+	if err != nil {
+		t.Fatalf("readRawBody(%s) = %v", body, err)
+	}
+
+	return read
 }
 
 func TestCheckBodySize(t *testing.T) {

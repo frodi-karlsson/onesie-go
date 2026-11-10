@@ -24,7 +24,7 @@ func TestLongContextOf(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := longContextOf(newBody([]byte(tc.body)).parsed().members)
+			got, err := longContextOf(readBody(t, tc.body).members)
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrValidation) || err.Error() != tc.wantErr {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
@@ -51,14 +51,13 @@ func TestWithoutLongContext(t *testing.T) {
 		{name: "should leave a body without the key as it is", body: `{ "state" : "s" }`, want: `{ "state" : "s" }`},
 		{name: "should take the key out", body: `{"state":"xé <&>","long_context":true,"n":1.50e3}`, want: `{"state":"xé <&>","n":1.50e3}`},
 		{name: "should leave the key inside a string alone", body: `{"state":"\"long_context\""}`, want: `{"state":"\"long_context\""}`},
-		{name: "should leave a body that is not an object alone", body: `["long_context"]`, want: `["long_context"]`},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := withoutLongContext(newBody([]byte(tc.body)).parsed()).bytes()
+			got, err := withoutLongContext(readBody(t, tc.body)).bytes()
 			if err != nil || string(got) != tc.want {
 				t.Errorf("withoutLongContext = %s, %v, want %s", got, err, tc.want)
 			}

@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
+	"errors"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
-	"unicode/utf8"
 )
 
 // PrepareRaw prepares body as SystemOneRaw sends it, refusing what a send refuses and a model that is not
@@ -26,18 +27,15 @@ func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...
 }
 
 func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) (*PreparedBody, error) {
-	if err := checkJSON(raw); err != nil {
+	read, err := readRawBody(raw)
+	if err != nil {
 		return nil, err
 	}
 
-	if !utf8.Valid(raw) {
-		return nil, &ValidationError{Message: "the request body is not valid UTF-8"}
-	}
-
 	model := modelOr(defaultModel, p.defaultModel)
-	b := fillModel(lastWins(newBody(raw).parsed()), model)
+	b := fillModel(lastWins(read), model)
 
-	if err := checkModel(b.members); err != nil {
+	if err = checkModel(b.members); err != nil {
 		return nil, err
 	}
 
@@ -79,8 +77,9 @@ func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) 
 		return nil, err
 	}
 
-	// A typed body is written compact. Only a raw one can arrive with whitespace to send.
-	if sent.body, err = compactBody(sent.body); err != nil {
+	// A typed body is written compact. Only a raw one can arrive with whitespace to send. Into a
+	// fresh slice, since the body sent unchanged is the one Bytes shows.
+	if sent.body, err = jsontext.AppendFormat(nil, sent.body, rawOptions()...); err != nil {
 		return nil, err
 	}
 
@@ -92,27 +91,26 @@ func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) 
 	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked}, nil
 }
 
-func checkJSON(body []byte) error {
-	if json.Valid(body) {
-		return nil
+func readRawBody(raw []byte) (jsonBody, error) {
+	members, err := readMembers(raw)
+	if err == nil {
+		return jsonBody{members: members, raw: raw}, nil
 	}
 
-	// Compacted only to name the fault, which json.Valid does not report.
-	_, err := compactBody(body)
+	var syntactic *jsontext.SyntacticError
 
-	return err
-}
-
-func compactBody(body []byte) ([]byte, error) {
-	// Compacted, not marshalled again. json.Marshal HTML escapes, and a caller that prepared its own
-	// body is entitled to have it forwarded as written.
-	var flat bytes.Buffer
-
-	if err := json.Compact(&flat, body); err != nil {
-		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error(), cause: err}
+	switch {
+	case errors.As(err, &syntactic) && syntactic.Err != nil:
+		return jsonBody{}, &ValidationError{Message: "the request body is not JSON: " + syntaxFault(syntactic), cause: err}
+	case errors.Is(err, io.EOF):
+		return jsonBody{}, &ValidationError{Message: "the request body is empty", cause: err}
+	case errors.Is(err, errNotObject):
+		return jsonBody{}, &ValidationError{Message: "the request body must be a JSON object, got " + rawKind(raw).phrase()}
+	case errors.Is(err, errAfterObject):
+		return jsonBody{}, &ValidationError{Message: "the request body has data after its object"}
+	default:
+		return jsonBody{}, &ValidationError{Message: "the request body is not JSON: " + err.Error(), cause: err}
 	}
-
-	return flat.Bytes(), nil
 }
 
 func checkModel(members []member) error {
@@ -182,10 +180,6 @@ func questionsIn(members []member) (Questions, error) {
 }
 
 func lastWins(b jsonBody) jsonBody {
-	if b = b.parsed(); !b.object {
-		return b
-	}
-
 	kept := lastOf(b.members)
 	if len(kept) == len(b.members) {
 		return b
@@ -216,7 +210,7 @@ func lastOf(members []member) []member {
 }
 
 func fillModel(b jsonBody, model string) jsonBody {
-	if b = b.parsed(); !b.object || model == "" || !blankModel(b.members) {
+	if model == "" || !blankModel(b.members) {
 		return b
 	}
 
@@ -229,7 +223,7 @@ func fillModel(b jsonBody, model string) jsonBody {
 }
 
 func setLongContext(b jsonBody) jsonBody {
-	if b = b.parsed(); !b.object || soleLongContext(b.members) {
+	if soleLongContext(b.members) {
 		return b
 	}
 

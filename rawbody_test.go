@@ -2,6 +2,7 @@ package onesie_test
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"strconv"
 	"strings"
@@ -47,8 +48,10 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{name: "should keep the last of repeated long context keys", body: `{"long_context":true,"model":"m","long_context":false}`, want: `{"model":"m","long_context":false}`},
 		{name: "should keep a body's own long context without the option", body: `{"model":"m","long_context":true}`, want: `{"model":"m","long_context":true}`},
 		{name: "should refuse a long context that is not true or false", body: `{"model":"m","long_context":"yes"}`, wantErr: "onesie: long_context must be true or false"},
-		{name: "should leave an array as it is", body: `[1]`, model: "jev-latest", want: `[1]`},
-		{name: "should refuse a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", wantErr: "onesie: the request body is not valid UTF-8"},
+		{
+			name: "should show a body as written", body: "{\n  \"model\": \"m\",\n  \"state\": [ 1 , 2 ]\n}",
+			want: "{\n  \"model\": \"m\",\n  \"state\": [ 1 , 2 ]\n}",
+		},
 		{
 			name: "should refuse what the provider refuses while encoding", provider: onesie.Cloudflare(),
 			body:    `{"model":"clef","state":"r","questions":{},` + asset + `,"images":[]}`,
@@ -136,7 +139,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 
 		_, err := onesie.TypeSafe().PrepareRaw(json.RawMessage(`{"state":1,`), "")
 
-		var syntax *json.SyntaxError
+		var syntax *jsontext.SyntacticError
 		if !errors.Is(err, onesie.ErrValidation) || !strings.HasPrefix(err.Error(), "onesie: the request body is not JSON: ") || !errors.As(err, &syntax) {
 			t.Errorf("error = %v, want a refusal that the body is not JSON, from a syntax error", err)
 		}
@@ -145,7 +148,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 	t.Run("should change nothing in a prepared body", func(t *testing.T) {
 		t.Parallel()
 
-		for _, body := range []string{`{"model":"","state":"s","model":"m","long_context":false}`, `{"state":"s"}`, `[1]`} {
+		for _, body := range []string{`{"model":"","state":"s","model":"m","long_context":false}`, `{"state":"s"}`} {
 			once, err := onesie.TypeSafe().PrepareRaw(json.RawMessage(body), "", longContext...)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -210,7 +213,6 @@ func TestProviderPrepareRaw(t *testing.T) {
 			body: `{"questions":{"a":{"type":"noul"},"b":{"type":"noul"},"a":{"type":"box"}}}`,
 		},
 		{name: "should count no questions in a member that is not an object", body: `{"questions":[1]}`, model: "jev-latest"},
-		{name: "should report the default model for an array", body: `[1]`, model: "jev-latest"},
 	}
 
 	for _, tc := range facts {

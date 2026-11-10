@@ -30,18 +30,13 @@ func TestEnvelope(t *testing.T) {
 			body: `{"state":"a < b & c","model":"m"}`,
 			want: `{"model":"typesafe/jev","input":{"state":"a < b & c"}}`,
 		},
-		{
-			name: "should wrap a body that is not an object as it is",
-			body: `[1]`,
-			want: `{"model":"typesafe/jev","input":[1]}`,
-		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := envelope("typesafe/jev")(newBody([]byte(tc.body)).parsed())
+			got, err := envelope("typesafe/jev")(readBody(t, tc.body))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -64,14 +59,13 @@ func TestWithoutAssets(t *testing.T) {
 		{name: "should drop empty assets", body: `{"state":"s","assets":{}}`, want: `{"state":"s"}`},
 		{name: "should drop null assets", body: `{"state":"s","assets":null}`, want: `{"state":"s"}`},
 		{name: "should leave a body without assets as it is", body: `{"state":"s" }`, want: `{"state":"s" }`},
-		{name: "should leave a body that is not an object as it is", body: `[1]`, want: `[1]`},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := withoutAssets(newBody([]byte(tc.body)).parsed()).bytes()
+			got, err := withoutAssets(readBody(t, tc.body)).bytes()
 			if err != nil || string(got) != tc.want {
 				t.Errorf("withoutAssets = %s, %v, want %s", got, err, tc.want)
 			}
@@ -160,7 +154,7 @@ func TestCloudflareRoute(t *testing.T) {
 			}
 
 			body := `{"state":"s","model":"x","questions":{},"assets":{}}`
-			sent, err := got.encode(newBody([]byte(body)).parsed())
+			sent, err := got.encode(readBody(t, body))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -179,7 +173,7 @@ func TestCloudflareRoute(t *testing.T) {
 	t.Run("should send a body naming no model as the default model", func(t *testing.T) {
 		t.Parallel()
 
-		sent, err := Cloudflare().route(cloudflareJev).encode(newBody([]byte(`{"state":"s","questions":{}}`)).parsed())
+		sent, err := Cloudflare().route(cloudflareJev).encode(readBody(t, `{"state":"s","questions":{}}`))
 		if err != nil || string(sent) != `{"model":"typesafe/jev","input":{"state":"s","questions":{}}}` {
 			t.Errorf("encode = %s, %v, want the default model's envelope", sent, err)
 		}

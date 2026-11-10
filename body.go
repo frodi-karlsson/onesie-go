@@ -7,33 +7,19 @@ import (
 	"io"
 )
 
-func newBody(raw []byte) jsonBody {
-	return jsonBody{raw: raw}
-}
+var (
+	errNotObject   = errors.New("the body is not an object")
+	errAfterObject = errors.New("the body has data after its object")
+)
 
 type jsonBody struct {
 	members []member
-	object  bool
 	raw     []byte
-	read    bool
 	changed bool
 }
 
-func (b jsonBody) parsed() jsonBody {
-	if b.read {
-		return b
-	}
-
-	members, err := readMembers(b.raw)
-	if err != nil {
-		return jsonBody{raw: b.raw, read: true}
-	}
-
-	return jsonBody{members: members, object: true, raw: b.raw, read: true}
-}
-
 func (b jsonBody) with(members []member) jsonBody {
-	return jsonBody{members: members, object: true, raw: b.raw, read: true, changed: true}
+	return jsonBody{members: members, raw: b.raw, changed: true}
 }
 
 func encodeAsIs(b jsonBody) ([]byte, error) {
@@ -58,7 +44,7 @@ func readMembers(body []byte) ([]member, error) {
 	}
 
 	if open.Kind() != '{' {
-		return nil, errors.New("the body is not an object")
+		return nil, errNotObject
 	}
 
 	var members []member
@@ -83,7 +69,7 @@ func readMembers(body []byte) ([]member, error) {
 	}
 
 	if _, err = dec.ReadToken(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("the body has data after its object")
+		return nil, errAfterObject
 	}
 
 	return members, nil

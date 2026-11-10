@@ -292,7 +292,6 @@ func TestClientSystemOneRaw(t *testing.T) {
 		{name: "should route a trimmed model", body: `{"model":" wrapped ",` + questions + `}`, want: "/wrapped"},
 		{name: "should route a body with no model on the default model", body: `{` + questions + `}`, want: "/plain"},
 		{name: "should route a blank model on the default model", body: `{"model":"  ",` + questions + `}`, want: "/plain"},
-		{name: "should route a top level that is not an object on the default model", body: `[1]`, want: "/plain"},
 	}
 
 	for _, tc := range routes {

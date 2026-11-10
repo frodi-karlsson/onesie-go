@@ -3,7 +3,7 @@ package onesie
 import "slices"
 
 func withoutLongContext(b jsonBody) jsonBody {
-	if b = b.parsed(); !b.object || !slices.ContainsFunc(b.members, named("long_context")) {
+	if !slices.ContainsFunc(b.members, named("long_context")) {
 		return b
 	}
 
