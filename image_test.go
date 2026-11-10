@@ -3,6 +3,7 @@ package onesie_test
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -14,26 +15,28 @@ func TestNewImage(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		data       func(t *testing.T) []byte
+		data       func(t testing.TB) []byte
 		wantFormat string
 		wantErr    string
+		wantCause  error
 	}{
 		{name: "should read a png", data: squarePNG, wantFormat: "png"},
 		{name: "should read a png of one plain colour", data: emptyPNG, wantFormat: "png"},
 		{name: "should read a jpeg as jpg", data: squareJPEG, wantFormat: "jpg"},
 		{
 			name:    "should refuse bytes that are neither png nor jpeg",
-			data:    func(*testing.T) []byte { return []byte("GIF89a not an image") },
+			data:    func(testing.TB) []byte { return []byte("GIF89a not an image") },
 			wantErr: "an image must be PNG or JPEG",
 		},
 		{
-			name:    "should refuse a png whose header is cut short",
-			data:    func(t *testing.T) []byte { return squarePNG(t)[:12] },
-			wantErr: "the PNG header cannot be read",
+			name:      "should refuse a png whose header is cut short",
+			data:      func(t testing.TB) []byte { return squarePNG(t)[:12] },
+			wantErr:   "the PNG header cannot be read",
+			wantCause: io.ErrUnexpectedEOF,
 		},
 		{
 			name:    "should refuse empty bytes",
-			data:    func(*testing.T) []byte { return nil },
+			data:    func(testing.TB) []byte { return nil },
 			wantErr: "an image must be PNG or JPEG",
 		},
 	}
@@ -46,6 +49,10 @@ func TestNewImage(t *testing.T) {
 			if tc.wantErr != "" {
 				if !errors.Is(err, onesie.ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want a validation error containing %q", err, tc.wantErr)
+				}
+
+				if tc.wantCause != nil && !errors.Is(err, tc.wantCause) {
+					t.Errorf("error = %v, want it to carry %v", err, tc.wantCause)
 				}
 
 				return

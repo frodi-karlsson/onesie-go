@@ -1,0 +1,1 @@
+{"state":"s","model":"sage-latest","questions":{"mood":{"type":"score","instructions":"how cross","criteria":["calm","annoyed","furious"]}}}

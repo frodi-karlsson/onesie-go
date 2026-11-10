@@ -3,6 +3,7 @@ package onesie
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -250,9 +252,7 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	req.Model = modelOr(req.Model, c.defaultModel)
-
-	sent, err := c.provider.validated(req, cfg.longContext)
+	sent, _, err := c.provider.validated(c.withModel(req), cfg.longContext)
 	if err != nil {
 		return nil, err
 	}
@@ -265,11 +265,44 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 	return c.checkedResult(res, decoded, req.Questions)
 }
 
-// SendPrepared sends a body PrepareRaw prepared for this client's provider without preparing it again,
-// and returns its checked result and the response body as the route decoded it, on one line.
+func (c *Client) withModel(req Request) Request {
+	req.Model = modelOr(req.Model, c.defaultModel)
+
+	return req
+}
+
+// Prepare validates and encodes req once, as SystemOne would, for SendPrepared. Of opts only
+// WithLongContext applies. A cache keys on Bytes, the provider, the base URL and WithHeader headers.
+func (c *Client) Prepare(req Request, opts ...RequestOption) (*PreparedBody, error) {
+	cfg, err := c.resolve(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	req = c.withModel(req)
+
+	sent, body, err := c.provider.validated(req, cfg.longContext)
+	if err != nil {
+		return nil, err
+	}
+
+	shown := body
+	if sent.needs.longContext {
+		if shown, err = setLongContext(newBody(body)).bytes(); err != nil {
+			return nil, err
+		}
+	}
+
+	return &PreparedBody{
+		provider: c.provider.name, shown: shown, sent: sent, model: req.Model, asked: slices.Clone(req.Questions),
+	}, nil
+}
+
+// SendPrepared sends a body Prepare or PrepareRaw prepared for this client's provider without preparing
+// it again, and returns its checked result and the response body as the route decoded it, on one line.
 func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...RequestOption) (*Result, json.RawMessage, error) {
 	if body == nil {
-		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Provider.PrepareRaw"}
+		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Client.Prepare or Provider.PrepareRaw"}
 	}
 
 	if body.provider != c.provider.name {
@@ -283,7 +316,7 @@ func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...R
 	}
 
 	if cfg.longContext {
-		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw"}
+		return nil, nil, &ValidationError{Message: "long context is fixed when the body is prepared. Pass WithLongContext to Prepare or PrepareRaw"}
 	}
 
 	res, decoded, err := c.send(ctx, cfg, body.sent)
@@ -360,25 +393,26 @@ func billedUsage(decoded []byte) *Usage {
 	return billed.Usage
 }
 
-// MarshalBody encodes a request as a raw body SystemOneRaw accepts.
+// MarshalBody encodes a request as a raw body SystemOneRaw accepts. State, instructions and criteria
+// are encoded with encoding/json/v2's defaults, so omitempty keeps a zero number or false.
 func MarshalBody(req Request) ([]byte, error) {
-	return json.Marshal(struct {
+	return jsonv2.Marshal(struct {
 		State       any       `json:"state"`
 		Model       string    `json:"model"`
 		Questions   Questions `json:"questions"`
-		LongContext bool      `json:"long_context,omitempty"`
+		LongContext bool      `json:"long_context,omitzero"`
 		Assets      Assets    `json:"assets,omitempty"`
-	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets})
+	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets}, bodyOptions)
 }
 
 // MarshalQuestionsBody encodes req's model and questions with no state key, since a null state is a
 // state. LongContext adds long_context, and the assets are left out.
 func MarshalQuestionsBody(req Request) ([]byte, error) {
-	return json.Marshal(struct {
+	return jsonv2.Marshal(struct {
 		Model       string    `json:"model"`
 		Questions   Questions `json:"questions"`
-		LongContext bool      `json:"long_context,omitempty"`
-	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext})
+		LongContext bool      `json:"long_context,omitzero"`
+	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext}, bodyOptions)
 }
 
 // Request is one evaluation, whose questions all see the same state and are answered independently.

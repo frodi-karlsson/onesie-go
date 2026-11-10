@@ -181,6 +181,52 @@ func TestValidateRequest(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should measure a body with images against the limit, leaving long context out", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range []struct {
+			size        int
+			longContext bool
+			refused     bool
+		}{
+			{size: onesie.MaxBodyBytes, longContext: true},
+			{size: onesie.MaxBodyBytes + 1, refused: true},
+		} {
+			err := onesie.ValidateRequest(requestOfSize(t, tc.size, "", tc.longContext))
+			if refused := errors.Is(err, onesie.ErrValidation); refused != tc.refused {
+				t.Errorf("ValidateRequest at %d bytes with long context %v = %v, want refused %v", tc.size, tc.longContext, err, tc.refused)
+			}
+		}
+	})
+}
+
+func requestOfSize(t testing.TB, size int, model string, longContext bool) onesie.Request {
+	t.Helper()
+
+	state := map[string]any{"photo": "image-a", "other": "image-b", "pad": ""}
+	req := onesie.Request{
+		Model: model, State: state, Questions: oneNoul(),
+		Assets: onesie.Assets{"image-a": {Format: "png"}, "image-b": {Format: "png"}},
+	}
+
+	empty, err := onesie.MarshalBody(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An image is read only for its header, so a real PNG followed by zero bytes passes validation, and
+	// two of them reach the size limit faster than a long string, which the encoder checks byte by byte.
+	// Each grows by a multiple of 3 bytes, 4 in base64, and the state takes the 0 to 7 bytes left.
+	raw := (size - len(empty)) / 8 * 3
+	data := make([]byte, raw)
+	copy(data, squarePNG(t))
+
+	req.Assets = onesie.Assets{"image-a": {Format: "png", Data: data}, "image-b": {Format: "png", Data: data}}
+	state["pad"] = strings.Repeat("a", size-len(empty)-raw/3*8)
+	req.LongContext = longContext
+
+	return req
 }
 
 func TestUnreferencedAssets(t *testing.T) {

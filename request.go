@@ -1,8 +1,7 @@
 package onesie
 
 import (
-	"encoding/base64"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"maps"
 	"slices"
@@ -14,9 +13,26 @@ const (
 	maxAllReferencesBytes = 65536
 )
 
-// ValidateRequest refuses a request the API would refuse, before it is sent. It checks the
-// questions, then the assets, then the size of the body.
+// ValidateRequest refuses a request the API would refuse: its questions, its assets, then the size of
+// a body with images, measured with the model as given rather than a client's default.
 func ValidateRequest(req Request) error {
+	if err := checkRequest(req); err != nil {
+		return err
+	}
+
+	if len(req.Assets) == 0 {
+		return nil
+	}
+
+	body, err := marshalRequest(req, req.Model)
+	if err != nil {
+		return err
+	}
+
+	return checkBodySize(len(body))
+}
+
+func checkRequest(req Request) error {
 	if err := ValidateQuestions(req.Questions); err != nil {
 		return err
 	}
@@ -35,7 +51,7 @@ func ValidateRequest(req Request) error {
 		}
 	}
 
-	return checkBodySize(req)
+	return nil
 }
 
 // ValidateImage refuses an image the API would refuse, naming it in the message. It checks the
@@ -137,10 +153,10 @@ func UnreferencedAssets(req Request) ([]string, error) {
 
 func stringValues(req Request) ([]string, error) {
 	// Through JSON, so a state of any Go type, a json.RawMessage included, is walked as a raw body is.
-	encoded, err := json.Marshal(struct {
+	encoded, err := jsonv2.Marshal(struct {
 		State     any       `json:"state"`
 		Questions Questions `json:"questions"`
-	}{State: req.State, Questions: req.Questions})
+	}{State: req.State, Questions: req.Questions}, bodyOptions)
 	if err != nil {
 		return nil, unencodable(err)
 	}
@@ -162,23 +178,14 @@ func stringValues(req Request) ([]string, error) {
 }
 
 func unencodable(err error) error {
-	return &ValidationError{Message: "the request cannot be encoded: " + err.Error()}
+	return &ValidationError{Message: "the request cannot be encoded: " + err.Error(), cause: err}
 }
 
 func sideFits(side int) bool {
 	return side >= MinImageSide && side <= MaxImageSide
 }
 
-func checkBodySize(req Request) error {
-	if len(req.Assets) == 0 {
-		return nil
-	}
-
-	size, err := bodySize(req)
-	if err != nil {
-		return err
-	}
-
+func checkBodySize(size int) error {
 	if size > MaxBodyBytes {
 		return &ValidationError{Message: fmt.Sprintf(
 			"the request body is %d bytes, and the API takes at most %d. Send fewer or smaller images",
@@ -186,23 +193,4 @@ func checkBodySize(req Request) error {
 	}
 
 	return nil
-}
-
-func bodySize(req Request) (int, error) {
-	hollow := make(Assets, len(req.Assets))
-	data := 0
-
-	for ref, img := range req.Assets {
-		hollow[ref] = Image{Format: img.Format}
-		data += base64.StdEncoding.EncodedLen(len(img.Data))
-	}
-
-	req.Assets = hollow
-
-	rest, err := MarshalBody(req)
-	if err != nil {
-		return 0, unencodable(err)
-	}
-
-	return len(rest) + data, nil
 }

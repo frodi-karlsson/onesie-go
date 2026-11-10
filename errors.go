@@ -338,7 +338,8 @@ type ValidationError struct {
 	Question string
 	Message  string
 
-	kind error
+	kind  error
+	cause error
 }
 
 // Error is Reason with the package prefix.
@@ -354,6 +355,12 @@ func (e *ValidationError) Reason() string {
 // Is matches ErrValidation, and the more specific sentinel the refusal carries.
 func (e *ValidationError) Is(target error) bool {
 	return target == ErrValidation || (e.kind != nil && target == e.kind)
+}
+
+// Unwrap returns the error behind the refusal, such as the encoding error of a request that
+// cannot be encoded, or nil.
+func (e *ValidationError) Unwrap() error {
+	return e.cause
 }
 
 // AnswerError reports an answer that is absent or of another type.

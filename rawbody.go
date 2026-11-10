@@ -35,7 +35,7 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 	}
 
 	model := modelOr(defaultModel, p.defaultModel)
-	b := fillModel(lastWins(parseBody(raw)), model)
+	b := fillModel(lastWins(newBody(raw).parsed()), model)
 
 	if err := checkModel(b.members); err != nil {
 		return nil, err
@@ -108,8 +108,8 @@ func checkModel(members []member) error {
 	return nil
 }
 
-// PreparedBody is a raw body PrepareRaw checked and encoded for one provider, which SendPrepared
-// sends as it is. Its facts are the ones that send uses.
+// PreparedBody is a body Client.Prepare or Provider.PrepareRaw checked and encoded for one provider,
+// which SendPrepared sends as it is. Its facts are the ones that send uses.
 type PreparedBody struct {
 	provider string
 	shown    []byte
@@ -159,7 +159,7 @@ func questionsIn(members []member) (Questions, error) {
 }
 
 func lastWins(b jsonBody) jsonBody {
-	if !b.object {
+	if b = b.parsed(); !b.object {
 		return b
 	}
 
@@ -193,7 +193,7 @@ func lastOf(members []member) []member {
 }
 
 func fillModel(b jsonBody, model string) jsonBody {
-	if !b.object || model == "" || !blankModel(b.members) {
+	if b = b.parsed(); !b.object || model == "" || !blankModel(b.members) {
 		return b
 	}
 
@@ -202,15 +202,26 @@ func fillModel(b jsonBody, model string) jsonBody {
 		return b
 	}
 
-	return b.with(replaceMembers(b.members, member{name: "model", value: name}, true))
+	return b.with(replaceMembers(b.members, member{name: "model", value: name}))
 }
 
 func setLongContext(b jsonBody) jsonBody {
-	if !b.object || soleLongContext(b.members) {
+	if b = b.parsed(); !b.object || soleLongContext(b.members) {
 		return b
 	}
 
-	return b.with(replaceMembers(b.members, member{name: "long_context", value: jsontext.Value("true")}, false))
+	longContext := member{name: "long_context", value: jsontext.Value("true")}
+	if slices.ContainsFunc(b.members, named("long_context")) {
+		return b.with(replaceMembers(b.members, longContext))
+	}
+
+	// Before the assets, where MarshalBody writes it, so a prepared body reads as MarshalBody's would.
+	at := slices.IndexFunc(b.members, named("assets"))
+	if at < 0 {
+		at = len(b.members)
+	}
+
+	return b.with(slices.Insert(slices.Clone(b.members), at, longContext))
 }
 
 func blankModel(members []member) bool {
@@ -249,16 +260,9 @@ func soleLongContext(members []member) bool {
 	return found == 1
 }
 
-func replaceMembers(members []member, replacement member, first bool) []member {
-	at := slices.IndexFunc(members, named(replacement.name))
+func replaceMembers(members []member, replacement member) []member {
+	at := max(slices.IndexFunc(members, named(replacement.name)), 0)
 	kept := slices.DeleteFunc(slices.Clone(members), named(replacement.name))
 
-	switch {
-	case at >= 0:
-		return slices.Insert(kept, at, replacement)
-	case first:
-		return slices.Insert(kept, 0, replacement)
-	default:
-		return append(kept, replacement)
-	}
+	return slices.Insert(kept, at, replacement)
 }

@@ -111,7 +111,7 @@ func compactBody(body []byte) ([]byte, error) {
 	var flat bytes.Buffer
 
 	if err := json.Compact(&flat, body); err != nil {
-		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error()}
+		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error(), cause: err}
 	}
 
 	return flat.Bytes(), nil
@@ -181,7 +181,7 @@ func (c *Client) newRequest(
 
 	req, err := http.NewRequestWithContext(actx, sent.method, target, reader)
 	if err != nil {
-		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error()}
+		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error(), cause: err}
 	}
 
 	c.setHeaders(req, header, sent, attempt, payload != nil)

@@ -1,0 +1,1 @@
+{"state":"s","model":"jev-latest","questions":{"urgent":{"type":"noul","instructions":"is this urgent"},"team":{"type":"choice","instructions":"which team","criteria":{"a":null,"b":null}},"mood":{"type":"score","instructions":"how cross","criteria":["calm","furious"]}}}

@@ -89,7 +89,7 @@ func configOf(format string, data []byte) (image.Config, error) {
 
 	config, err := decode(bytes.NewReader(data))
 	if err != nil {
-		return image.Config{}, &ValidationError{Message: "the " + name + " header cannot be read: " + err.Error()}
+		return image.Config{}, &ValidationError{Message: "the " + name + " header cannot be read: " + err.Error(), cause: err}
 	}
 
 	return config, nil

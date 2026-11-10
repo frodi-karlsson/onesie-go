@@ -41,7 +41,7 @@ func TestEnvelope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := envelope("typesafe/jev")(parseBody([]byte(tc.body)))
+			got, err := envelope("typesafe/jev")(newBody([]byte(tc.body)).parsed())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -71,7 +71,7 @@ func TestWithoutAssets(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := withoutAssets(parseBody([]byte(tc.body))).bytes()
+			got, err := withoutAssets(newBody([]byte(tc.body)).parsed()).bytes()
 			if err != nil || string(got) != tc.want {
 				t.Errorf("withoutAssets = %s, %v, want %s", got, err, tc.want)
 			}
@@ -160,7 +160,7 @@ func TestCloudflareRoute(t *testing.T) {
 			}
 
 			body := `{"state":"s","model":"x","questions":{},"assets":{}}`
-			sent, err := got.encode(parseBody([]byte(body)))
+			sent, err := got.encode(newBody([]byte(body)).parsed())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -179,7 +179,7 @@ func TestCloudflareRoute(t *testing.T) {
 	t.Run("should send a body naming no model as the default model", func(t *testing.T) {
 		t.Parallel()
 
-		sent, err := Cloudflare().route(cloudflareJev).encode(parseBody([]byte(`{"state":"s","questions":{}}`)))
+		sent, err := Cloudflare().route(cloudflareJev).encode(newBody([]byte(`{"state":"s","questions":{}}`)).parsed())
 		if err != nil || string(sent) != `{"model":"typesafe/jev","input":{"state":"s","questions":{}}}` {
 			t.Errorf("encode = %s, %v, want the default model's envelope", sent, err)
 		}

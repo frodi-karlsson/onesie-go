@@ -7,24 +7,33 @@ import (
 	"io"
 )
 
-func parseBody(raw []byte) jsonBody {
-	members, err := readMembers(raw)
-	if err != nil {
-		return jsonBody{raw: raw}
-	}
-
-	return jsonBody{members: members, object: true, raw: raw}
+func newBody(raw []byte) jsonBody {
+	return jsonBody{raw: raw}
 }
 
 type jsonBody struct {
 	members []member
 	object  bool
 	raw     []byte
+	read    bool
 	changed bool
 }
 
+func (b jsonBody) parsed() jsonBody {
+	if b.read {
+		return b
+	}
+
+	members, err := readMembers(b.raw)
+	if err != nil {
+		return jsonBody{raw: b.raw, read: true}
+	}
+
+	return jsonBody{members: members, object: true, raw: b.raw, read: true}
+}
+
 func (b jsonBody) with(members []member) jsonBody {
-	return jsonBody{members: members, object: true, raw: b.raw, changed: true}
+	return jsonBody{members: members, object: true, raw: b.raw, read: true, changed: true}
 }
 
 func encodeAsIs(b jsonBody) ([]byte, error) {
@@ -32,7 +41,7 @@ func encodeAsIs(b jsonBody) ([]byte, error) {
 }
 
 func (b jsonBody) bytes() ([]byte, error) {
-	if !b.object || !b.changed {
+	if !b.changed {
 		return b.raw, nil
 	}
 
@@ -119,8 +128,12 @@ func writeMembers(members []member) ([]byte, error) {
 		return nil, err
 	}
 
-	// The encoder ends a top level value with a newline, which a request body does not need.
-	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
+	return withoutNewline(out.Bytes()), nil
+}
+
+func withoutNewline(encoded []byte) []byte {
+	// jsontext.Encoder ends each top level value with a newline, which a request body does not need.
+	return bytes.TrimSuffix(encoded, []byte("\n"))
 }
 
 func encodedSize(members []member) (int, error) {

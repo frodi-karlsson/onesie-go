@@ -6,13 +6,18 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -2379,6 +2384,248 @@ func TestClientSystemOne(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("should send each corpus case through each route as its golden records", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			for _, route := range encodeRoutes() {
+				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
+					_, err := client.SystemOne(t.Context(), req)
+
+					return err
+				})
+				checkEncodeGolden(t, tc.name, route.name, sent, err)
+			}
+		}
+	})
+
+	t.Run("should send a body with images at the limit, measured with its resolved model", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			_, _ = io.Copy(io.Discard, r.Body)
+			_, _ = io.WriteString(w, `{"model":"m","answers":{"q":{"type":"noul","noul":0.5}}}`)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL)
+		req := requestOfSize(t, onesie.MaxBodyBytes, client.DefaultModel(), true)
+		req.Model = ""
+
+		if _, err := client.SystemOne(t.Context(), req); err != nil || calls.Load() != 1 {
+			t.Errorf("SystemOne at the limit = %v after %d calls, want it sent once", err, calls.Load())
+		}
+	})
+
+	t.Run("should refuse an oversized body with images on berget by its size before its route", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(onesie.Berget()))
+
+		_, err := client.SystemOne(t.Context(), requestOfSize(t, onesie.MaxBodyBytes+1, client.DefaultModel(), false))
+		if err == nil || !strings.Contains(err.Error(), "the request body is 33554433 bytes") {
+			t.Errorf("error = %v, want the size refusal", err)
+		}
+	})
+}
+
+func TestClientPrepare(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should send what SystemOne sends through each route", func(t *testing.T) {
+		t.Parallel()
+
+		if *updateEncode {
+			t.Skip("the goldens are being rewritten from SystemOne")
+		}
+
+		for _, tc := range encodeCorpus(t) {
+			if tc.name != "noul-image" {
+				continue
+			}
+
+			for _, route := range encodeRoutes() {
+				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
+					prepared, err := client.Prepare(req)
+					if err != nil {
+						return err
+					}
+
+					_, _, err = client.SendPrepared(t.Context(), prepared)
+
+					return err
+				})
+				checkEncodeGolden(t, tc.name, route.name, sent, err)
+			}
+		}
+	})
+
+	t.Run("should send the encoded body as it is on a route that does not rewrite it", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			if len(tc.req.Assets) > 0 || tc.req.LongContext {
+				continue
+			}
+
+			for _, route := range encodeRoutes() {
+				// Cloudflare wraps every body in an envelope, so it is the one route that always rewrites.
+				if route.provider.Name() == onesie.Cloudflare().Name() {
+					continue
+				}
+
+				var prepared *onesie.PreparedBody
+
+				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
+					var err error
+					if prepared, err = client.Prepare(req); err != nil {
+						return err
+					}
+
+					_, _, err = client.SendPrepared(t.Context(), prepared)
+
+					return err
+				})
+				if err != nil {
+					continue
+				}
+
+				if !bytes.Equal(sent, prepared.Bytes()) {
+					t.Errorf("%s through %s sent %s, want the encoded body %s", tc.name, route.name, sent, prepared.Bytes())
+				}
+			}
+		}
+	})
+
+	t.Run("should report the body MarshalBody writes before any route rewrites it, with its model and long context", func(t *testing.T) {
+		t.Parallel()
+
+		var checked int
+
+		for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.Cloudflare()} {
+			client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(provider))
+
+			for _, tc := range encodeCorpus(t) {
+				for _, longContext := range []bool{false, true} {
+					var opts []onesie.RequestOption
+					if longContext {
+						opts = append(opts, onesie.WithLongContext())
+					}
+
+					prepared, err := client.Prepare(tc.req, opts...)
+					if err != nil {
+						continue
+					}
+
+					resolved := tc.req
+					resolved.Model = client.DefaultModel()
+					resolved.LongContext = tc.req.LongContext || longContext
+
+					want, err := onesie.MarshalBody(resolved)
+					if err != nil || !bytes.Equal(prepared.Bytes(), want) ||
+						prepared.Model() != resolved.Model || prepared.LongContext() != resolved.LongContext {
+						t.Errorf("%s %s with long context %v: Bytes = %s, Model = %q, LongContext = %v, want %s, %q and %v",
+							provider.Name(), tc.name, longContext, prepared.Bytes(), prepared.Model(), prepared.LongContext(),
+							want, resolved.Model, resolved.LongContext)
+					}
+
+					checked++
+				}
+			}
+		}
+
+		if checked == 0 {
+			t.Fatal("no corpus case prepared")
+		}
+	})
+
+	t.Run("should keep its questions when the caller changes them afterwards", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			_, _ = io.WriteString(w, `{"model":"m","answers":{"q":{"type":"noul","noul":0.5}}}`)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL)
+		questions := oneNoul()
+
+		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: questions})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		questions[0].ID = "changed"
+
+		result, _, err := client.SendPrepared(t.Context(), prepared)
+		if err != nil {
+			t.Fatalf("SendPrepared = %v, want the answer to the question as prepared", err)
+		}
+
+		if _, err := result.Noul("q"); err != nil {
+			t.Errorf("Noul(q) = %v, want the prepared question answered", err)
+		}
+	})
+
+	t.Run("should refuse what SystemOne refuses, with the same error", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		withImage := onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}}
+
+		for _, tc := range []struct {
+			name     string
+			provider onesie.Provider
+			req      onesie.Request
+			opts     []onesie.RequestOption
+		}{
+			{name: "invalid questions", provider: onesie.TypeSafe(), req: onesie.Request{State: "s"}},
+			{name: "an unencodable state", provider: onesie.TypeSafe(), req: onesie.Request{State: math.NaN(), Questions: oneNoul()}},
+			{name: "images on berget", provider: onesie.Berget(), req: withImage},
+			{name: "a box on levanto", provider: onesie.Levanto(), req: onesie.Request{
+				State: "image-a", Assets: withImage.Assets,
+				Questions: onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug"}}},
+			}},
+			{
+				name: "long context on cloudflare", provider: onesie.Cloudflare(),
+				req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()},
+			},
+		} {
+			client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(tc.provider))
+
+			_, prepareErr := client.Prepare(tc.req, tc.opts...)
+			_, sendErr := client.SystemOne(t.Context(), tc.req, tc.opts...)
+
+			if prepareErr == nil || sendErr == nil || prepareErr.Error() != sendErr.Error() {
+				t.Errorf("%s: Prepare = %v, SystemOne = %v, want the same refusal", tc.name, prepareErr, sendErr)
+			}
+		}
+	})
+
+	t.Run("should refuse WithLongContext on SendPrepared for a body from Prepare", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1")
+
+		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, _, err = client.SendPrepared(t.Context(), prepared, onesie.WithLongContext())
+		if !errors.Is(err, onesie.ErrValidation) {
+			t.Errorf("error = %v, want ErrValidation", err)
+		}
+	})
 }
 
 func TestClientListModels(t *testing.T) {
@@ -3836,7 +4083,7 @@ func TestClientSendPrepared(t *testing.T) {
 		{
 			name:    "should refuse a nil body",
 			body:    func(*testing.T, *onesie.Client) *onesie.PreparedBody { return nil },
-			wantErr: "onesie: the prepared body is nil. Use Provider.PrepareRaw",
+			wantErr: "onesie: the prepared body is nil. Use Client.Prepare or Provider.PrepareRaw",
 		},
 		{
 			name: "should refuse a body prepared for another provider",
@@ -3855,7 +4102,7 @@ func TestClientSendPrepared(t *testing.T) {
 				return prepare(t, onesie.TypeSafe(), client, asked)
 			},
 			opts:    []onesie.RequestOption{onesie.WithLongContext()},
-			wantErr: "onesie: long context is fixed when the body is prepared. Pass WithLongContext to PrepareRaw",
+			wantErr: "onesie: long context is fixed when the body is prepared. Pass WithLongContext to Prepare or PrepareRaw",
 		},
 	}
 
@@ -4220,6 +4467,167 @@ func TestMarshalBody(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should encode each corpus case as its golden records", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			got, err := onesie.MarshalBody(tc.req)
+			checkEncodeGolden(t, tc.name, "marshal-body", got, err)
+		}
+	})
+
+	t.Run("should keep a golden directory only for a case in the corpus", func(t *testing.T) {
+		t.Parallel()
+
+		dirs, err := os.ReadDir(filepath.Join("testdata", "encode"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cases := map[string]bool{}
+		for _, tc := range encodeCorpus(t) {
+			cases[tc.name] = true
+		}
+
+		for _, dir := range dirs {
+			if !cases[dir.Name()] {
+				t.Errorf("testdata/encode/%s has no case in the corpus, remove it", dir.Name())
+			}
+		}
+	})
+
+	t.Run("should encode each corpus case to the same bytes every time", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			first, err := onesie.MarshalBody(tc.req)
+			if err != nil {
+				continue
+			}
+
+			for range 50 {
+				if again, _ := onesie.MarshalBody(tc.req); !bytes.Equal(again, first) {
+					t.Fatalf("%s encoded to %s, then to %s", tc.name, first, again)
+				}
+			}
+		}
+	})
+}
+
+func BenchmarkMarshalBody(b *testing.B) {
+	for _, tc := range benchCases(b) {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for b.Loop() {
+				if _, err := onesie.MarshalBody(tc.req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkClientSystemOne(b *testing.B) {
+	for _, tc := range benchCases(b) {
+		b.Run(tc.name, func(b *testing.B) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.response)
+			}))
+			defer server.Close()
+
+			client, err := onesie.New(
+				onesie.WithEnv(func(string) (string, bool) { return "", false }), onesie.WithAPIKey("sk-test"),
+				onesie.WithBaseURL(server.URL), onesie.WithProvider(tc.provider),
+			)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+
+			for b.Loop() {
+				if _, err := client.SystemOne(b.Context(), tc.req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkClientPrepare(b *testing.B) {
+	for _, tc := range benchCases(b) {
+		b.Run(tc.name, func(b *testing.B) {
+			client, err := onesie.New(
+				onesie.WithEnv(func(string) (string, bool) { return "", false }), onesie.WithAPIKey("sk-test"),
+				onesie.WithBaseURL("http://127.0.0.1:1"), onesie.WithProvider(tc.provider),
+			)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+
+			for b.Loop() {
+				if _, err := client.Prepare(tc.req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func benchCases(b *testing.B) []benchCase {
+	b.Helper()
+
+	square, err := onesie.NewImage(squarePNG(b))
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	shellSafety := onesie.Questions{
+		{ID: "destroys", Question: onesie.Noul{
+			Instructions: "would running exactly this command destroy data that would be hard to get back",
+			Criteria: &onesie.NoulCriteria{
+				True:  "running this exact command destroys data that would be hard to restore",
+				False: "printing or quoting a command is not running it",
+			},
+		}},
+		{ID: "secrets", Question: onesie.Noul{Instructions: "does this command send credentials or secrets to another machine"}},
+		{ID: "network", Question: onesie.Noul{Instructions: "does this command reach the network"}},
+	}
+	state := strings.Repeat("the server is down and billing charged me twice please refund the order ", 2)
+	answers := `{"model":"m","answers":{"destroys":{"type":"noul","noul":0.1},"secrets":{"type":"noul","noul":0.02},` +
+		`"network":{"type":"noul","noul":0.3}},"usage":{"input_tokens":120,"output_tokens":6}}`
+	urgent := onesie.Questions{{ID: "urgent", Question: onesie.Noul{Instructions: "is this photo urgent"}}}
+	urgentAnswer := `{"model":"m","answers":{"urgent":{"type":"noul","noul":0.5}},"usage":{"input_tokens":9,"output_tokens":1}}`
+	withPhoto := onesie.Request{State: map[string]any{"photo": "image-a"}, Questions: urgent, Assets: onesie.Assets{"image-a": square}}
+
+	return []benchCase{
+		{
+			name: "typesafe shell-safety", provider: onesie.TypeSafe(), response: answers,
+			req: onesie.Request{State: state, Questions: shellSafety},
+		},
+		{name: "openrouter image", provider: onesie.OpenRouter(), response: urgentAnswer, req: withPhoto},
+		{
+			name: "cloudflare", provider: onesie.Cloudflare(),
+			response: `{"result":{"state":"Completed","result":` + answers + `},"success":true}`,
+			req:      onesie.Request{State: state, Questions: shellSafety, Model: "typesafe/jev"},
+		},
+		{
+			name: "cloudflare clef image", provider: onesie.Cloudflare(),
+			response: `{"result":` + urgentAnswer + `,"success":true}`,
+			req:      onesie.Request{State: withPhoto.State, Questions: urgent, Assets: withPhoto.Assets, Model: "clef"},
+		},
+	}
+}
+
+type benchCase struct {
+	name     string
+	provider onesie.Provider
+	response string
+	req      onesie.Request
 }
 
 func TestMarshalQuestionsBody(t *testing.T) {
@@ -4268,8 +4676,9 @@ func TestMarshalQuestionsBody(t *testing.T) {
 			Criteria: onesie.Criteria{{Name: "a", Desc: make(chan int)}},
 		}}}}
 
-		if _, err := onesie.MarshalQuestionsBody(req); err == nil || !strings.Contains(err.Error(), "unsupported type: chan int") {
-			t.Fatalf("error = %v, want an unsupported type", err)
+		var semantic *jsonv2.SemanticError
+		if _, err := onesie.MarshalQuestionsBody(req); !errors.As(err, &semantic) || semantic.GoType != reflect.TypeFor[chan int]() {
+			t.Fatalf("error = %v, want an encoding error on Go chan int", err)
 		}
 	})
 }
