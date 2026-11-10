@@ -26,12 +26,9 @@ func ValidateRequest(req Request) error {
 		return nil
 	}
 
-	body, err := marshalRequest(req, req.Model)
-	if err != nil {
-		return err
-	}
+	_, err := checkedBody(req, req.Model)
 
-	return checkBodySize(len(body))
+	return err
 }
 
 func checkRequest(req Request) error {
@@ -43,46 +40,31 @@ func checkRequest(req Request) error {
 		return err
 	}
 
-	if err := checkReferences(req); err != nil {
+	if err := checkReferenceNames(req.Assets); err != nil {
 		return err
 	}
 
 	for _, ref := range slices.Sorted(maps.Keys(req.Assets)) {
-		if err := ValidateImage(ref, req.Assets[ref]); err != nil {
-			return err
+		if !req.Assets[ref].built() {
+			return &ValidationError{Message: fmt.Sprintf("image '%s' was not built with NewImage", printable(ref))}
 		}
 	}
 
 	return nil
 }
 
-// ValidateImage refuses an image the API would refuse, naming it in the message. It checks the
-// format, the file size and the sides, reading only the file's header.
-func ValidateImage(name string, img Image) error {
-	if fault := checkFormat(name, img.Format); fault != nil {
-		return fault
+func checkedBody(req Request, model string) (jsonBody, error) {
+	// Long context travels as a header, so the body never carries it.
+	body, err := bodyOf(Request{State: req.State, Questions: req.Questions, Assets: req.Assets}, model, wholeBody)
+	if err != nil || len(req.Assets) == 0 {
+		return body, err
 	}
 
-	format := wireFormat(img.Format)
-
-	if len(img.Data) > MaxImageBytes {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' is %d bytes, and an image is at most %d. Resize it to at most %d pixels a side "+
-				"or save it as a smaller JPEG", printable(name), len(img.Data), MaxImageBytes, MaxImageSide)}
+	if err = checkReferenced(body.members, req.Assets); err != nil {
+		return jsonBody{}, err
 	}
 
-	config, err := configOf(format, img.Data)
-	if err != nil {
-		return err
-	}
-
-	if !sideFits(config.Width) || !sideFits(config.Height) {
-		return &ValidationError{Message: fmt.Sprintf(
-			"image '%s' is %d by %d pixels, and each side must be %d to %d. Resize it first",
-			printable(name), config.Width, config.Height, MinImageSide, MaxImageSide)}
-	}
-
-	return nil
+	return body, checkBodySize(len(body.raw))
 }
 
 func checkBoxes(req Request) error {
@@ -102,12 +84,8 @@ func checkBoxes(req Request) error {
 	return nil
 }
 
-func checkReferences(req Request) error {
-	if len(req.Assets) == 0 {
-		return nil
-	}
-
-	refs := slices.Sorted(maps.Keys(req.Assets))
+func checkReferenceNames(assets Assets) error {
+	refs := slices.Sorted(maps.Keys(assets))
 	total := 0
 
 	for _, ref := range refs {
@@ -130,12 +108,16 @@ func checkReferences(req Request) error {
 			total, maxAllReferencesBytes)}
 	}
 
-	missing, err := UnreferencedAssets(req)
+	return nil
+}
+
+func checkReferenced(members []member, assets Assets) error {
+	texts, err := textsOf(members)
 	if err != nil {
 		return err
 	}
 
-	if len(missing) > 0 {
+	if missing := unreferenced(texts, slices.Sorted(maps.Keys(assets))); len(missing) > 0 {
 		return notReferenced(missing[0])
 	}
 
@@ -145,7 +127,13 @@ func checkReferences(req Request) error {
 // UnreferencedAssets lists, sorted, the references no string value of the state or questions names.
 // At each place in a text the longest reference starting there counts, so one inside a longer one does not.
 func UnreferencedAssets(req Request) ([]string, error) {
-	texts, err := stringValues(req)
+	// Through JSON, so a state of any Go type, a json.RawMessage included, is walked as a raw body is.
+	body, err := bodyOf(Request{State: req.State, Questions: req.Questions}, "", wholeBody)
+	if err != nil {
+		return nil, err
+	}
+
+	texts, err := textsOf(body.members)
 	if err != nil {
 		return nil, err
 	}
@@ -153,21 +141,7 @@ func UnreferencedAssets(req Request) ([]string, error) {
 	return unreferenced(texts, slices.Sorted(maps.Keys(req.Assets))), nil
 }
 
-func stringValues(req Request) ([]string, error) {
-	// Through JSON, so a state of any Go type, a json.RawMessage included, is walked as a raw body is.
-	encoded, err := jsonv2.Marshal(struct {
-		State     any       `json:"state"`
-		Questions Questions `json:"questions"`
-	}{State: req.State, Questions: req.Questions}, bodyOptions)
-	if err != nil {
-		return nil, unencodable(err)
-	}
-
-	members, err := readMembers(encoded)
-	if err != nil {
-		return nil, unencodable(err)
-	}
-
+func textsOf(members []member) ([]string, error) {
 	var texts []string
 
 	for _, m := range members {
@@ -205,10 +179,6 @@ func encodeFault(err error) string {
 
 func place(pointer jsontext.Pointer) string {
 	return printable(string(pointer))
-}
-
-func sideFits(side int) bool {
-	return side >= MinImageSide && side <= MaxImageSide
 }
 
 func checkBodySize(size int) error {

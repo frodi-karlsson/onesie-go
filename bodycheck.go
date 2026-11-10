@@ -303,15 +303,17 @@ func collectTexts(dec *jsontext.Decoder, texts *[]string) error {
 
 func checkQuestionCounts(asked Questions) error {
 	for _, named := range asked {
+		var err error
+
 		switch question := named.Question.(type) {
 		case Choice:
-			if count := distinctNames(question.Criteria); count > MaxChoiceOptions {
-				return tooManyOptions(named.ID, count)
-			}
+			err = checkOptionCount(named.ID, question.Criteria)
 		case Score:
-			if len(question.Criteria) > MaxScoreLevels {
-				return tooManyLevels(named.ID, len(question.Criteria))
-			}
+			err = checkLevelCount(named.ID, len(question.Criteria))
+		}
+
+		if err != nil {
+			return err
 		}
 	}
 

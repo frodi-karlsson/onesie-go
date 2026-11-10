@@ -3,6 +3,7 @@ package onesie
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 )
 
@@ -110,7 +111,7 @@ func TestEncodedPost(t *testing.T) {
 	})
 }
 
-func TestMarshalRequest(t *testing.T) {
+func TestCheckedBody(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -137,10 +138,32 @@ func TestMarshalRequest(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := marshalRequest(tc.req, tc.model)
-			if err != nil || string(got) != tc.want {
-				t.Errorf("marshalRequest = %s, %v, want %s", got, err, tc.want)
+			got, err := checkedBody(tc.req, tc.model)
+			if err != nil || string(got.raw) != tc.want {
+				t.Errorf("checkedBody = %s, %v, want %s", got.raw, err, tc.want)
 			}
 		})
 	}
+}
+
+func TestLayoutParts(t *testing.T) {
+	t.Parallel()
+
+	full := Request{
+		State: "s", Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}}, LongContext: true,
+		Assets: Assets{"r": Image{format: "png", data: []byte{1}}},
+	}
+
+	t.Run("should write every member the body order names", func(t *testing.T) {
+		t.Parallel()
+
+		var names []string
+		for _, part := range wholeBody.parts(full, "m") {
+			names = append(names, part.name)
+		}
+
+		if !slices.Equal(names, bodyOrder) {
+			t.Errorf("parts = %v, want %v", names, bodyOrder)
+		}
+	})
 }

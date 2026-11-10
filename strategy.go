@@ -51,11 +51,13 @@ func (p Provider) prepare(req Request, longContext bool) (*PreparedBody, error) 
 		return nil, err
 	}
 
-	shown := body
 	if sent.needs.longContext {
-		if shown, err = setLongContext(newBody(body)).bytes(); err != nil {
-			return nil, err
-		}
+		body = setLongContext(body)
+	}
+
+	shown, err := body.bytes()
+	if err != nil {
+		return nil, err
 	}
 
 	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: req.Model, asked: detached(req.Questions)}, nil
@@ -81,29 +83,23 @@ func detachedQuestion(asked Question) Question {
 	return asked
 }
 
-func (p Provider) validated(req Request, longContext bool) (encoded, []byte, error) {
+func (p Provider) validated(req Request, longContext bool) (encoded, jsonBody, error) {
 	if err := checkRequest(req); err != nil {
-		return encoded{}, nil, err
+		return encoded{}, jsonBody{}, err
 	}
 
 	plan := p.plan(req, longContext)
 
-	body, err := marshalRequest(req, plan.model)
+	body, err := checkedBody(req, plan.model)
 	if err != nil {
-		return encoded{}, nil, err
-	}
-
-	if len(req.Assets) > 0 {
-		if err = checkBodySize(len(body)); err != nil {
-			return encoded{}, nil, err
-		}
+		return encoded{}, jsonBody{}, err
 	}
 
 	if err = plan.via.refuse(p.name, plan.model, plan.needs); err != nil {
-		return encoded{}, nil, err
+		return encoded{}, jsonBody{}, err
 	}
 
-	sent, err := encodeBody(plan.via, plan.needs, newBody(body))
+	sent, err := encodeBody(plan.via, plan.needs, body)
 
 	return sent, body, err
 }
@@ -120,11 +116,6 @@ type requestPlan struct {
 	model string
 	via   route
 	needs capabilities
-}
-
-func marshalRequest(req Request, model string) ([]byte, error) {
-	// Long context travels as a header, so the body never carries it.
-	return MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
 }
 
 type encoded struct {

@@ -1,6 +1,7 @@
 package onesie_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,6 +40,26 @@ func TestNewImage(t *testing.T) {
 			data:    func(testing.TB) []byte { return nil },
 			wantErr: "an image must be PNG or JPEG",
 		},
+		{
+			name:    "should refuse an image narrower than 280 pixels",
+			data:    func(t testing.TB) []byte { return sizedPNG(t, 200, 400) },
+			wantErr: "the image is 200 by 400 pixels, and each side must be 280 to 1568",
+		},
+		{
+			name:    "should refuse an image shorter than 280 pixels",
+			data:    func(t testing.TB) []byte { return sizedPNG(t, 400, 200) },
+			wantErr: "the image is 400 by 200 pixels",
+		},
+		{
+			name:    "should refuse an image wider than 1568 pixels",
+			data:    func(t testing.TB) []byte { return sizedPNG(t, 1600, 400) },
+			wantErr: "the image is 1600 by 400 pixels",
+		},
+		{
+			name:    "should refuse an image over 16 MiB",
+			data:    func(t testing.TB) []byte { return append(squarePNG(t), make([]byte, onesie.MaxImageBytes)...) },
+			wantErr: "and an image is at most 16777216",
+		},
 	}
 
 	for _, tc := range tests {
@@ -62,45 +83,74 @@ func TestNewImage(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if img.Format != tc.wantFormat {
-				t.Errorf("format = %q, want %q", img.Format, tc.wantFormat)
+			if img.Format() != tc.wantFormat {
+				t.Errorf("format = %q, want %q", img.Format(), tc.wantFormat)
 			}
 		})
 	}
+
+	t.Run("should keep the file it checked when the caller changes its slice", func(t *testing.T) {
+		t.Parallel()
+
+		data := squarePNG(t)
+		want := `{"type":"image","format":"png","data_base64":"` + base64.StdEncoding.EncodeToString(data) + `"}`
+
+		img, err := onesie.NewImage(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		clear(data)
+
+		if got, err := json.Marshal(img); err != nil || string(got) != want {
+			t.Errorf("json = %s, %v, want the file as checked", got, err)
+		}
+	})
 }
 
 func TestImageMarshalJSON(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		image onesie.Image
-		want  string
+		name   string
+		data   func(t testing.TB) []byte
+		format string
 	}{
-		{
-			name:  "should write the type, the format and standard padded base64",
-			image: onesie.Image{Format: "png", Data: []byte{0xff, 0xfe, 0xfd, 0xfc}},
-			want:  `{"type":"image","format":"png","data_base64":"//79/A=="}`,
-		},
-		{
-			name:  "should write jpeg as jpg and lowercase the format",
-			image: onesie.Image{Format: "JPEG", Data: []byte{1}},
-			want:  `{"type":"image","format":"jpg","data_base64":"AQ=="}`,
-		},
+		{name: "should write the type, the format and standard padded base64", data: squarePNG, format: "png"},
+		{name: "should write a jpeg as jpg", data: squareJPEG, format: "jpg"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := json.Marshal(tc.image)
+			data := tc.data(t)
+
+			img, err := onesie.NewImage(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := json.Marshal(img)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if string(got) != tc.want {
-				t.Errorf("json = %s, want %s", got, tc.want)
+			want := `{"type":"image","format":"` + tc.format + `","data_base64":"` + base64.StdEncoding.EncodeToString(data) + `"}`
+			if string(got) != want {
+				t.Errorf("json = %s, want %s", got, want)
 			}
 		})
 	}
+}
+
+func imageOf(t testing.TB, data []byte) onesie.Image {
+	t.Helper()
+
+	img, err := onesie.NewImage(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return img
 }

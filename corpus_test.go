@@ -200,6 +200,9 @@ func encodeCorpus(t *testing.T) []encodeCase {
 		{name: "conflicting-fields", req: onesie.Request{State: conflictingFields(), Questions: urgent}},
 		{name: "unsupported-nan", req: onesie.Request{State: math.NaN(), Questions: urgent}},
 		{name: "unsupported-chan", req: onesie.Request{State: map[string]any{"a": make(chan int)}, Questions: urgent}},
+		{name: "invalid-utf8-asset-ref", req: onesie.Request{
+			State: "s", Questions: urgent, Assets: onesie.Assets{"bad \xff": square},
+		}},
 		{name: "invalid-utf8-instructions", req: onesie.Request{State: "s", Questions: onesie.Questions{{ID: "urgent", Question: onesie.Noul{Instructions: "is \xff urgent"}}}}},
 	}
 }
