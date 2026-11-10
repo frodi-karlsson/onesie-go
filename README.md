@@ -60,14 +60,7 @@ on `Bytes()`, with the client's provider, base URL and any header set with `ones
 ## Encoding
 
 A request's state, instructions and criteria are encoded with `encoding/json/v2` and its defaults,
-with map keys sorted, so the same request always gives the same bytes. Those defaults differ from
-`encoding/json` in what a provider receives:
-
-- `omitempty` leaves out only a value that encodes as null or an empty string, array or object, so a zero number or `false` is sent. Use `omitzero` to leave them out.
-- A nil slice or map is `[]` or `{}`, a nil `[]byte` is `""` and a byte array is base64 text.
-- `<`, `>`, `&`, U+2028 and U+2029 are sent as they are, not escaped.
-- Invalid UTF-8, a `time.Duration` and the `string` option on a string field are refused before any request.
-- A repeated name in a raw state, such as a `json.RawMessage`, is sent as written.
+with map keys sorted, so the same request always gives the same bytes.
 
 ## Errors
 
