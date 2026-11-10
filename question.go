@@ -86,8 +86,8 @@ func isNil(question Question) bool {
 	return value.Kind() == reflect.Pointer && value.IsNil()
 }
 
-// Question is one of Noul, Choice, Score or Box. The interface is closed, because validate is
-// unexported, so no type outside this package can satisfy it.
+// Question is one of Noul, Choice, Score or Box, or a type that embeds one. validate is unexported,
+// so no other type can satisfy it.
 type Question interface {
 	json.Marshaler
 

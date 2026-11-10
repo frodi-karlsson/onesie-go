@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
-	"fmt"
 )
 
-// Fixed at initialization and never changed, so it is a constant in all but name.
 var bodyOptions = jsonv2.JoinOptions(
 	jsonv2.Deterministic(true),
 	// A raw state keeps a repeated name as written, as a raw body does, since a provider may accept it.
@@ -23,8 +21,7 @@ func marshalWith(write func(*jsontext.Encoder) error) ([]byte, error) {
 		return nil, err
 	}
 
-	// The encoder ends a top level value with a newline, which a body does not need.
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	return withoutNewline(buf.Bytes()), nil
 }
 
 func writeQuestions(enc *jsontext.Encoder, questions Questions) error {
@@ -60,7 +57,7 @@ func writeQuestion(enc *jsontext.Encoder, question Question) error {
 	case Box:
 		return writeBox(enc, typed)
 	default:
-		return fmt.Errorf("%T is not a question type this package encodes", question)
+		return jsonv2.MarshalEncode(enc, question)
 	}
 }
 

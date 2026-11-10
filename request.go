@@ -13,9 +13,8 @@ const (
 	maxAllReferencesBytes = 65536
 )
 
-// ValidateRequest refuses a request the API would refuse, before it is sent. It checks the
-// questions, then the assets, then the size of a body with images. It measures the body with the model
-// as given, so it can differ from a send by the length of the default model's name.
+// ValidateRequest refuses a request the API would refuse: its questions, its assets, then the size of
+// a body with images, measured with the model as given rather than a client's default.
 func ValidateRequest(req Request) error {
 	if err := checkRequest(req); err != nil {
 		return err

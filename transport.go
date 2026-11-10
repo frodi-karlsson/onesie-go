@@ -181,7 +181,7 @@ func (c *Client) newRequest(
 
 	req, err := http.NewRequestWithContext(actx, sent.method, target, reader)
 	if err != nil {
-		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error()}
+		return nil, &ValidationError{Message: "the request cannot be built: " + err.Error(), cause: err}
 	}
 
 	c.setHeaders(req, header, sent, attempt, payload != nil)

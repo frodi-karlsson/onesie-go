@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -251,12 +252,12 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 		return nil, err
 	}
 
-	prepared, err := c.prepared(req, cfg)
+	sent, _, err := c.provider.validated(c.withModel(req), cfg.longContext)
 	if err != nil {
 		return nil, err
 	}
 
-	res, decoded, err := c.send(ctx, cfg, prepared.sent)
+	res, decoded, err := c.send(ctx, cfg, sent)
 	if err != nil {
 		return nil, err
 	}
@@ -264,23 +265,21 @@ func (c *Client) SystemOne(ctx context.Context, req Request, opts ...RequestOpti
 	return c.checkedResult(res, decoded, req.Questions)
 }
 
-// Prepare validates req and encodes it once, as SystemOne sends it from this client, so a caller can
-// key on the body before SendPrepared sends it. Of opts only WithLongContext applies, and the per call
-// options go to SendPrepared.
-//
-// The body's Bytes, its LongContext, this client's provider and base URL, and any header set with
-// WithHeader decide what the send carries, so a caller that deduplicates or caches keys on them.
+func (c *Client) withModel(req Request) Request {
+	req.Model = modelOr(req.Model, c.defaultModel)
+
+	return req
+}
+
+// Prepare validates and encodes req once, as SystemOne would, for SendPrepared. Of opts only
+// WithLongContext applies. A cache keys on Bytes, the provider, the base URL and WithHeader headers.
 func (c *Client) Prepare(req Request, opts ...RequestOption) (*PreparedBody, error) {
 	cfg, err := c.resolve(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	return c.prepared(req, cfg)
-}
-
-func (c *Client) prepared(req Request, cfg requestConfig) (*PreparedBody, error) {
-	req.Model = modelOr(req.Model, c.defaultModel)
+	req = c.withModel(req)
 
 	sent, body, err := c.provider.validated(req, cfg.longContext)
 	if err != nil {
@@ -294,7 +293,9 @@ func (c *Client) prepared(req Request, cfg requestConfig) (*PreparedBody, error)
 		}
 	}
 
-	return &PreparedBody{provider: c.provider.name, shown: shown, sent: sent, model: req.Model, asked: req.Questions}, nil
+	return &PreparedBody{
+		provider: c.provider.name, shown: shown, sent: sent, model: req.Model, asked: slices.Clone(req.Questions),
+	}, nil
 }
 
 // SendPrepared sends a body Prepare or PrepareRaw prepared for this client's provider without preparing
@@ -392,7 +393,8 @@ func billedUsage(decoded []byte) *Usage {
 	return billed.Usage
 }
 
-// MarshalBody encodes a request as a raw body SystemOneRaw accepts.
+// MarshalBody encodes a request as a raw body SystemOneRaw accepts. State, instructions and criteria
+// are encoded with encoding/json/v2's defaults, so omitempty keeps a zero number or false.
 func MarshalBody(req Request) ([]byte, error) {
 	return jsonv2.Marshal(struct {
 		State       any       `json:"state"`

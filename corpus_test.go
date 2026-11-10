@@ -50,10 +50,11 @@ func checkEncodeGolden(t *testing.T, dir, name string, got []byte, err error) {
 	}
 }
 
-// encoding/json/v2 words its errors at random once a process, so that nothing matches on them. A
-// golden records onesie's own words and the fields v2 does promise: the error's type, Go type and place.
 func encodeErrorRecord(t *testing.T, err error) string {
 	t.Helper()
+
+	// encoding/json/v2 words its errors at random once a process, so that nothing matches on them. A
+	// golden records onesie's own words and the fields v2 does promise: the error's type, Go type and place.
 
 	var (
 		semantic  *jsonv2.SemanticError
@@ -208,6 +209,9 @@ func encodeCorpus(t *testing.T) []encodeCase {
 			{ID: "team", Question: onesie.Choice{Instructions: "which team", Criteria: onesie.Criteria{{Name: "a"}, {Name: "b"}}}},
 			{ID: "mood", Question: onesie.Score{Instructions: "how cross", Criteria: onesie.Levels("calm", "furious")}},
 		}}},
+		{name: "embedded-question", req: onesie.Request{State: "s", Questions: onesie.Questions{{ID: "urgent", Question: embeddedNoul{
+			Noul: onesie.Noul{Instructions: "is this urgent"},
+		}}}}},
 		{name: "nil-question", req: onesie.Request{State: "s", Questions: onesie.Questions{{ID: "a", Question: nil}}}},
 		{name: "typed-nil-question", req: onesie.Request{State: "s", Questions: onesie.Questions{{ID: "a", Question: (*onesie.Noul)(nil)}}}},
 		{name: "structured-instructions", req: onesie.Request{State: "s", Questions: onesie.Questions{{ID: "urgent", Question: onesie.Noul{
@@ -247,6 +251,10 @@ func tenKeys() map[string]any {
 type encodeCase struct {
 	name string
 	req  onesie.Request
+}
+
+type embeddedNoul struct {
+	onesie.Noul
 }
 
 type legacyMarshaler struct{}

@@ -28,9 +28,8 @@ type Needs struct {
 	LongContext bool
 }
 
-// Check refuses what SystemOne refuses before it sends req with opts, and sends nothing. It
-// validates req, encodes it, checks the size of a body with images, then refuses what Encode refuses.
-// A blank model is the built in default.
+// Check refuses what SystemOne would refuse for req with opts, and sends nothing. A blank model is the
+// built in default.
 func (p Provider) Check(req Request, opts ...RequestOption) error {
 	if err := p.check(); err != nil {
 		return err
@@ -51,6 +50,18 @@ func (p Provider) validated(req Request, longContext bool) (encoded, []byte, err
 		return encoded{}, nil, err
 	}
 
+	return p.encoded(req, longContext, checkAssetBodySize)
+}
+
+func checkAssetBodySize(req Request, body []byte) error {
+	if len(req.Assets) == 0 {
+		return nil
+	}
+
+	return checkBodySize(len(body))
+}
+
+func (p Provider) encoded(req Request, longContext bool, checkBody func(Request, []byte) error) (encoded, []byte, error) {
 	plan := p.plan(req, longContext)
 
 	body, err := marshalRequest(req, plan.model)
@@ -58,10 +69,8 @@ func (p Provider) validated(req Request, longContext bool) (encoded, []byte, err
 		return encoded{}, nil, err
 	}
 
-	if len(req.Assets) > 0 {
-		if err = checkBodySize(len(body)); err != nil {
-			return encoded{}, nil, err
-		}
+	if err = checkBody(req, body); err != nil {
+		return encoded{}, nil, err
 	}
 
 	if err = plan.via.refuse(p.name, plan.model, plan.needs); err != nil {
@@ -80,18 +89,7 @@ func (p Provider) Encode(req Request) ([]byte, error) {
 		return nil, err
 	}
 
-	plan := p.plan(req, false)
-
-	body, err := marshalRequest(req, plan.model)
-	if err != nil {
-		return nil, err
-	}
-
-	if err = plan.via.refuse(p.name, plan.model, plan.needs); err != nil {
-		return nil, err
-	}
-
-	sent, err := encodeBody(plan.via, plan.needs, newBody(body))
+	sent, _, err := p.encoded(req, false, func(Request, []byte) error { return nil })
 
 	return sent.body, err
 }

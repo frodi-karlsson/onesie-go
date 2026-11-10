@@ -48,10 +48,6 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{name: "should keep a body's own long context without the option", body: `{"model":"m","long_context":true}`, want: `{"model":"m","long_context":true}`},
 		{name: "should refuse a long context that is not true or false", body: `{"model":"m","long_context":"yes"}`, wantErr: "onesie: long_context must be true or false"},
 		{name: "should leave an array as it is", body: `[1]`, model: "jev-latest", want: `[1]`},
-		{
-			name: "should refuse a body that is not JSON", body: `{"state":1,`,
-			wantErr: "onesie: the request body is not JSON: unexpected end of JSON input",
-		},
 		{name: "should refuse a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", wantErr: "onesie: the request body is not valid UTF-8"},
 		{
 			name: "should refuse what the provider refuses while encoding", provider: onesie.Cloudflare(),
@@ -134,6 +130,17 @@ func TestProviderPrepareRaw(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should refuse a body that is not JSON, with the syntax error behind it", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := onesie.TypeSafe().PrepareRaw(json.RawMessage(`{"state":1,`), "")
+
+		var syntax *json.SyntaxError
+		if !errors.Is(err, onesie.ErrValidation) || !strings.HasPrefix(err.Error(), "onesie: the request body is not JSON: ") || !errors.As(err, &syntax) {
+			t.Errorf("error = %v, want a refusal that the body is not JSON, from a syntax error", err)
+		}
+	})
 
 	t.Run("should change nothing in a prepared body", func(t *testing.T) {
 		t.Parallel()

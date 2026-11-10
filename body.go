@@ -41,7 +41,7 @@ func encodeAsIs(b jsonBody) ([]byte, error) {
 }
 
 func (b jsonBody) bytes() ([]byte, error) {
-	if !b.object || !b.changed {
+	if !b.changed {
 		return b.raw, nil
 	}
 
@@ -128,8 +128,12 @@ func writeMembers(members []member) ([]byte, error) {
 		return nil, err
 	}
 
-	// The encoder ends a top level value with a newline, which a request body does not need.
-	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
+	return withoutNewline(out.Bytes()), nil
+}
+
+func withoutNewline(encoded []byte) []byte {
+	// jsontext.Encoder ends each top level value with a newline, which a request body does not need.
+	return bytes.TrimSuffix(encoded, []byte("\n"))
 }
 
 func encodedSize(members []member) (int, error) {

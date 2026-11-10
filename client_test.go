@@ -15,6 +15,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -2383,6 +2385,85 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
+	t.Run("should send each corpus case through each route as its golden records", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			for _, route := range encodeRoutes() {
+				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
+					_, err := client.SystemOne(t.Context(), req)
+
+					return err
+				})
+				checkEncodeGolden(t, tc.name, route.name, sent, err)
+			}
+		}
+	})
+
+	t.Run("should send a body with images at the limit, measured with its resolved model", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			_, _ = io.Copy(io.Discard, r.Body)
+			_, _ = io.WriteString(w, `{"model":"m","answers":{"q":{"type":"noul","noul":0.5}}}`)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL)
+		req := requestOfSize(t, onesie.MaxBodyBytes, client.DefaultModel(), true)
+		req.Model = ""
+
+		if _, err := client.SystemOne(t.Context(), req); err != nil || calls.Load() != 1 {
+			t.Errorf("SystemOne at the limit = %v after %d calls, want it sent once", err, calls.Load())
+		}
+	})
+
+	t.Run("should refuse an oversized body with images on berget by its size before its route", func(t *testing.T) {
+		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(onesie.Berget()))
+
+		_, err := client.SystemOne(t.Context(), requestOfSize(t, onesie.MaxBodyBytes+1, client.DefaultModel(), false))
+		if err == nil || !strings.Contains(err.Error(), "the request body is 33554433 bytes") {
+			t.Errorf("error = %v, want the size refusal", err)
+		}
+	})
+}
+
+func TestClientPrepare(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should send what SystemOne sends through each route", func(t *testing.T) {
+		t.Parallel()
+
+		if *updateEncode {
+			t.Skip("the goldens are being rewritten from SystemOne")
+		}
+
+		for _, tc := range encodeCorpus(t) {
+			if tc.name != "noul-image" {
+				continue
+			}
+
+			for _, route := range encodeRoutes() {
+				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
+					prepared, err := client.Prepare(req)
+					if err != nil {
+						return err
+					}
+
+					_, _, err = client.SendPrepared(t.Context(), prepared)
+
+					return err
+				})
+				checkEncodeGolden(t, tc.name, route.name, sent, err)
+			}
+		}
+	})
+
 	t.Run("should send the encoded body as it is on a route that does not rewrite it", func(t *testing.T) {
 		t.Parallel()
 
@@ -2420,88 +2501,61 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
-	t.Run("should send each corpus case through each route as its golden records", func(t *testing.T) {
+	t.Run("should show the body MarshalBody writes for the request with its model and long context", func(t *testing.T) {
 		t.Parallel()
+
+		client, _ := newTestClient(t, "http://127.0.0.1:1")
 
 		for _, tc := range encodeCorpus(t) {
-			for _, route := range encodeRoutes() {
-				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
-					_, err := client.SystemOne(t.Context(), req)
+			for _, longContext := range []bool{false, true} {
+				var opts []onesie.RequestOption
+				if longContext {
+					opts = append(opts, onesie.WithLongContext())
+				}
 
-					return err
-				})
-				checkEncodeGolden(t, tc.name, route.name, sent, err)
+				prepared, err := client.Prepare(tc.req, opts...)
+				if err != nil {
+					continue
+				}
+
+				resolved := tc.req
+				resolved.Model = client.DefaultModel()
+				resolved.LongContext = tc.req.LongContext || longContext
+
+				want, err := onesie.MarshalBody(resolved)
+				if err != nil || !bytes.Equal(prepared.Bytes(), want) {
+					t.Errorf("%s with long context %v: Bytes = %s, want %s", tc.name, longContext, prepared.Bytes(), want)
+				}
 			}
 		}
 	})
 
-	t.Run("should send a body with images at the limit and refuse one a byte over before any request", func(t *testing.T) {
+	t.Run("should keep its questions when the caller changes them afterwards", func(t *testing.T) {
 		t.Parallel()
 
-		for _, tc := range []struct {
-			size        int
-			longContext bool
-			refused     bool
-		}{
-			{size: onesie.MaxBodyBytes, longContext: true},
-			{size: onesie.MaxBodyBytes + 1, refused: true},
-		} {
-			var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			_, _ = io.WriteString(w, `{"model":"m","answers":{"q":{"type":"noul","noul":0.5}}}`)
+		}))
+		defer server.Close()
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				_, _ = io.Copy(io.Discard, r.Body)
-				_, _ = io.WriteString(w, `{"model":"m","answers":{"q":{"type":"noul","noul":0.5}}}`)
-			}))
+		client, _ := newTestClient(t, server.URL)
+		questions := oneNoul()
 
-			client, _ := newTestClient(t, server.URL)
-			_, err := client.SystemOne(t.Context(), requestOfSize(t, tc.size, client.DefaultModel(), tc.longContext))
-
-			server.Close()
-
-			if refused := errors.Is(err, onesie.ErrValidation); refused != tc.refused || (calls.Load() == 0) != tc.refused {
-				t.Errorf("SystemOne at %d bytes with long context %v = %v after %d calls, want refused %v",
-					tc.size, tc.longContext, err, calls.Load(), tc.refused)
-			}
-		}
-	})
-
-	t.Run("should refuse an oversized body with images on berget by its size before its route", func(t *testing.T) {
-		t.Parallel()
-
-		client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(onesie.Berget()))
-
-		_, err := client.SystemOne(t.Context(), requestOfSize(t, onesie.MaxBodyBytes+1, client.DefaultModel(), false))
-		if err == nil || !strings.Contains(err.Error(), "the request body is 33554433 bytes") {
-			t.Errorf("error = %v, want the size refusal", err)
-		}
-	})
-}
-
-func TestClientPrepare(t *testing.T) {
-	t.Parallel()
-
-	t.Run("should send each corpus case through each route as SystemOne does", func(t *testing.T) {
-		t.Parallel()
-
-		if *updateEncode {
-			t.Skip("the goldens are being rewritten from SystemOne")
+		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: questions})
+		if err != nil {
+			t.Fatal(err)
 		}
 
-		for _, tc := range encodeCorpus(t) {
-			for _, route := range encodeRoutes() {
-				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
-					prepared, err := client.Prepare(req)
-					if err != nil {
-						return err
-					}
+		questions[0].ID = "changed"
 
-					_, _, err = client.SendPrepared(t.Context(), prepared)
+		result, _, err := client.SendPrepared(t.Context(), prepared)
+		if err != nil {
+			t.Fatalf("SendPrepared = %v, want the answer to the question as prepared", err)
+		}
 
-					return err
-				})
-				checkEncodeGolden(t, tc.name, route.name, sent, err)
-			}
+		if _, err := result.Noul("q"); err != nil {
+			t.Errorf("Noul(q) = %v, want the prepared question answered", err)
 		}
 	})
 
@@ -4460,6 +4514,26 @@ func TestMarshalBody(t *testing.T) {
 		for _, tc := range encodeCorpus(t) {
 			got, err := onesie.MarshalBody(tc.req)
 			checkEncodeGolden(t, tc.name, "marshal-body", got, err)
+		}
+	})
+
+	t.Run("should keep a golden directory only for a case in the corpus", func(t *testing.T) {
+		t.Parallel()
+
+		dirs, err := os.ReadDir(filepath.Join("testdata", "encode"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cases := map[string]bool{}
+		for _, tc := range encodeCorpus(t) {
+			cases[tc.name] = true
+		}
+
+		for _, dir := range dirs {
+			if !cases[dir.Name()] {
+				t.Errorf("testdata/encode/%s has no case in the corpus, remove it", dir.Name())
+			}
 		}
 	})
 
