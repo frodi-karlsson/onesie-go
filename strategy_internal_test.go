@@ -37,7 +37,7 @@ func TestScanMembers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := scanMembers(parseBody([]byte(tc.body)).members); got != tc.want {
+			if got := scanMembers(newBody([]byte(tc.body)).parsed().members); got != tc.want {
 				t.Errorf("scanMembers = %+v, want %+v", got, tc.want)
 			}
 		})

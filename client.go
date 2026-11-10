@@ -289,7 +289,7 @@ func (c *Client) prepared(req Request, cfg requestConfig) (*PreparedBody, error)
 
 	shown := body
 	if sent.needs.longContext {
-		if shown, err = setLongContext(parseBody(body)).bytes(); err != nil {
+		if shown, err = setLongContext(newBody(body)).bytes(); err != nil {
 			return nil, err
 		}
 	}

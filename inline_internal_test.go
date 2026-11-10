@@ -93,7 +93,7 @@ func TestInlineParts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := inlineParts(parseBody([]byte(tc.body)).members)
+			got, err := inlineParts(newBody([]byte(tc.body)).parsed().members)
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want a validation error containing %q", err, tc.wantErr)
@@ -181,7 +181,7 @@ func TestAssetsToImages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := assetsToImages(parseBody([]byte(tc.body)).members)
+			got, err := assetsToImages(newBody([]byte(tc.body)).parsed().members)
 			if tc.wantErr != "" {
 				if err == nil || err.Error() != tc.wantErr {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)

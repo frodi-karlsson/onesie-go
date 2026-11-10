@@ -24,7 +24,7 @@ func TestLongContextOf(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := longContextOf(parseBody([]byte(tc.body)).members)
+			got, err := longContextOf(newBody([]byte(tc.body)).parsed().members)
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrValidation) || err.Error() != tc.wantErr {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
@@ -58,7 +58,7 @@ func TestWithoutLongContext(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := withoutLongContext(parseBody([]byte(tc.body))).bytes()
+			got, err := withoutLongContext(newBody([]byte(tc.body)).parsed()).bytes()
 			if err != nil || string(got) != tc.want {
 				t.Errorf("withoutLongContext = %s, %v, want %s", got, err, tc.want)
 			}

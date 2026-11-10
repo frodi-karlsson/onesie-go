@@ -35,7 +35,7 @@ func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*P
 	}
 
 	model := modelOr(defaultModel, p.defaultModel)
-	b := fillModel(lastWins(parseBody(raw)), model)
+	b := fillModel(lastWins(newBody(raw)), model)
 
 	if err := checkModel(b.members); err != nil {
 		return nil, err
@@ -159,7 +159,7 @@ func questionsIn(members []member) (Questions, error) {
 }
 
 func lastWins(b jsonBody) jsonBody {
-	if !b.object {
+	if b = b.parsed(); !b.object {
 		return b
 	}
 
@@ -193,7 +193,7 @@ func lastOf(members []member) []member {
 }
 
 func fillModel(b jsonBody, model string) jsonBody {
-	if !b.object || model == "" || !blankModel(b.members) {
+	if b = b.parsed(); !b.object || model == "" || !blankModel(b.members) {
 		return b
 	}
 
@@ -206,7 +206,7 @@ func fillModel(b jsonBody, model string) jsonBody {
 }
 
 func setLongContext(b jsonBody) jsonBody {
-	if !b.object || soleLongContext(b.members) {
+	if b = b.parsed(); !b.object || soleLongContext(b.members) {
 		return b
 	}
 

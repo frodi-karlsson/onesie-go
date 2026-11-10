@@ -2383,6 +2383,43 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
+	t.Run("should send the encoded body as it is on a route that does not rewrite it", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range encodeCorpus(t) {
+			if len(tc.req.Assets) > 0 || tc.req.LongContext {
+				continue
+			}
+
+			for _, route := range encodeRoutes() {
+				// Cloudflare wraps every body in an envelope, so it is the one route that always rewrites.
+				if route.provider.Name() == onesie.Cloudflare().Name() {
+					continue
+				}
+
+				var prepared *onesie.PreparedBody
+
+				sent, err := sentPayload(t, route, tc.req, func(client *onesie.Client, req onesie.Request) error {
+					var err error
+					if prepared, err = client.Prepare(req); err != nil {
+						return err
+					}
+
+					_, _, err = client.SendPrepared(t.Context(), prepared)
+
+					return err
+				})
+				if err != nil {
+					continue
+				}
+
+				if !bytes.Equal(sent, prepared.Bytes()) {
+					t.Errorf("%s through %s sent %s, want the encoded body %s", tc.name, route.name, sent, prepared.Bytes())
+				}
+			}
+		}
+	})
+
 	t.Run("should send each corpus case through each route as its golden records", func(t *testing.T) {
 		t.Parallel()
 

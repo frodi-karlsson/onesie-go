@@ -7,24 +7,33 @@ import (
 	"io"
 )
 
-func parseBody(raw []byte) jsonBody {
-	members, err := readMembers(raw)
-	if err != nil {
-		return jsonBody{raw: raw}
-	}
-
-	return jsonBody{members: members, object: true, raw: raw}
+func newBody(raw []byte) jsonBody {
+	return jsonBody{raw: raw}
 }
 
 type jsonBody struct {
 	members []member
 	object  bool
 	raw     []byte
+	read    bool
 	changed bool
 }
 
+func (b jsonBody) parsed() jsonBody {
+	if b.read {
+		return b
+	}
+
+	members, err := readMembers(b.raw)
+	if err != nil {
+		return jsonBody{raw: b.raw, read: true}
+	}
+
+	return jsonBody{members: members, object: true, raw: b.raw, read: true}
+}
+
 func (b jsonBody) with(members []member) jsonBody {
-	return jsonBody{members: members, object: true, raw: b.raw, changed: true}
+	return jsonBody{members: members, object: true, raw: b.raw, read: true, changed: true}
 }
 
 func encodeAsIs(b jsonBody) ([]byte, error) {

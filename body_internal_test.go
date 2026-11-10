@@ -6,15 +6,30 @@ import (
 	"testing"
 )
 
-func TestParseBody(t *testing.T) {
+func TestJsonBodyParsed(t *testing.T) {
 	t.Parallel()
+
+	t.Run("should leave a body unread until a reader asks, and give its bytes back as they are", func(t *testing.T) {
+		t.Parallel()
+
+		body := []byte(`{ "state" : "s" }`)
+
+		unread := newBody(body)
+		if unread.read || unread.object || unread.members != nil {
+			t.Fatalf("newBody = %+v, want it unread", unread)
+		}
+
+		if out, err := unread.bytes(); err != nil || !bytes.Equal(out, body) {
+			t.Errorf("bytes = %s, %v, want the body as it is", out, err)
+		}
+	})
 
 	t.Run("should keep each value as a slice of the body, so no image is copied", func(t *testing.T) {
 		t.Parallel()
 
 		body := []byte(`{"state":"s","assets":{"r":{"data_base64":"AQ=="}}}`)
 
-		parsed := parseBody(body)
+		parsed := newBody(body).parsed()
 		if !parsed.object || len(parsed.members) != 2 {
 			t.Fatalf("parsed = %+v, want two members", parsed)
 		}
@@ -43,7 +58,7 @@ func TestParseBody(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			parsed := parseBody([]byte(tc.body))
+			parsed := newBody([]byte(tc.body)).parsed()
 			if parsed.object != tc.object || len(parsed.members) != len(tc.values) {
 				t.Fatalf("parsed = %+v, want object %v with %d members", parsed, tc.object, len(tc.values))
 			}

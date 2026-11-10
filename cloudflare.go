@@ -119,7 +119,7 @@ func encodeClef(wireID string) func(jsonBody) ([]byte, error) {
 
 func envelope(wireID string) func(jsonBody) ([]byte, error) {
 	return func(b jsonBody) ([]byte, error) {
-		if b.object {
+		if b = b.parsed(); b.object {
 			b = b.with(slices.DeleteFunc(slices.Clone(b.members), named("model")))
 		}
 
@@ -138,7 +138,7 @@ func envelope(wireID string) func(jsonBody) ([]byte, error) {
 }
 
 func withoutAssets(b jsonBody) jsonBody {
-	if !b.object || !slices.ContainsFunc(b.members, named("assets")) {
+	if b = b.parsed(); !b.object || !slices.ContainsFunc(b.members, named("assets")) {
 		return b
 	}
 

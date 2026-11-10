@@ -68,7 +68,7 @@ func (p Provider) validated(req Request, longContext bool) (encoded, []byte, err
 		return encoded{}, nil, err
 	}
 
-	sent, err := encodeBody(plan.via, plan.needs, parseBody(body))
+	sent, err := encodeBody(plan.via, plan.needs, newBody(body))
 
 	return sent, body, err
 }
@@ -91,7 +91,7 @@ func (p Provider) Encode(req Request) ([]byte, error) {
 		return nil, err
 	}
 
-	sent, err := encodeBody(plan.via, plan.needs, parseBody(body))
+	sent, err := encodeBody(plan.via, plan.needs, newBody(body))
 
 	return sent.body, err
 }
@@ -138,6 +138,8 @@ func encodeBody(via route, needs capabilities, b jsonBody) (encoded, error) {
 	withImages := needs.images || needs.box
 
 	if withImages && via.images != nil {
+		b = b.parsed()
+
 		members, err := via.images(b.members)
 		if err != nil {
 			return encoded{}, err
