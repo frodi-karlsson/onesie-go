@@ -31,17 +31,6 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 		defer cancel()
 	}
 
-	var payload []byte
-
-	if req.payload != nil {
-		compacted, err := compactBody(req.payload)
-		if err != nil {
-			return nil, err
-		}
-
-		payload = compacted
-	}
-
 	// Numbered so concurrent requests, and the attempts within one, can be told apart in the logs.
 	tag := fmt.Sprintf("#%d %s %s", c.requests.Add(1), req.method, withoutQuery(req.path))
 	target := c.baseURL + req.path
@@ -49,7 +38,7 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 	for attempt := 0; ; attempt++ {
 		retriesLeft := cfg.retry.MaxRetries - attempt
 
-		res, err := c.attempt(ctx, tag, attempt, target, payload, cfg, req)
+		res, err := c.attempt(ctx, tag, attempt, target, req.payload, cfg, req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, interrupted(ctx, cfg.totalTimeout)
@@ -103,18 +92,6 @@ func (c *Client) apiError(req call, res *rawResponse) *APIError {
 	}
 
 	return newAPIError(req.via, req.needs, res.status, res.header, res.body, c.clock.Now())
-}
-
-func compactBody(body []byte) ([]byte, error) {
-	// Compacted, not marshalled again. json.Marshal HTML escapes, and a caller that prepared its own
-	// body is entitled to have it forwarded as written.
-	var flat bytes.Buffer
-
-	if err := json.Compact(&flat, body); err != nil {
-		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error(), cause: err}
-	}
-
-	return flat.Bytes(), nil
 }
 
 func attemptTimeoutFor(set time.Duration, images bool) time.Duration {

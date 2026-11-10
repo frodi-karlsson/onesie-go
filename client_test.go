@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
@@ -3800,7 +3801,11 @@ func TestClientSystemOneRaw(t *testing.T) {
 	t.Run("should refuse an unreferenced asset alike through SystemOne and SystemOneRaw on every provider", func(t *testing.T) {
 		t.Parallel()
 
-		img := onesie.Image{Format: "png", Data: []byte{1}}
+		img, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		req := onesie.Request{State: "no image named here", Model: "m", Questions: oneNoul(), Assets: onesie.Assets{"image-x": img}}
 
 		body, err := onesie.MarshalBody(req)
@@ -4326,6 +4331,9 @@ func (c *mockClock) Slept() []time.Duration {
 func TestMarshalBody(t *testing.T) {
 	t.Parallel()
 
+	data := squarePNG(t)
+	square := imageOf(t, data)
+
 	tests := []struct {
 		name string
 		req  onesie.Request
@@ -4364,11 +4372,11 @@ func TestMarshalBody(t *testing.T) {
 				Questions: onesie.Questions{
 					{ID: "q", Question: onesie.Noul{Instructions: "a dog in `photo`"}},
 				},
-				Assets: onesie.Assets{"image-1": {Format: "png", Data: []byte{1}}},
+				Assets: onesie.Assets{"image-1": square},
 			},
 			want: `{"state":{"photo":"image-1"},"model":"m","questions":` +
 				`{"q":{"type":"noul","instructions":"a dog in ` + "`photo`" + `"}},` +
-				`"assets":{"image-1":{"type":"image","format":"png","data_base64":"AQ=="}}}`,
+				`"assets":{"image-1":{"type":"image","format":"png","data_base64":"` + base64.StdEncoding.EncodeToString(data) + `"}}}`,
 		},
 		{
 			name: "should leave out an empty assets map",
@@ -4593,7 +4601,7 @@ func TestMarshalQuestionsBody(t *testing.T) {
 			name: "should write the model and questions and leave out the state and assets",
 			req: onesie.Request{
 				State: "s", Model: "m", Questions: oneNoul(),
-				Assets: onesie.Assets{"r": {Format: "png", Data: []byte{1}}},
+				Assets: onesie.Assets{"r": imageOf(t, squarePNG(t))},
 			},
 			want: `{"model":"m","questions":{"q":{"type":"noul","instructions":"Urgent?"}}}`,
 		},

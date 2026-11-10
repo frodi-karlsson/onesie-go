@@ -79,6 +79,11 @@ func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) 
 		return nil, err
 	}
 
+	// A typed body is written compact. Only a raw one can arrive with whitespace to send.
+	if sent.body, err = compactBody(sent.body); err != nil {
+		return nil, err
+	}
+
 	shown, err := b.bytes()
 	if err != nil {
 		return nil, err
@@ -96,6 +101,18 @@ func checkJSON(body []byte) error {
 	_, err := compactBody(body)
 
 	return err
+}
+
+func compactBody(body []byte) ([]byte, error) {
+	// Compacted, not marshalled again. json.Marshal HTML escapes, and a caller that prepared its own
+	// body is entitled to have it forwarded as written.
+	var flat bytes.Buffer
+
+	if err := json.Compact(&flat, body); err != nil {
+		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error(), cause: err}
+	}
+
+	return flat.Bytes(), nil
 }
 
 func checkModel(members []member) error {
@@ -221,13 +238,7 @@ func setLongContext(b jsonBody) jsonBody {
 		return b.with(replaceMembers(b.members, longContext))
 	}
 
-	// Before the assets, where MarshalBody writes it, so a prepared body reads as MarshalBody's would.
-	at := slices.IndexFunc(b.members, named("assets"))
-	if at < 0 {
-		at = len(b.members)
-	}
-
-	return b.with(slices.Insert(slices.Clone(b.members), at, longContext))
+	return b.with(inserted(b.members, longContext))
 }
 
 func blankModel(members []member) bool {

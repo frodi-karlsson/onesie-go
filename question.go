@@ -127,7 +127,11 @@ func (q Choice) MarshalJSON() ([]byte, error) {
 }
 
 func (q Choice) validate(name string) error {
-	if count := distinctNames(q.Criteria); count > MaxChoiceOptions {
+	return checkOptionCount(name, q.Criteria)
+}
+
+func checkOptionCount(name string, criteria Criteria) error {
+	if count := distinctNames(criteria); count > MaxChoiceOptions {
 		return tooManyOptions(name, count)
 	}
 
@@ -178,11 +182,17 @@ func (q Score) validate(name string) error {
 			Question: name,
 			Message:  fmt.Sprintf("score question '%s' has %d criteria, at least two are required", printable(name), len(q.Criteria)),
 		}
-	case len(q.Criteria) > MaxScoreLevels:
-		return tooManyLevels(name, len(q.Criteria))
 	default:
-		return nil
+		return checkLevelCount(name, len(q.Criteria))
 	}
+}
+
+func checkLevelCount(name string, levels int) error {
+	if levels > MaxScoreLevels {
+		return tooManyLevels(name, levels)
+	}
+
+	return nil
 }
 
 func tooManyOptions(name string, count int) error {

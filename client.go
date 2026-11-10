@@ -3,7 +3,6 @@ package onesie
 import (
 	"context"
 	"encoding/json"
-	jsonv2 "encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -379,31 +378,22 @@ func billedUsage(decoded []byte) *Usage {
 // MarshalBody encodes a request as a raw body SystemOneRaw accepts, or refuses it with a *ValidationError.
 // State, instructions and criteria are encoded with encoding/json/v2's defaults, so omitempty keeps a zero.
 func MarshalBody(req Request) ([]byte, error) {
-	return encodedOrRefused(jsonv2.Marshal(struct {
-		State       any       `json:"state"`
-		Model       string    `json:"model"`
-		Questions   Questions `json:"questions"`
-		LongContext bool      `json:"long_context,omitzero"`
-		Assets      Assets    `json:"assets,omitempty"`
-	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets}, bodyOptions))
+	return encodedOrRefused(req, wholeBody)
 }
 
 // MarshalQuestionsBody encodes req's model and questions with no state key, since a null state is a
 // state, or refuses them as MarshalBody does. LongContext adds long_context, and the assets are left out.
 func MarshalQuestionsBody(req Request) ([]byte, error) {
-	return encodedOrRefused(jsonv2.Marshal(struct {
-		Model       string    `json:"model"`
-		Questions   Questions `json:"questions"`
-		LongContext bool      `json:"long_context,omitzero"`
-	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext}, bodyOptions))
+	return encodedOrRefused(req, questionsOnly)
 }
 
-func encodedOrRefused(body []byte, err error) ([]byte, error) {
+func encodedOrRefused(req Request, shape layout) ([]byte, error) {
+	body, err := bodyOf(req, req.Model, shape)
 	if err != nil {
-		return nil, unencodable(err)
+		return nil, err
 	}
 
-	return body, nil
+	return body.raw, nil
 }
 
 // Request is one evaluation, whose questions all see the same state and are answered independently.

@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
 	"strings"
 )
 
-// The image limits the API documents. ValidateRequest checks every one a file's header can show.
+// The image limits the API documents. NewImage checks every one a file's header can show.
 const (
 	// MaxImageBytes is the largest image file, before base64.
 	MaxImageBytes = 16 << 20
@@ -32,28 +33,47 @@ var (
 	jpegMagic = []byte{0xff, 0xd8, 0xff}
 )
 
-// NewImage reads the format from the file's header and refuses anything but PNG or JPEG.
+// NewImage reads the format from the file's header and refuses an image the API would refuse: one
+// that is not PNG or JPEG, a file over MaxImageBytes, or a side outside MinImageSide to MaxImageSide.
 func NewImage(data []byte) (Image, error) {
 	format, err := formatOf(data)
 	if err != nil {
 		return Image{}, err
 	}
 
-	if _, err := configOf(format, data); err != nil {
+	if len(data) > MaxImageBytes {
+		return Image{}, &ValidationError{Message: fmt.Sprintf(
+			"the image is %d bytes, and an image is at most %d. Resize it to at most %d pixels a side "+
+				"or save it as a smaller JPEG", len(data), MaxImageBytes, MaxImageSide)}
+	}
+
+	config, err := configOf(format, data)
+	if err != nil {
 		return Image{}, err
 	}
 
-	return Image{Format: format, Data: data}, nil
+	if !sideFits(config.Width) || !sideFits(config.Height) {
+		return Image{}, &ValidationError{Message: fmt.Sprintf(
+			"the image is %d by %d pixels, and each side must be %d to %d. Resize it first",
+			config.Width, config.Height, MinImageSide, MaxImageSide)}
+	}
+
+	return Image{format: format, data: bytes.Clone(data)}, nil
 }
 
 // Assets maps a reference string to the image it stands for. The API puts the image wherever the
 // reference appears in a string value of the state, the instructions or the criteria.
 type Assets map[string]Image
 
-// Image is one PNG or JPEG file. Build one with NewImage to have its format read from the file.
+// Image is one PNG or JPEG file the API takes, built by NewImage. A request with a zero Image is refused.
 type Image struct {
-	Format string
-	Data   []byte
+	format string
+	data   []byte
+}
+
+// Format is the image's format, png or jpg, as read from its header.
+func (i Image) Format() string {
+	return i.format
 }
 
 // MarshalJSON writes the asset shape the API reads, with the bytes as standard padded base64.
@@ -62,7 +82,15 @@ func (i Image) MarshalJSON() ([]byte, error) {
 		Type   string `json:"type"`
 		Format string `json:"format"`
 		Data   string `json:"data_base64"`
-	}{Type: "image", Format: wireFormat(i.Format), Data: base64.StdEncoding.EncodeToString(i.Data)})
+	}{Type: "image", Format: i.format, Data: base64.StdEncoding.EncodeToString(i.data)})
+}
+
+func (i Image) built() bool {
+	return i.format != ""
+}
+
+func sideFits(side int) bool {
+	return side >= MinImageSide && side <= MaxImageSide
 }
 
 func formatOf(data []byte) (string, error) {

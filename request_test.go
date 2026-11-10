@@ -1,6 +1,7 @@
 package onesie_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -16,12 +17,7 @@ func TestValidateRequest(t *testing.T) {
 	square := func(t *testing.T) onesie.Image {
 		t.Helper()
 
-		img, err := onesie.NewImage(squarePNG(t))
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		return img
+		return imageOf(t, squarePNG(t))
 	}
 
 	noul := onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "a dog in `photo`"}}}
@@ -121,45 +117,11 @@ func TestValidateRequest(t *testing.T) {
 			wantErr: "box question 'mug' needs an image in the request",
 		},
 		{
-			name: "should refuse an image narrower than 280 pixels",
-			req: func(t *testing.T) onesie.Request {
-				img, err := onesie.NewImage(sizedPNG(t, 200, 400))
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
-
-				return onesie.Request{
-					State: map[string]any{"photo": "image-a"}, Questions: noul,
-					Assets: onesie.Assets{"image-a": img},
-				}
+			name: "should refuse an image not built with NewImage before it looks for references",
+			req: func(*testing.T) onesie.Request {
+				return onesie.Request{State: "names no image", Questions: noul, Assets: onesie.Assets{"image-a": {}}}
 			},
-			wantErr: "image 'image-a' is 200 by 400 pixels, and each side must be 280 to 1568",
-		},
-		{
-			name: "should refuse an image over 16 MiB",
-			req: func(t *testing.T) onesie.Request {
-				img := square(t)
-				img.Data = append(img.Data, make([]byte, onesie.MaxImageBytes)...)
-
-				return onesie.Request{
-					State: map[string]any{"photo": "image-a"}, Questions: noul,
-					Assets: onesie.Assets{"image-a": img},
-				}
-			},
-			wantErr: "and an image is at most 16777216",
-		},
-		{
-			name: "should refuse an image whose format is not png or jpg",
-			req: func(t *testing.T) onesie.Request {
-				img := square(t)
-				img.Format = "gif"
-
-				return onesie.Request{
-					State: map[string]any{"photo": "image-a"}, Questions: noul,
-					Assets: onesie.Assets{"image-a": img},
-				}
-			},
-			wantErr: "image 'image-a' has format 'gif'",
+			wantErr: "image 'image-a' was not built with NewImage",
 		},
 	}
 
@@ -204,35 +166,44 @@ func TestValidateRequest(t *testing.T) {
 func requestOfSize(t testing.TB, size int, model string, longContext bool) onesie.Request {
 	t.Helper()
 
+	square := squarePNG(t)
 	state := map[string]any{"photo": "image-a", "other": "image-b", "pad": ""}
-	req := onesie.Request{
-		Model: model, State: state, Questions: oneNoul(),
-		Assets: onesie.Assets{"image-a": {Format: "png"}, "image-b": {Format: "png"}},
-	}
+	req := onesie.Request{Model: model, State: state, Questions: oneNoul(), Assets: twoOf(t, square)}
 
-	empty, err := onesie.MarshalBody(req)
+	measured, err := onesie.MarshalBody(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	empty := len(measured) - 2*base64.StdEncoding.EncodedLen(len(square))
+
 	// An image is read only for its header, so a real PNG followed by zero bytes passes validation, and
 	// two of them reach the size limit faster than a long string, which the encoder checks byte by byte.
 	// Each grows by a multiple of 3 bytes, 4 in base64, and the state takes the 0 to 7 bytes left.
-	raw := (size - len(empty)) / 8 * 3
+	raw := (size - empty) / 8 * 3
 	data := make([]byte, raw)
-	copy(data, squarePNG(t))
+	copy(data, square)
 
-	req.Assets = onesie.Assets{"image-a": {Format: "png", Data: data}, "image-b": {Format: "png", Data: data}}
-	state["pad"] = strings.Repeat("a", size-len(empty)-raw/3*8)
+	req.Assets = twoOf(t, data)
+	state["pad"] = strings.Repeat("a", size-empty-raw/3*8)
 	req.LongContext = longContext
 
 	return req
 }
 
+func twoOf(t testing.TB, data []byte) onesie.Assets {
+	t.Helper()
+
+	img := imageOf(t, data)
+
+	return onesie.Assets{"image-a": img, "image-b": img}
+}
+
 func TestUnreferencedAssets(t *testing.T) {
 	t.Parallel()
 
-	img := onesie.Image{Format: "png", Data: []byte{1}}
+	img := imageOf(t, squarePNG(t))
+
 	questions := onesie.Questions{{ID: "q", Question: onesie.Noul{Instructions: "compare with image-q"}}}
 
 	tests := []struct {

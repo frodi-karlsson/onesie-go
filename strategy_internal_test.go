@@ -110,7 +110,7 @@ func TestEncodedPost(t *testing.T) {
 	})
 }
 
-func TestMarshalRequest(t *testing.T) {
+func TestCheckedBody(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -137,9 +137,9 @@ func TestMarshalRequest(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := marshalRequest(tc.req, tc.model)
-			if err != nil || string(got) != tc.want {
-				t.Errorf("marshalRequest = %s, %v, want %s", got, err, tc.want)
+			got, err := checkedBody(tc.req, tc.model)
+			if err != nil || string(got.raw) != tc.want {
+				t.Errorf("checkedBody = %s, %v, want %s", got.raw, err, tc.want)
 			}
 		})
 	}

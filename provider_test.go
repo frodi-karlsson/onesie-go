@@ -474,7 +474,11 @@ func TestProviderPrepare(t *testing.T) {
 
 	box := onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug in image-a"}}}
 	photo := onesie.Request{State: "image-a", Questions: box, Assets: onesie.Assets{"image-a": square}}
-	padded := onesie.Image{Format: "png", Data: append(squarePNG(t), bytes.Repeat([]byte{0}, onesie.MaxBodyBytes/1200)...)}
+	padded, err := onesie.NewImage(append(squarePNG(t), bytes.Repeat([]byte{0}, onesie.MaxBodyBytes/1200)...))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	repeated := onesie.Request{State: strings.Repeat("img-a ", 1000), Questions: oneNoul(), Assets: onesie.Assets{"img-a": padded}}
 	noBoxes := "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do"
 
