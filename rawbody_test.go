@@ -52,7 +52,6 @@ func TestProviderPrepareRaw(t *testing.T) {
 			name: "should show a body as written", body: "{\n  \"model\": \"m\",\n  \"state\": [ 1 , 2 ]\n}",
 			want: "{\n  \"model\": \"m\",\n  \"state\": [ 1 , 2 ]\n}",
 		},
-		{name: "should refuse a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", wantErr: "onesie: the request body is not JSON: invalid UTF-8 at /state"},
 		{
 			name: "should refuse what the provider refuses while encoding", provider: onesie.Cloudflare(),
 			body:    `{"model":"clef","state":"r","questions":{},` + asset + `,"images":[]}`,

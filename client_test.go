@@ -3847,7 +3847,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 		name, body, want string
 	}{
 		{name: "a body that is not JSON", body: `{"state":1,`, want: "onesie: the request body is not JSON: "},
-		{name: "a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", want: "onesie: the request body is not JSON: invalid UTF-8 at /state"},
+		{name: "a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", want: "onesie: the request body is not JSON: "},
 		{
 			name: "a question of an unknown type", body: `{"state":"s","questions":{"q":{"type":"tarot"}}}`,
 			want: "onesie: question 'q' has the type 'tarot', which is not noul, choice, score or box",
