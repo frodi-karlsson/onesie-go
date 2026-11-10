@@ -238,6 +238,15 @@ func TestProviderPrepareRaw(t *testing.T) {
 			t.Fatalf("error = %v, want ErrValidation", err)
 		}
 	})
+
+	t.Run("should match ErrQuestionLimit for a raw body over a count limit, as for a typed request", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"state":"s","questions":{"rate":{"type":"score","criteria":["0","1","2","3","4","5","6","7","8","9","10"]}}}`
+		if _, err := onesie.TypeSafe().PrepareRaw([]byte(body), "m"); !errors.Is(err, onesie.ErrQuestionLimit) {
+			t.Errorf("PrepareRaw error = %v, want ErrQuestionLimit", err)
+		}
+	})
 }
 
 func manyOptions(n int) string {

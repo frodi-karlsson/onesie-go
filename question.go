@@ -11,6 +11,8 @@ import (
 const (
 	// MaxChoiceOptions is the most options a choice question may have.
 	MaxChoiceOptions = 255
+	// MinScoreLevels is the fewest levels a score question may have.
+	MinScoreLevels = 2
 	// MaxScoreLevels is the most levels a score question may have.
 	MaxScoreLevels = 10
 )
@@ -39,6 +41,7 @@ func ValidateQuestions(questions Questions) error {
 			return &ValidationError{
 				Question: named.ID,
 				Message:  fmt.Sprintf("duplicate question id '%s'", printable(named.ID)),
+				kind:     ErrDuplicateQuestion,
 			}
 		}
 
@@ -177,10 +180,11 @@ func (q Score) MarshalJSON() ([]byte, error) {
 
 func (q Score) validate(name string) error {
 	switch {
-	case len(q.Criteria) < 2:
+	case len(q.Criteria) < MinScoreLevels:
 		return &ValidationError{
 			Question: name,
 			Message:  fmt.Sprintf("score question '%s' has %d criteria, at least two are required", printable(name), len(q.Criteria)),
+			kind:     ErrQuestionLimit,
 		}
 	default:
 		return checkLevelCount(name, len(q.Criteria))
@@ -199,6 +203,7 @@ func tooManyOptions(name string, count int) error {
 	return &ValidationError{
 		Question: name,
 		Message:  fmt.Sprintf("choice question '%s' has %d options, and at most %d are allowed", printable(name), count, MaxChoiceOptions),
+		kind:     ErrQuestionLimit,
 	}
 }
 
@@ -206,6 +211,7 @@ func tooManyLevels(name string, count int) error {
 	return &ValidationError{
 		Question: name,
 		Message:  fmt.Sprintf("score question '%s' has %d levels, and at most %d are allowed", printable(name), count, MaxScoreLevels),
+		kind:     ErrQuestionLimit,
 	}
 }
 
