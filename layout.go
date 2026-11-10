@@ -64,7 +64,7 @@ func writeBody(req Request, model string, shape layout) (jsonBody, error) {
 		members = append(members, member{name: s.name, value: raw[s.start+1 : s.end]})
 	}
 
-	return jsonBody{members: members, object: true, raw: raw, read: true}, nil
+	return jsonBody{members: members, raw: raw}, nil
 }
 
 type layout int

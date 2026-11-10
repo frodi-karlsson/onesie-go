@@ -21,8 +21,6 @@ func TestScanMembers(t *testing.T) {
 		{name: "should not see null assets", body: `{"state":"s","questions":{},"assets":null}`},
 		{name: "should not see a text body", body: `{"state":"s","questions":{"q":{"type":"noul"}}}`},
 		{name: "should match the assets name exactly", body: `{"state":"s","questions":{},"Assets":{"r":{}}}`},
-		{name: "should not see a top level that is not an object", body: `["assets"]`},
-		{name: "should not see a body that does not parse", body: `{"assets":`},
 		{name: "should read the model", body: `{"model":"clef","questions":{}}`, want: bodyScan{model: "clef"}},
 		{name: "should trim the model", body: `{"model":"  clef ","questions":{}}`, want: bodyScan{model: "clef"}},
 		{name: "should read a blank model as none", body: `{"model":"   ","questions":{}}`},
@@ -38,7 +36,7 @@ func TestScanMembers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := scanMembers(newBody([]byte(tc.body)).parsed().members); got != tc.want {
+			if got := scanMembers(readBody(t, tc.body).members); got != tc.want {
 				t.Errorf("scanMembers = %+v, want %+v", got, tc.want)
 			}
 		})

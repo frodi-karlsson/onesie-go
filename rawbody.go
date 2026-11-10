@@ -94,7 +94,7 @@ func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) 
 func readRawBody(raw []byte) (jsonBody, error) {
 	members, err := readMembers(raw)
 	if err == nil {
-		return jsonBody{members: members, object: true, raw: raw, read: true}, nil
+		return jsonBody{members: members, raw: raw}, nil
 	}
 
 	var syntactic *jsontext.SyntacticError
@@ -180,10 +180,6 @@ func questionsIn(members []member) (Questions, error) {
 }
 
 func lastWins(b jsonBody) jsonBody {
-	if b = b.parsed(); !b.object {
-		return b
-	}
-
 	kept := lastOf(b.members)
 	if len(kept) == len(b.members) {
 		return b
@@ -214,7 +210,7 @@ func lastOf(members []member) []member {
 }
 
 func fillModel(b jsonBody, model string) jsonBody {
-	if b = b.parsed(); !b.object || model == "" || !blankModel(b.members) {
+	if model == "" || !blankModel(b.members) {
 		return b
 	}
 
@@ -227,7 +223,7 @@ func fillModel(b jsonBody, model string) jsonBody {
 }
 
 func setLongContext(b jsonBody) jsonBody {
-	if b = b.parsed(); !b.object || soleLongContext(b.members) {
+	if soleLongContext(b.members) {
 		return b
 	}
 

@@ -178,9 +178,9 @@ func encodeFault(err error) string {
 }
 
 func syntaxFault(syntactic *jsontext.SyntacticError) string {
-	// A fault outside every member has no pointer, so the offset says where it is.
+	// A fault between members has no pointer, so the offset says where it is.
 	if syntactic.JSONPointer == "" {
-		return fmt.Sprintf("%v after offset %d", syntactic.Err, syntactic.ByteOffset)
+		return fmt.Sprintf("%v at offset %d", syntactic.Err, syntactic.ByteOffset)
 	}
 
 	return fmt.Sprintf("%v at %s", syntactic.Err, place(syntactic.JSONPointer))

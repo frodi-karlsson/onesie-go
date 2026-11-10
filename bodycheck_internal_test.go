@@ -85,7 +85,7 @@ func TestCheckBodyImages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := checkBodyImages(newBody([]byte(tc.body)).parsed().members)
+			err := checkBodyImages(readBody(t, tc.body).members)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)

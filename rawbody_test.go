@@ -49,10 +49,9 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{name: "should keep a body's own long context without the option", body: `{"model":"m","long_context":true}`, want: `{"model":"m","long_context":true}`},
 		{name: "should refuse a long context that is not true or false", body: `{"model":"m","long_context":"yes"}`, wantErr: "onesie: long_context must be true or false"},
 		{
-			name: "should show a body as written while sending it compact", body: "{\n  \"model\": \"m\",\n  \"state\": [ 1 , 2 ]\n}",
+			name: "should show a body as written", body: "{\n  \"model\": \"m\",\n  \"state\": [ 1 , 2 ]\n}",
 			want: "{\n  \"model\": \"m\",\n  \"state\": [ 1 , 2 ]\n}",
 		},
-		{name: "should refuse an array before reading anything else", body: `[1]`, wantErr: "onesie: the request body must be a JSON object, got an array"},
 		{name: "should refuse a body that is not UTF-8", body: "{\"long_context\":\"yes\",\"state\":\"\xff\"}", wantErr: "onesie: the request body is not JSON: invalid UTF-8 at /state"},
 		{
 			name: "should refuse what the provider refuses while encoding", provider: onesie.Cloudflare(),
