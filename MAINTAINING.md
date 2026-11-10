@@ -9,7 +9,7 @@ Run `make tidy` after changing imports or the Go version.
 `testdata/encode` holds the body `MarshalBody` writes and the payload each route sends for every case
 of the encode corpus in `corpus_test.go`, or the error a route refuses it with. After a change to the
 encoding made on purpose, rewrite them with `go test -run 'TestMarshalBody|TestClientSystemOne' -update-encode`
-and review the diff, which shows exactly what a provider now receives.
+and review the diff, which shows exactly what a provider receives.
 
 Run `make test-integration` for the live API suite. It reads `TYPESAFE_API_KEY`,
 `OPENROUTER_API_KEY`, `BERGET_API_KEY`, `LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN` and
