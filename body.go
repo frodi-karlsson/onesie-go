@@ -7,6 +7,11 @@ import (
 	"io"
 )
 
+var (
+	errNotObject   = errors.New("the body is not an object")
+	errAfterObject = errors.New("the body has data after its object")
+)
+
 func newBody(raw []byte) jsonBody {
 	return jsonBody{raw: raw}
 }
@@ -58,7 +63,7 @@ func readMembers(body []byte) ([]member, error) {
 	}
 
 	if open.Kind() != '{' {
-		return nil, errors.New("the body is not an object")
+		return nil, errNotObject
 	}
 
 	var members []member
@@ -83,7 +88,7 @@ func readMembers(body []byte) ([]member, error) {
 	}
 
 	if _, err = dec.ReadToken(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("the body has data after its object")
+		return nil, errAfterObject
 	}
 
 	return members, nil

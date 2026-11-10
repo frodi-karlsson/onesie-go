@@ -1,44 +1,44 @@
 package onesie
 
 import (
-	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 )
 
-func TestCheckJSON(t *testing.T) {
+func TestReadRawBody(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		body       string
-		refused    bool
-		wantOffset int64
+		name    string
+		body    string
+		members int
+		wantErr string
 	}{
-		{name: "should take a body that is JSON", body: "{\n  \"state\": 1\n}"},
-		{name: "should take a JSON value that is not an object", body: `[1]`},
-		{name: "should refuse a body that ends early, with the syntax error behind it", body: `{"state":1,`, refused: true, wantOffset: 11},
-		{name: "should refuse an empty body, with the syntax error behind it", refused: true},
+		{name: "should read the members of an object", body: "{\n  \"state\": 1, \"model\": \"m\"\n}", members: 2},
+		{name: "should refuse a body that ends early", body: `{"state":1,`, wantErr: "onesie: the request body is not JSON: unexpected EOF after offset 11"},
+		{name: "should refuse a fault outside every member by its offset", body: `x`, wantErr: "onesie: the request body is not JSON: invalid character 'x' at start of value after offset 0"},
+		{name: "should refuse invalid UTF-8 at its pointer", body: "{\"state\":\"\xff\"}", wantErr: "onesie: the request body is not JSON: invalid UTF-8 at /state"},
+		{name: "should refuse a lone surrogate, which json.Valid took", body: `{"state":"\ud800"}`, wantErr: "onesie: the request body is not JSON: invalid surrogate pair `\\ud800\"}` in string at /state"},
+		{name: "should refuse an empty body", body: " ", wantErr: "onesie: the request body is empty"},
+		{name: "should refuse a JSON value that is not an object", body: `[1]`, wantErr: "onesie: the request body must be a JSON object, got an array"},
+		{name: "should refuse data after the object", body: `{"state":1} {}`, wantErr: "onesie: the request body has data after its object"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := checkJSON([]byte(tc.body))
-			if !tc.refused {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
+			got, err := readRawBody([]byte(tc.body))
+			if tc.wantErr == "" {
+				if err != nil || len(got.members) != tc.members || !got.object {
+					t.Errorf("readRawBody = %d members, %v, want %d", len(got.members), err, tc.members)
 				}
 
 				return
 			}
 
-			var syntax *json.SyntaxError
-			if !errors.Is(err, ErrValidation) || !strings.HasPrefix(err.Error(), "onesie: the request body is not JSON: ") ||
-				!errors.As(err, &syntax) || syntax.Offset != tc.wantOffset {
-				t.Errorf("error = %v, want a refusal that the body is not JSON, from a syntax error at offset %d", err, tc.wantOffset)
+			if !errors.Is(err, ErrValidation) || err.Error() != tc.wantErr {
+				t.Errorf("readRawBody error = %v, want %q", err, tc.wantErr)
 			}
 		})
 	}

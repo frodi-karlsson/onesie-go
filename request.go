@@ -167,7 +167,7 @@ func encodeFault(err error) string {
 
 	switch {
 	case errors.As(err, &syntactic) && syntactic.Err != nil:
-		return fmt.Sprintf("%v at %s", syntactic.Err, place(syntactic.JSONPointer))
+		return syntaxFault(syntactic)
 	case errors.As(err, &semantic) && semantic.Err != nil:
 		return fmt.Sprintf("Go %v at %s: %v", semantic.GoType, place(semantic.JSONPointer), semantic.Err)
 	case errors.As(err, &semantic):
@@ -175,6 +175,15 @@ func encodeFault(err error) string {
 	default:
 		return err.Error()
 	}
+}
+
+func syntaxFault(syntactic *jsontext.SyntacticError) string {
+	// A fault outside every member has no pointer, so the offset says where it is.
+	if syntactic.JSONPointer == "" {
+		return fmt.Sprintf("%v after offset %d", syntactic.Err, syntactic.ByteOffset)
+	}
+
+	return fmt.Sprintf("%v at %s", syntactic.Err, place(syntactic.JSONPointer))
 }
 
 func place(pointer jsontext.Pointer) string {
