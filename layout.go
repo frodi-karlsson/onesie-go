@@ -96,10 +96,9 @@ func (shape layout) member(name string, req Request, model string) (any, bool) {
 		return req.Questions, true
 	case "long_context":
 		return true, req.LongContext
-	case "assets":
-		return req.Assets, shape == wholeBody && len(req.Assets) > 0
 	default:
-		return nil, false
+		// bodyOrder names only these five members, so the one left is the assets.
+		return req.Assets, shape == wholeBody && len(req.Assets) > 0
 	}
 }
 
