@@ -167,7 +167,10 @@ func wireValue(id string, value jsontext.Value) (any, error) {
 
 	var scalar any
 	if err := json.Unmarshal(value, &scalar); err != nil {
-		return nil, questionFault(id, "question '%s' has a value that cannot be read: %v", err)
+		fault := questionFault(id, "question '%s' has a value that cannot be read: %v", err)
+		fault.cause = err
+
+		return nil, fault
 	}
 
 	return scalar, nil

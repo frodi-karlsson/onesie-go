@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/frodi-karlsson/onesie-go"
@@ -272,10 +273,6 @@ func TestQuestionsUnmarshalJSON(t *testing.T) {
 		{name: "should refuse a score whose criteria are an object", body: `{"r":{"type":"score","criteria":{"a":1}}}`, question: "r", want: "onesie: score question 'r' needs criteria as an array"},
 		{name: "should refuse a score with null criteria", body: `{"r":{"type":"score","criteria":null}}`, question: "r", want: "onesie: score question 'r' needs criteria as an array"},
 		{name: "should refuse a noul whose criteria are text", body: `{"u":{"type":"noul","criteria":"yes"}}`, question: "u", want: "onesie: noul question 'u' needs criteria as an object, or none"},
-		{
-			name: "should refuse a number too large to read", body: `{"q":{"type":"noul","instructions":1e400}}`, question: "q",
-			want: "onesie: question 'q' has a value that cannot be read: json: cannot unmarshal number 1e400 into Go value of type float64",
-		},
 	}
 
 	for _, tc := range refusals {
@@ -292,6 +289,25 @@ func TestQuestionsUnmarshalJSON(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should refuse a number too large to read, with the decoding error behind it", func(t *testing.T) {
+		t.Parallel()
+
+		var got onesie.Questions
+
+		err := json.Unmarshal([]byte(`{"q":{"type":"noul","instructions":1e400}}`), &got)
+
+		var (
+			refused *onesie.ValidationError
+			typed   *json.UnmarshalTypeError
+		)
+
+		if !errors.As(err, &refused) || refused.Question != "q" ||
+			!strings.HasPrefix(err.Error(), "onesie: question 'q' has a value that cannot be read: ") ||
+			!errors.As(err, &typed) || typed.Value != "number 1e400" || typed.Type != reflect.TypeFor[float64]() {
+			t.Fatalf("error = %v, want a refusal of question 'q' from the decoding error on 1e400", err)
+		}
+	})
 }
 
 func TestValidateQuestions(t *testing.T) {

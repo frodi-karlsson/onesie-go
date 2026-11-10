@@ -111,7 +111,7 @@ func compactBody(body []byte) ([]byte, error) {
 	var flat bytes.Buffer
 
 	if err := json.Compact(&flat, body); err != nil {
-		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error()}
+		return nil, &ValidationError{Message: "the request body is not JSON: " + err.Error(), cause: err}
 	}
 
 	return flat.Bytes(), nil
