@@ -45,7 +45,7 @@ func writeBody(req Request, model string, shape layout) (jsonBody, error) {
 
 		start := enc.OutputOffset()
 
-		if err := jsonv2.MarshalEncode(enc, part.value, bodyOptions); err != nil {
+		if err := jsonv2.MarshalEncode(enc, part.value); err != nil {
 			return jsonBody{}, err
 		}
 
@@ -96,8 +96,10 @@ func (shape layout) member(name string, req Request, model string) (any, bool) {
 		return req.Questions, true
 	case "long_context":
 		return true, req.LongContext
-	default:
+	case "assets":
 		return req.Assets, shape == wholeBody && len(req.Assets) > 0
+	default:
+		return nil, false
 	}
 }
 
