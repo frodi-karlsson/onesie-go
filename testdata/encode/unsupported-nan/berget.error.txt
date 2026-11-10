@@ -1,2 +1,1 @@
-onesie: the request cannot be encoded
-json.SemanticError: Go float64 within "/state"
+onesie: the request cannot be encoded: Go float64 at /state: unsupported value: NaN

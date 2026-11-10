@@ -1,7 +1,9 @@
 package onesie
 
 import (
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -178,7 +180,31 @@ func stringValues(req Request) ([]string, error) {
 }
 
 func unencodable(err error) error {
-	return &ValidationError{Message: "the request cannot be encoded: " + err.Error(), cause: err}
+	return &ValidationError{Message: "the request cannot be encoded: " + encodeFault(err), cause: err}
+}
+
+func encodeFault(err error) string {
+	// encoding/json/v2 words its own errors at random once a process, so the refusal is worded from
+	// the fields it does promise. A syntactic error comes first, since a semantic one can wrap it.
+	var (
+		syntactic *jsontext.SyntacticError
+		semantic  *jsonv2.SemanticError
+	)
+
+	switch {
+	case errors.As(err, &syntactic) && syntactic.Err != nil:
+		return fmt.Sprintf("%v at %s", syntactic.Err, place(syntactic.JSONPointer))
+	case errors.As(err, &semantic) && semantic.Err != nil:
+		return fmt.Sprintf("Go %v at %s: %v", semantic.GoType, place(semantic.JSONPointer), semantic.Err)
+	case errors.As(err, &semantic):
+		return fmt.Sprintf("Go %v at %s has no JSON encoding", semantic.GoType, place(semantic.JSONPointer))
+	default:
+		return err.Error()
+	}
+}
+
+func place(pointer jsontext.Pointer) string {
+	return printable(string(pointer))
 }
 
 func sideFits(side int) bool {
