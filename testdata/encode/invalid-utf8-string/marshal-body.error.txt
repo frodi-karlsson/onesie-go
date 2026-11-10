@@ -1,1 +1,1 @@
-jsontext.SyntacticError: within "/state"
+onesie: the request cannot be encoded: invalid UTF-8 at /state

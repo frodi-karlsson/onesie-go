@@ -376,26 +376,34 @@ func billedUsage(decoded []byte) *Usage {
 	return billed.Usage
 }
 
-// MarshalBody encodes a request as a raw body SystemOneRaw accepts. State, instructions and criteria
-// are encoded with encoding/json/v2's defaults, so omitempty keeps a zero number or false.
+// MarshalBody encodes a request as a raw body SystemOneRaw accepts, or refuses it with a *ValidationError.
+// State, instructions and criteria are encoded with encoding/json/v2's defaults, so omitempty keeps a zero.
 func MarshalBody(req Request) ([]byte, error) {
-	return jsonv2.Marshal(struct {
+	return encodedOrRefused(jsonv2.Marshal(struct {
 		State       any       `json:"state"`
 		Model       string    `json:"model"`
 		Questions   Questions `json:"questions"`
 		LongContext bool      `json:"long_context,omitzero"`
 		Assets      Assets    `json:"assets,omitempty"`
-	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets}, bodyOptions)
+	}{State: req.State, Model: req.Model, Questions: req.Questions, LongContext: req.LongContext, Assets: req.Assets}, bodyOptions))
 }
 
 // MarshalQuestionsBody encodes req's model and questions with no state key, since a null state is a
-// state. LongContext adds long_context, and the assets are left out.
+// state, or refuses them as MarshalBody does. LongContext adds long_context, and the assets are left out.
 func MarshalQuestionsBody(req Request) ([]byte, error) {
-	return jsonv2.Marshal(struct {
+	return encodedOrRefused(jsonv2.Marshal(struct {
 		Model       string    `json:"model"`
 		Questions   Questions `json:"questions"`
 		LongContext bool      `json:"long_context,omitzero"`
-	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext}, bodyOptions)
+	}{Model: req.Model, Questions: req.Questions, LongContext: req.LongContext}, bodyOptions))
+}
+
+func encodedOrRefused(body []byte, err error) ([]byte, error) {
+	if err != nil {
+		return nil, unencodable(err)
+	}
+
+	return body, nil
 }
 
 // Request is one evaluation, whose questions all see the same state and are answered independently.

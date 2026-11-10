@@ -124,12 +124,7 @@ type requestPlan struct {
 
 func marshalRequest(req Request, model string) ([]byte, error) {
 	// Long context travels as a header, so the body never carries it.
-	body, err := MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
-	if err != nil {
-		return nil, unencodable(err)
-	}
-
-	return body, nil
+	return MarshalBody(Request{State: req.State, Model: model, Questions: req.Questions, Assets: req.Assets})
 }
 
 type encoded struct {
