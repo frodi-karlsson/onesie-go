@@ -22,10 +22,10 @@ func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...
 		return nil, err
 	}
 
-	return p.prepare(bytes.Clone(body), defaultModel, cfg.longContext)
+	return p.prepareRaw(bytes.Clone(body), defaultModel, cfg.longContext)
 }
 
-func (p Provider) prepare(raw []byte, defaultModel string, longContext bool) (*PreparedBody, error) {
+func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) (*PreparedBody, error) {
 	if err := checkJSON(raw); err != nil {
 		return nil, err
 	}
@@ -108,8 +108,8 @@ func checkModel(members []member) error {
 	return nil
 }
 
-// PreparedBody is a body Client.Prepare or Provider.PrepareRaw checked and encoded for one provider,
-// which SendPrepared sends as it is. Its facts are the ones that send uses.
+// PreparedBody is a body Prepare or PrepareRaw checked and encoded for one provider, which SendPrepared
+// sends as it is. Its facts are the ones that send uses.
 type PreparedBody struct {
 	provider string
 	shown    []byte
@@ -136,6 +136,12 @@ func (b *PreparedBody) LongContext() bool {
 // Box reports whether the body asks a box question.
 func (b *PreparedBody) Box() bool {
 	return b.sent.needs.box
+}
+
+// CheckResult checks result against the questions the body asks, as SendPrepared checks every reply.
+// It returns what Result.Check returns.
+func (b *PreparedBody) CheckResult(result *Result) error {
+	return result.Check(b.asked)
 }
 
 // QuestionCount is the number of distinct ids in the body's questions member, each of which a send

@@ -12,7 +12,6 @@ import (
 	"os"
 	"path"
 	"runtime"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -271,38 +270,22 @@ func (c *Client) withModel(req Request) Request {
 	return req
 }
 
-// Prepare validates and encodes req once, as SystemOne would, for SendPrepared. Of opts only
-// WithLongContext applies. A cache keys on Bytes, the provider, the base URL and WithHeader headers.
+// Prepare is Provider.Prepare with this client's default model. A cache keys on the body's Bytes with
+// this client's provider, base URL and WithHeader headers.
 func (c *Client) Prepare(req Request, opts ...RequestOption) (*PreparedBody, error) {
 	cfg, err := c.resolve(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	req = c.withModel(req)
-
-	sent, body, err := c.provider.validated(req, cfg.longContext)
-	if err != nil {
-		return nil, err
-	}
-
-	shown := body
-	if sent.needs.longContext {
-		if shown, err = setLongContext(newBody(body)).bytes(); err != nil {
-			return nil, err
-		}
-	}
-
-	return &PreparedBody{
-		provider: c.provider.name, shown: shown, sent: sent, model: req.Model, asked: slices.Clone(req.Questions),
-	}, nil
+	return c.provider.prepare(c.withModel(req), cfg.longContext)
 }
 
 // SendPrepared sends a body Prepare or PrepareRaw prepared for this client's provider without preparing
 // it again, and returns its checked result and the response body as the route decoded it, on one line.
 func (c *Client) SendPrepared(ctx context.Context, body *PreparedBody, opts ...RequestOption) (*Result, json.RawMessage, error) {
 	if body == nil {
-		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Client.Prepare or Provider.PrepareRaw"}
+		return nil, nil, &ValidationError{Message: "the prepared body is nil. Use Client.Prepare, Provider.Prepare or Provider.PrepareRaw"}
 	}
 
 	if body.provider != c.provider.name {
@@ -437,7 +420,7 @@ func (c *Client) SystemOneRaw(
 		return nil, err
 	}
 
-	prepared, err := c.provider.prepare(body, c.defaultModel, cfg.longContext)
+	prepared, err := c.provider.prepareRaw(body, c.defaultModel, cfg.longContext)
 	if err != nil {
 		return nil, err
 	}
