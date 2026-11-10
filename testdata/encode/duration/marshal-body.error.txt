@@ -1,1 +1,1 @@
-json: cannot marshal from Go time.Duration within "/state/waited": no default representation
+json.SemanticError: Go time.Duration within "/state/waited"

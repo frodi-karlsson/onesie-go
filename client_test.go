@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -4603,8 +4605,9 @@ func TestMarshalQuestionsBody(t *testing.T) {
 			Criteria: onesie.Criteria{{Name: "a", Desc: make(chan int)}},
 		}}}}
 
-		if _, err := onesie.MarshalQuestionsBody(req); err == nil || !strings.Contains(err.Error(), "cannot marshal from Go chan int") {
-			t.Fatalf("error = %v, want an unsupported type", err)
+		var semantic *jsonv2.SemanticError
+		if _, err := onesie.MarshalQuestionsBody(req); !errors.As(err, &semantic) || semantic.GoType != reflect.TypeFor[chan int]() {
+			t.Fatalf("error = %v, want an encoding error on Go chan int", err)
 		}
 	})
 }

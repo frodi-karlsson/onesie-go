@@ -1,1 +1,1 @@
-json: cannot marshal from Go string within "/state/s": invalid use of `string` tag option
+json.SemanticError: Go string within "/state/s"

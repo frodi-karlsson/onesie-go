@@ -1,1 +1,2 @@
-onesie: the request cannot be encoded: json: cannot marshal from Go float64 within "/state": unsupported value: NaN
+onesie: the request cannot be encoded
+json.SemanticError: Go float64 within "/state"

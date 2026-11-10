@@ -3,8 +3,11 @@ package onesie_test
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -28,7 +31,7 @@ func checkEncodeGolden(t *testing.T, dir, name string, got []byte, err error) {
 	path := filepath.Join("testdata", "encode", dir, name+".json")
 	if err != nil {
 		path = filepath.Join("testdata", "encode", dir, name+".error.txt")
-		got = []byte(err.Error() + "\n")
+		got = []byte(encodeErrorRecord(t, err))
 	}
 
 	if *updateEncode {
@@ -45,6 +48,39 @@ func checkEncodeGolden(t *testing.T, dir, name string, got []byte, err error) {
 	if !bytes.Equal(got, want) {
 		t.Errorf("%s %s =\n%s\nwant %s:\n%s", dir, name, got, path, want)
 	}
+}
+
+// encoding/json/v2 words its errors at random once a process, so that nothing matches on them. A
+// golden records onesie's own words and the fields v2 does promise: the error's type, Go type and place.
+func encodeErrorRecord(t *testing.T, err error) string {
+	t.Helper()
+
+	var (
+		semantic  *jsonv2.SemanticError
+		syntactic *jsontext.SyntacticError
+		fault     error
+		fields    string
+	)
+
+	switch {
+	case errors.As(err, &semantic):
+		fault, fields = semantic, fmt.Sprintf("json.SemanticError: Go %v within %q", semantic.GoType, semantic.JSONPointer)
+	case errors.As(err, &syntactic):
+		fault, fields = syntactic, fmt.Sprintf("jsontext.SyntacticError: within %q", syntactic.JSONPointer)
+	default:
+		return err.Error() + "\n"
+	}
+
+	own, found := strings.CutSuffix(err.Error(), fault.Error())
+	if !found {
+		t.Fatalf("%v does not end with the encoding error it wraps, %v", err, fault)
+	}
+
+	if own = strings.TrimSuffix(own, ": "); own == "" {
+		return fields + "\n"
+	}
+
+	return own + "\n" + fields + "\n"
 }
 
 func writeEncodeGolden(t *testing.T, dir, name, path string, got []byte) {

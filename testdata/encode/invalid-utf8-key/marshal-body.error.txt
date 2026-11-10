@@ -1,1 +1,1 @@
-jsontext: invalid UTF-8 within "/state" after offset 10
+jsontext.SyntacticError: within "/state"

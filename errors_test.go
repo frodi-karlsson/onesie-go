@@ -1098,6 +1098,27 @@ func TestValidationErrorReason(t *testing.T) {
 	})
 }
 
+func TestValidationErrorUnwrap(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should give the encoding error behind a request that cannot be encoded", func(t *testing.T) {
+		t.Parallel()
+
+		cause := errors.New("the encoding error")
+		if err := unencodable(cause); !errors.Is(err, cause) || !errors.Is(err, ErrValidation) {
+			t.Errorf("unencodable = %v, want it to match the cause and ErrValidation", err)
+		}
+	})
+
+	t.Run("should give nothing for a refusal with no cause", func(t *testing.T) {
+		t.Parallel()
+
+		if got := (&ValidationError{Message: "bad"}).Unwrap(); got != nil {
+			t.Errorf("Unwrap = %v, want nil", got)
+		}
+	})
+}
+
 func TestAPIErrorReason(t *testing.T) {
 	t.Parallel()
 

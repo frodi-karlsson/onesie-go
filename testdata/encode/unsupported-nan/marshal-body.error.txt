@@ -1,1 +1,1 @@
-json: cannot marshal from Go float64 within "/state": unsupported value: NaN
+json.SemanticError: Go float64 within "/state"

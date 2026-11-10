@@ -179,7 +179,7 @@ func stringValues(req Request) ([]string, error) {
 }
 
 func unencodable(err error) error {
-	return &ValidationError{Message: "the request cannot be encoded: " + err.Error()}
+	return &ValidationError{Message: "the request cannot be encoded: " + err.Error(), cause: err}
 }
 
 func sideFits(side int) bool {

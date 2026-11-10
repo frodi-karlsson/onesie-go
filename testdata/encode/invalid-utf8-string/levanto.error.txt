@@ -1,1 +1,2 @@
-onesie: the request cannot be encoded: jsontext: invalid UTF-8 within "/state" after offset 9
+onesie: the request cannot be encoded
+jsontext.SyntacticError: within "/state"
