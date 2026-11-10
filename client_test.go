@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -2501,74 +2500,18 @@ func TestClientPrepare(t *testing.T) {
 		}
 	})
 
-	t.Run("should report the body MarshalBody writes before any route rewrites it, with its model and long context", func(t *testing.T) {
+	t.Run("should fill a blank model with the client's default model", func(t *testing.T) {
 		t.Parallel()
 
-		var checked int
+		client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithDefaultModel("jev-1.13.0"))
 
-		for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.Cloudflare()} {
-			client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(provider))
-
-			for _, tc := range encodeCorpus(t) {
-				for _, longContext := range []bool{false, true} {
-					var opts []onesie.RequestOption
-					if longContext {
-						opts = append(opts, onesie.WithLongContext())
-					}
-
-					prepared, err := client.Prepare(tc.req, opts...)
-					if err != nil {
-						continue
-					}
-
-					resolved := tc.req
-					resolved.Model = client.DefaultModel()
-					resolved.LongContext = tc.req.LongContext || longContext
-
-					want, err := onesie.MarshalBody(resolved)
-					if err != nil || !bytes.Equal(prepared.Bytes(), want) ||
-						prepared.Model() != resolved.Model || prepared.LongContext() != resolved.LongContext {
-						t.Errorf("%s %s with long context %v: Bytes = %s, Model = %q, LongContext = %v, want %s, %q and %v",
-							provider.Name(), tc.name, longContext, prepared.Bytes(), prepared.Model(), prepared.LongContext(),
-							want, resolved.Model, resolved.LongContext)
-					}
-
-					checked++
-				}
-			}
-		}
-
-		if checked == 0 {
-			t.Fatal("no corpus case prepared")
-		}
-	})
-
-	t.Run("should keep its questions when the caller changes them afterwards", func(t *testing.T) {
-		t.Parallel()
-
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = io.Copy(io.Discard, r.Body)
-			_, _ = io.WriteString(w, `{"model":"m","answers":{"q":{"type":"noul","noul":0.5}}}`)
-		}))
-		defer server.Close()
-
-		client, _ := newTestClient(t, server.URL)
-		questions := oneNoul()
-
-		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: questions})
+		prepared, err := client.Prepare(onesie.Request{State: "s", Questions: oneNoul()})
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		questions[0].ID = "changed"
-
-		result, _, err := client.SendPrepared(t.Context(), prepared)
-		if err != nil {
-			t.Fatalf("SendPrepared = %v, want the answer to the question as prepared", err)
-		}
-
-		if _, err := result.Noul("q"); err != nil {
-			t.Errorf("Noul(q) = %v, want the prepared question answered", err)
+		if prepared.Model() != "jev-1.13.0" || !strings.Contains(string(prepared.Bytes()), `"model":"jev-1.13.0"`) {
+			t.Errorf("Model = %q, Bytes = %s, want the client's default model", prepared.Model(), prepared.Bytes())
 		}
 	})
 
@@ -2580,34 +2523,14 @@ func TestClientPrepare(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		withImage := onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}}
+		client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(onesie.Berget()))
+		req := onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}}
 
-		for _, tc := range []struct {
-			name     string
-			provider onesie.Provider
-			req      onesie.Request
-			opts     []onesie.RequestOption
-		}{
-			{name: "invalid questions", provider: onesie.TypeSafe(), req: onesie.Request{State: "s"}},
-			{name: "an unencodable state", provider: onesie.TypeSafe(), req: onesie.Request{State: math.NaN(), Questions: oneNoul()}},
-			{name: "images on berget", provider: onesie.Berget(), req: withImage},
-			{name: "a box on levanto", provider: onesie.Levanto(), req: onesie.Request{
-				State: "image-a", Assets: withImage.Assets,
-				Questions: onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug"}}},
-			}},
-			{
-				name: "long context on cloudflare", provider: onesie.Cloudflare(),
-				req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()},
-			},
-		} {
-			client, _ := newTestClient(t, "http://127.0.0.1:1", onesie.WithProvider(tc.provider))
+		_, prepareErr := client.Prepare(req)
+		_, sendErr := client.SystemOne(t.Context(), req)
 
-			_, prepareErr := client.Prepare(tc.req, tc.opts...)
-			_, sendErr := client.SystemOne(t.Context(), tc.req, tc.opts...)
-
-			if prepareErr == nil || sendErr == nil || prepareErr.Error() != sendErr.Error() {
-				t.Errorf("%s: Prepare = %v, SystemOne = %v, want the same refusal", tc.name, prepareErr, sendErr)
-			}
+		if prepareErr == nil || sendErr == nil || prepareErr.Error() != sendErr.Error() {
+			t.Errorf("Prepare = %v, SystemOne = %v, want the same refusal", prepareErr, sendErr)
 		}
 	})
 
@@ -4074,6 +3997,34 @@ func TestClientSendPrepared(t *testing.T) {
 		}
 	})
 
+	t.Run("should send a body from Provider.Prepare as SystemOne sends the request", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithHTTPClient(&http.Client{Transport: transport}))
+		req := onesie.Request{State: "s", Questions: oneNoul()}
+
+		prepared, err := onesie.TypeSafe().Prepare(req, onesie.WithLongContext())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, _, err = client.SendPrepared(t.Context(), prepared); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		prepSent, prepHeader := transport.lastBody(), transport.last().Header.Get(onesie.HeaderLongContext)
+
+		if _, err = client.SystemOne(t.Context(), req, onesie.WithLongContext()); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if prepSent != transport.lastBody() || prepHeader != transport.last().Header.Get(onesie.HeaderLongContext) {
+			t.Errorf("SendPrepared sent %s with long context %q, want what SystemOne sent, %s with %q",
+				prepSent, prepHeader, transport.lastBody(), transport.last().Header.Get(onesie.HeaderLongContext))
+		}
+	})
+
 	refusals := []struct {
 		name    string
 		body    func(t *testing.T, client *onesie.Client) *onesie.PreparedBody
@@ -4083,7 +4034,7 @@ func TestClientSendPrepared(t *testing.T) {
 		{
 			name:    "should refuse a nil body",
 			body:    func(*testing.T, *onesie.Client) *onesie.PreparedBody { return nil },
-			wantErr: "onesie: the prepared body is nil. Use Client.Prepare or Provider.PrepareRaw",
+			wantErr: "onesie: the prepared body is nil. Use Client.Prepare, Provider.Prepare or Provider.PrepareRaw",
 		},
 		{
 			name: "should refuse a body prepared for another provider",

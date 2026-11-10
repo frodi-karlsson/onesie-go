@@ -51,8 +51,11 @@ go without a key, and such a client sends no API key.
 ## Preparing a request
 
 `Client.Prepare` validates and encodes a request once, as `SystemOne` would send it, and
-`SendPrepared` sends it. A caller that deduplicates or caches requests keys on the prepared body's
-`Bytes()`, with the client's provider, base URL and any header set with `onesie.WithHeader`.
+`SendPrepared` sends it. `Provider.Prepare` does the same with no client and no key, and a blank
+model is then the provider's built in default. `Bytes()` is the request as `MarshalBody` writes it
+with the model filled, which a dry run can print. A caller that deduplicates or caches requests keys
+on `Bytes()`, with the client's provider, base URL and any header set with `onesie.WithHeader`.
+`CheckResult` checks a stored result against the body's questions, as a send checks its reply.
 
 ## Encoding
 

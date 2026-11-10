@@ -248,3 +248,42 @@ func manyOptions(n int) string {
 
 	return "{" + strings.Join(names, ",") + "}"
 }
+
+func TestPreparedBodyCheckResult(t *testing.T) {
+	t.Parallel()
+
+	choice := onesie.Questions{{ID: "pick", Question: onesie.Choice{Instructions: "Which?", Criteria: onesie.Criteria{{Name: "a"}, {Name: "b"}}}}}
+
+	prepared, err := onesie.TypeSafe().Prepare(onesie.Request{State: "s", Questions: choice})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		answers   string
+		wantFault bool
+	}{
+		{name: "should return nil for a result that answers its questions", answers: `{"pick":{"type":"choice","choice":"a","probabilities":{"a":1,"b":0}}}`},
+		{name: "should return an AnswerFault for a choice outside its options", answers: `{"pick":{"type":"choice","choice":"c","probabilities":{"c":1}}}`, wantFault: true},
+		{name: "should return an AnswerFault for a question left unanswered", answers: `{}`, wantFault: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var result onesie.Result
+			if err := json.Unmarshal([]byte(`{"answers":`+tc.answers+`}`), &result); err != nil {
+				t.Fatal(err)
+			}
+
+			var fault *onesie.AnswerFault
+
+			err := prepared.CheckResult(&result)
+			if errors.As(err, &fault) != tc.wantFault || (err != nil) != tc.wantFault {
+				t.Errorf("CheckResult = %v, want a fault %t", err, tc.wantFault)
+			}
+		})
+	}
+}

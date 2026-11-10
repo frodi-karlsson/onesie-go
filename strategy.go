@@ -28,21 +28,57 @@ type Needs struct {
 	LongContext bool
 }
 
-// Check refuses what SystemOne would refuse for req with opts, and sends nothing. A blank model is the
-// built in default.
-func (p Provider) Check(req Request, opts ...RequestOption) error {
+// Prepare validates and encodes req as SystemOne would, with no client and no key, for SendPrepared to
+// send. A blank model is the built in default, not EnvDefaultModel, and of opts only WithLongContext applies.
+func (p Provider) Prepare(req Request, opts ...RequestOption) (*PreparedBody, error) {
 	if err := p.check(); err != nil {
-		return err
+		return nil, err
 	}
 
 	cfg, err := applyOptions(requestConfig{header: http.Header{}}, opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	_, _, err = p.validated(req, cfg.longContext)
+	return p.prepare(req, cfg.longContext)
+}
 
-	return err
+func (p Provider) prepare(req Request, longContext bool) (*PreparedBody, error) {
+	req.Model = modelOr(req.Model, p.defaultModel)
+
+	sent, body, err := p.validated(req, longContext)
+	if err != nil {
+		return nil, err
+	}
+
+	shown := body
+	if sent.needs.longContext {
+		if shown, err = setLongContext(newBody(body)).bytes(); err != nil {
+			return nil, err
+		}
+	}
+
+	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: req.Model, asked: detached(req.Questions)}, nil
+}
+
+func detached(questions Questions) Questions {
+	kept := make(Questions, len(questions))
+	for i, named := range questions {
+		kept[i] = NamedQuestion{ID: named.ID, Question: detachedQuestion(dereferenced(named.Question))}
+	}
+
+	return kept
+}
+
+func detachedQuestion(asked Question) Question {
+	// A check reads a choice's option names, which the caller's slice still holds, and of a score only
+	// its level count, which the dereferenced copy already fixed.
+	if choice, isChoice := asked.(Choice); isChoice {
+		choice.Criteria = slices.Clone(choice.Criteria)
+		return choice
+	}
+
+	return asked
 }
 
 func (p Provider) validated(req Request, longContext bool) (encoded, []byte, error) {
@@ -50,18 +86,6 @@ func (p Provider) validated(req Request, longContext bool) (encoded, []byte, err
 		return encoded{}, nil, err
 	}
 
-	return p.encoded(req, longContext, checkAssetBodySize)
-}
-
-func checkAssetBodySize(req Request, body []byte) error {
-	if len(req.Assets) == 0 {
-		return nil
-	}
-
-	return checkBodySize(len(body))
-}
-
-func (p Provider) encoded(req Request, longContext bool, checkBody func(Request, []byte) error) (encoded, []byte, error) {
 	plan := p.plan(req, longContext)
 
 	body, err := marshalRequest(req, plan.model)
@@ -69,8 +93,10 @@ func (p Provider) encoded(req Request, longContext bool, checkBody func(Request,
 		return encoded{}, nil, err
 	}
 
-	if err = checkBody(req, body); err != nil {
-		return encoded{}, nil, err
+	if len(req.Assets) > 0 {
+		if err = checkBodySize(len(body)); err != nil {
+			return encoded{}, nil, err
+		}
 	}
 
 	if err = plan.via.refuse(p.name, plan.model, plan.needs); err != nil {
@@ -80,18 +106,6 @@ func (p Provider) encoded(req Request, longContext bool, checkBody func(Request,
 	sent, err := encodeBody(plan.via, plan.needs, newBody(body))
 
 	return sent, body, err
-}
-
-// Encode returns the body SystemOne sends for req, without the headers it adds, and refuses a request
-// this provider's route does not take. A blank model is the built in default. It does not validate.
-func (p Provider) Encode(req Request) ([]byte, error) {
-	if err := p.check(); err != nil {
-		return nil, err
-	}
-
-	sent, _, err := p.encoded(req, false, func(Request, []byte) error { return nil })
-
-	return sent.body, err
 }
 
 func (p Provider) plan(req Request, longContext bool) requestPlan {
