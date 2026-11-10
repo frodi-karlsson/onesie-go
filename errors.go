@@ -35,9 +35,11 @@ var (
 	ErrContextTooLong = errors.New("context too long")
 	// ErrNotServed matches a request the model does not serve, a CapabilityError or an APIError alike.
 	ErrNotServed = errors.New("not served")
-	// ErrQuestionLimit matches an APIError refusing a question for a count of options, levels, images
-	// or pixels. It is best effort, since the server owns the wording.
+	// ErrQuestionLimit matches a question refused for a count of options, levels, images or pixels, a
+	// ValidationError or an APIError alike. On an APIError it is best effort, since the server owns the wording.
 	ErrQuestionLimit = errors.New("question limit")
+	// ErrDuplicateQuestion matches a ValidationError for two questions under one id.
+	ErrDuplicateQuestion = errors.New("duplicate question")
 	// ErrConnection matches a ConnectionError, including a TimeoutError.
 	ErrConnection = errors.New("connection error")
 	// ErrTimeout matches a TimeoutError.
