@@ -10,6 +10,7 @@ type route struct {
 	path              string
 	takes             capabilities
 	alwaysLongContext bool
+	extraKeys         []string
 	images            func(members []member, urls map[string]string) ([]member, error)
 	imagesHeader      bool
 	encode            func(body jsonBody) ([]byte, error)
