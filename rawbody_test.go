@@ -72,6 +72,33 @@ func TestProviderPrepareRaw(t *testing.T) {
 			wantErr: "onesie: image 'r' has format 'gif', and an image must be png or jpg",
 		},
 		{
+			name: "should refuse a top level key the route does not take", body: `{"model":"m","state":"s","stat":"t"}`,
+			wantErr: "onesie: the request body has an unknown key 'stat'. A body for m on typesafe takes state, model, questions, long_context and assets",
+		},
+		{
+			name: "should refuse clef's images on a route that takes assets", body: `{"model":"m","state":"s","images":[]}`,
+			wantErr: "onesie: the request body has an unknown key 'images'. A body for m on typesafe takes state, model, questions, long_context and assets",
+		},
+		{
+			name: "should take openrouter's own keys on openrouter", provider: onesie.OpenRouter(),
+			body: `{"model":"m","state":"s","provider":{"order":["a"]},"session_id":"x","trace":{"k":1},"user":"u"}`,
+			want: `{"model":"m","state":"s","provider":{"order":["a"]},"session_id":"x","trace":{"k":1},"user":"u"}`,
+		},
+		{
+			name: "should name openrouter's keys when one is misspelt", provider: onesie.OpenRouter(), body: `{"model":"m","state":"s","sesion_id":"x"}`,
+			wantErr: "onesie: the request body has an unknown key 'sesion_id'. A body for m on openrouter takes state, model, questions, " +
+				"long_context, assets, provider, session_id, trace and user",
+		},
+		{
+			name: "should take images on a clef model", provider: onesie.Cloudflare(),
+			body: `{"model":"clef-flash","state":"s","images":["data:image/png;base64,AQ=="]}`,
+			want: `{"model":"clef-flash","state":"s","images":["data:image/png;base64,AQ=="]}`,
+		},
+		{
+			name: "should refuse images on cloudflare's jev, which takes assets", provider: onesie.Cloudflare(), body: `{"state":"s","images":[]}`,
+			wantErr: "onesie: the request body has an unknown key 'images'. A body for typesafe/jev on cloudflare takes state, model, questions, long_context and assets",
+		},
+		{
 			name: "should refuse long context the provider does not take", provider: onesie.Cloudflare(), body: `{"state":"s"}`, opts: longContext,
 			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
 		},

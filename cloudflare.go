@@ -18,6 +18,7 @@ func cloudflareRoute(model string) route {
 		return route{
 			path:       "/run",
 			takes:      capabilities{images: true},
+			extraKeys:  []string{"images"},
 			images:     assetsToImages,
 			encode:     encodeClef(wireID),
 			decode:     unwrapResult,

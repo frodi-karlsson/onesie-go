@@ -842,8 +842,9 @@ func TestLiveAPIError(t *testing.T) {
 	t.Run("should report an openrouter validation error on one line with its path", func(t *testing.T) {
 		t.Parallel()
 
+		// OpenRouter's own provider key passes the library's checks, and OpenRouter validates its shape.
 		body := json.RawMessage(`{"state":"x","model":"jev-latest","questions":` +
-			`{"q":{"type":"noul","instructions":"urgent","criteria":{"true":"x","false":null}}}}`)
+			`{"q":{"type":"noul","instructions":"urgent"}},"provider":{"order":5}}`)
 
 		_, err := liveOpenRouterClient(t).SystemOneRaw(liveContext(t, 30*time.Second), body)
 		if !errors.Is(err, onesie.ErrBadRequest) {
@@ -851,8 +852,8 @@ func TestLiveAPIError(t *testing.T) {
 		}
 
 		message := err.Error()
-		if strings.Contains(message, "\n") || !strings.Contains(message, "questions.q.criteria.false") {
-			t.Errorf("error = %q, want one line naming questions.q.criteria.false", message)
+		if strings.Contains(message, "\n") || !strings.Contains(message, "provider.order") {
+			t.Errorf("error = %q, want one line naming provider.order", message)
 		}
 	})
 

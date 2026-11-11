@@ -112,6 +112,7 @@ func OpenRouter() Provider {
 			path:              systemOnePath,
 			takes:             takesEverything(),
 			alwaysLongContext: true,
+			extraKeys:         []string{"provider", "session_id", "trace", "user"},
 			encode:            encodeAsIs,
 			decode:            identity,
 			describeError:     readOpenRouterMessage,

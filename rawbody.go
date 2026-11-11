@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
 )
 
-// PrepareRaw prepares body as SystemOneRaw sends it, refusing what a send refuses and a model that is not
-// a string. Repeated keys resolve to the last, a blank model to defaultModel and WithLongContext to long_context.
+// PrepareRaw prepares body as SystemOneRaw sends it, refusing what a send refuses, a model that is not a
+// string and a top level key the provider's route does not take. Repeated keys resolve to the last, a blank
+// model to defaultModel and WithLongContext to long_context.
 func (p Provider) PrepareRaw(body json.RawMessage, defaultModel string, opts ...RequestOption) (*PreparedBody, error) {
 	if err := p.check(); err != nil {
 		return nil, err
@@ -72,6 +74,10 @@ func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) 
 		return nil, refusal
 	}
 
+	if err = checkBodyKeys(b.members, p.name, model, via.extraKeys); err != nil {
+		return nil, err
+	}
+
 	sent, err := encodeBody(via, needs, withoutLongContext(b))
 	if err != nil {
 		return nil, err
@@ -89,6 +95,20 @@ func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) 
 	}
 
 	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked}, nil
+}
+
+func checkBodyKeys(members []member, provider, model string, extras []string) error {
+	// A provider drops some unknown keys without a word and refuses others without naming them.
+	keys := append(slices.Clone(bodyOrder), extras...)
+
+	for _, m := range members {
+		if !slices.Contains(keys, m.name) {
+			return &ValidationError{Message: fmt.Sprintf("the request body has an unknown key '%s'. A body for %s on %s takes %s",
+				printable(m.name), printable(model), provider, joinNames(keys, "and"))}
+		}
+	}
+
+	return nil
 }
 
 func readRawBody(raw []byte) (jsonBody, error) {
