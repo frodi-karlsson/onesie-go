@@ -80,7 +80,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 			wantErr: "onesie: the request body has an unknown key 'images'. A body for m on typesafe takes state, model, questions, long_context and assets",
 		},
 		{
-			name: "should take openrouter's own keys on openrouter", provider: onesie.OpenRouter(),
+			name: "should take the keys openrouter documents on openrouter", provider: onesie.OpenRouter(),
 			body: `{"model":"m","state":"s","provider":{"order":["a"]},"session_id":"x","trace":{"k":1},"user":"u"}`,
 			want: `{"model":"m","state":"s","provider":{"order":["a"]},"session_id":"x","trace":{"k":1},"user":"u"}`,
 		},
@@ -96,7 +96,19 @@ func TestProviderPrepareRaw(t *testing.T) {
 		},
 		{
 			name: "should refuse images on cloudflare's jev, which takes assets", provider: onesie.Cloudflare(), body: `{"state":"s","images":[]}`,
-			wantErr: "onesie: the request body has an unknown key 'images'. A body for typesafe/jev on cloudflare takes state, model, questions, long_context and assets",
+			wantErr: "onesie: the request body has an unknown key 'images'. A body for typesafe/jev on cloudflare takes state, model, questions and assets",
+		},
+		{
+			name: "should name only what berget serves, which takes no images", provider: onesie.Berget(), body: `{"model":"m","state":"s","extra":1}`,
+			wantErr: "onesie: the request body has an unknown key 'extra'. A body for m on berget takes state, model, questions and long_context",
+		},
+		{
+			name: "should name images and not long context on a clef model", provider: onesie.Cloudflare(), body: `{"model":"clef-flash","state":"s","extra":1}`,
+			wantErr: "onesie: the request body has an unknown key 'extra'. A body for clef-flash on cloudflare takes state, model, questions, assets and images",
+		},
+		{
+			name: "should still pass a false long context on a route that takes none", provider: onesie.Cloudflare(), body: `{"state":"s","long_context":false}`,
+			want: `{"model":"typesafe/jev","state":"s","long_context":false}`,
 		},
 		{
 			name: "should refuse long context the provider does not take", provider: onesie.Cloudflare(), body: `{"state":"s"}`, opts: longContext,

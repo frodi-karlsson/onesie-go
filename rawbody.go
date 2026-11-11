@@ -74,7 +74,7 @@ func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) 
 		return nil, refusal
 	}
 
-	if err = checkBodyKeys(b.members, p.name, model, via.extraKeys); err != nil {
+	if err = via.checkBodyKeys(b.members, p.name, model); err != nil {
 		return nil, err
 	}
 
@@ -97,18 +97,28 @@ func (p Provider) prepareRaw(raw []byte, defaultModel string, longContext bool) 
 	return &PreparedBody{provider: p.name, shown: shown, sent: sent, model: model, asked: asked}, nil
 }
 
-func checkBodyKeys(members []member, provider, model string, extras []string) error {
+func (r route) checkBodyKeys(members []member, provider, model string) error {
 	// A provider drops some unknown keys without a word and refuses others without naming them.
-	keys := append(slices.Clone(bodyOrder), extras...)
+	keys := append(slices.Clone(bodyOrder), r.extraKeys...)
 
 	for _, m := range members {
 		if !slices.Contains(keys, m.name) {
 			return &ValidationError{Message: fmt.Sprintf("the request body has an unknown key '%s'. A body for %s on %s takes %s",
-				printable(m.name), printable(model), provider, joinNames(keys, "and"))}
+				printable(m.name), printable(model), provider, joinNames(r.servedKeys(), "and"))}
 		}
 	}
 
 	return nil
+}
+
+func (r route) servedKeys() []string {
+	// long_context and assets pass the check everywhere, since a capability refusal already speaks for them,
+	// but the message names them only where the route serves them.
+	served := slices.DeleteFunc(slices.Clone(bodyOrder), func(key string) bool {
+		return (key == "long_context" && !r.takes.longContext) || (key == "assets" && !r.takes.images)
+	})
+
+	return append(served, r.extraKeys...)
 }
 
 func readRawBody(raw []byte) (jsonBody, error) {

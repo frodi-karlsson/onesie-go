@@ -842,7 +842,7 @@ func TestLiveAPIError(t *testing.T) {
 	t.Run("should report an openrouter validation error on one line with its path", func(t *testing.T) {
 		t.Parallel()
 
-		// OpenRouter's own provider key passes the library's checks, and OpenRouter validates its shape.
+		// OpenRouter's provider key passes the library's checks, and OpenRouter validates its shape.
 		body := json.RawMessage(`{"state":"x","model":"jev-latest","questions":` +
 			`{"q":{"type":"noul","instructions":"urgent"}},"provider":{"order":5}}`)
 
