@@ -262,7 +262,23 @@ func TestQuestionsUnmarshalJSON(t *testing.T) {
 		{name: "should refuse questions that are not an object", body: `[1]`, want: "onesie: questions must be an object"},
 		{name: "should refuse a question that is not an object", body: `{"q":"noul"}`, question: "q", want: "onesie: question 'q' is not an object"},
 		{name: "should refuse a question with no type", body: `{"q":{"instructions":"x"}}`, question: "q", want: "onesie: question 'q' has no type"},
-		{name: "should match the type name exactly", body: `{"q":{"Type":"noul"}}`, question: "q", want: "onesie: question 'q' has no type"},
+		{
+			name: "should refuse a key the wire format does not name", body: `{"q":{"type":"noul","rubric":{"true":"y"}}}`, question: "q",
+			want: "onesie: question 'q' has an unknown key 'rubric'. A question takes type, instructions and criteria",
+		},
+		{
+			name: "should name a misspelt type before saying the type is missing", body: `{"q":{"typ":"noul"}}`, question: "q",
+			want: "onesie: question 'q' has an unknown key 'typ'. A question takes type, instructions and criteria",
+		},
+		{
+			name: "should match a key exactly", body: `{"q":{"Type":"noul"}}`, question: "q",
+			want: "onesie: question 'q' has an unknown key 'Type'. A question takes type, instructions and criteria",
+		},
+		{
+			name: "should refuse a noul criteria key other than true and false", body: `{"u":{"type":"noul","criteria":{"true":"y","maybe":"m"}}}`, question: "u",
+			want: "onesie: noul question 'u' has an unknown criteria key 'maybe'. Its criteria takes true and false",
+		},
+		{name: "should refuse criteria on a box", body: `{"b":{"type":"box","criteria":null}}`, question: "b", want: "onesie: box question 'b' takes no criteria"},
 		{name: "should refuse a type that is not a string", body: `{"q":{"type":1}}`, question: "q", want: "onesie: question 'q' has a type that is not a string"},
 		{
 			name: "should refuse an unknown type", body: `{"q":{"type":"tarot"}}`, question: "q",

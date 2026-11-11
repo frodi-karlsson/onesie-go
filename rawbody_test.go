@@ -107,6 +107,11 @@ func TestProviderPrepareRaw(t *testing.T) {
 			wantErr: "onesie: question 'q' has the type 'tarot', which is not noul, choice, score or box",
 		},
 		{
+			name:    "should refuse a question key the wire format does not name",
+			body:    `{"state":"s","questions":{"q":{"type":"noul","instructions":"i","rubric":{"true":"y"}}}}`,
+			wantErr: "onesie: question 'q' has an unknown key 'rubric'. A question takes type, instructions and criteria",
+		},
+		{
 			name:    "should refuse choice criteria that are not an object",
 			body:    `{"state":"s","questions":{"t":{"type":"choice","criteria":["a","b"]}}}`,
 			wantErr: "onesie: choice question 't' needs criteria as an object",

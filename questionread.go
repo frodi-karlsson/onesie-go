@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	"fmt"
+	"slices"
 )
+
+var questionKeys = []string{"type", "instructions", "criteria"}
 
 // UnmarshalJSON reads the wire format in order, the last of a repeated id winning at its position. Null
 // leaves q as it is. An object or array inside a question stays a json.RawMessage, keeping its key order.
+// A key the wire format does not name is refused, since the API ignores it.
 func (q *Questions) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
 		return nil
@@ -43,6 +47,11 @@ func readQuestion(id string, value jsontext.Value) (Question, error) {
 
 	fields := make(map[string]jsontext.Value, len(members))
 	for _, m := range members {
+		if !slices.Contains(questionKeys, m.name) {
+			return nil, questionFault(id, "question '%s' has an unknown key '%s'. A question takes type, instructions and criteria",
+				printable(m.name))
+		}
+
 		fields[m.name] = m.value
 	}
 
@@ -70,6 +79,10 @@ func readQuestion(id string, value jsontext.Value) (Question, error) {
 
 		return Score{Instructions: instructions, Criteria: levels}, err
 	case "box":
+		if fields["criteria"] != nil {
+			return nil, questionFault(id, "box question '%s' takes no criteria")
+		}
+
 		return Box{Instructions: instructions}, nil
 	default:
 		return nil, questionFault(id, "question '%s' has the type '%s', which is not "+answerKinds, printable(kind))
@@ -107,6 +120,9 @@ func readRubric(id string, value jsontext.Value) (*NoulCriteria, error) {
 			rubric.True, err = wireValue(id, m.value)
 		case "false":
 			rubric.False, err = wireValue(id, m.value)
+		default:
+			err = questionFault(id, "noul question '%s' has an unknown criteria key '%s'. Its criteria takes true and false",
+				printable(m.name))
 		}
 
 		if err != nil {
