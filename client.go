@@ -16,13 +16,17 @@ import (
 	"time"
 )
 
-const systemOnePath = "/v1/systemone"
+const (
+	systemOnePath = "/v1/systemone"
+	// idleConnsPerHost matches http.DefaultTransport's limit across all hosts, since a client talks to one.
+	idleConnsPerHost = 100
+)
 
 // New builds a client. Resolution order is an explicit option, then the environment, then a default.
 // Blank values are ignored, except an API key: a missing or empty one is refused unless WithOptionalAPIKey allows it.
 func New(opts ...Option) (*Client, error) {
 	c := &Client{
-		httpClient:       &http.Client{},
+		httpClient:       defaultHTTPClient(),
 		logger:           slog.New(slog.DiscardHandler),
 		retry:            DefaultRetryPolicy(),
 		maxResponseBytes: DefaultMaxResponseBytes,
@@ -66,6 +70,20 @@ func New(opts ...Option) (*Client, error) {
 	c.apiKey = key
 
 	return c, nil
+}
+
+func defaultHTTPClient() *http.Client {
+	defaults, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{}
+	}
+
+	// Go keeps two idle connections per host by default, so concurrent calls past two each dial and then
+	// close a connection, and a long run can exhaust local ports.
+	transport := defaults.Clone()
+	transport.MaxIdleConnsPerHost = idleConnsPerHost
+
+	return &http.Client{Transport: transport}
 }
 
 func (c *Client) resolveKey() (string, error) {
