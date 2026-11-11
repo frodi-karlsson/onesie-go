@@ -16,12 +16,13 @@ type jsonBody struct {
 	members []member
 	raw     []byte
 	changed bool
-	// images are the Images a typed body was written from, so a route reads them, not the bytes.
+	// images are the Images a typed body was written from, so a route reads them, not the bytes. Only the
+	// body the writer returns has them, so a body with changed members is read from those members.
 	images Assets
 }
 
 func (b jsonBody) with(members []member) jsonBody {
-	return jsonBody{members: members, raw: b.raw, changed: true, images: b.images}
+	return jsonBody{members: members, raw: b.raw, changed: true}
 }
 
 func (b jsonBody) dataURLs() (map[string]string, error) {

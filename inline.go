@@ -13,14 +13,14 @@ import (
 )
 
 func inlineParts(members []member, urls map[string]string) ([]member, error) {
-	grow := 0
-	for _, url := range urls {
-		grow += len(url) + len(`{"type":"image_url","image_url":{"url":""}}`)
+	sizes := make(map[string]int, len(urls))
+	for ref, url := range urls {
+		sizes[ref] = len(url) + len(`{"type":"image_url","image_url":{"url":""}}`)
 	}
 
 	rewriter := &inliner{
 		matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}, render: partsRenderer(urls),
-		grow: grow,
+		sizes: sizes,
 	}
 
 	rewritten, err := rewriter.rewrite(members)
@@ -185,11 +185,13 @@ func (r *inliner) member(m member) (jsontext.Value, error) {
 		write = r.questions
 	}
 
-	// Only a member that names an image gains its data URL. A miss here, as with an escaped reference,
-	// only means the buffer grows as it is written.
+	// Room for each image the member names. A miss, as with an escaped reference, only means the buffer
+	// grows as it is written.
 	grow := 0
-	if slices.ContainsFunc(r.matcher.refs, func(ref string) bool { return bytes.Contains(m.value, []byte(ref)) }) {
-		grow = r.grow
+	for ref, size := range r.sizes {
+		if bytes.Contains(m.value, []byte(ref)) {
+			grow += size
+		}
 	}
 
 	out := encodeBuffer(len(m.value) + grow)
@@ -409,8 +411,8 @@ type inliner struct {
 	used    map[string]bool
 	order   []string
 	render  func(*jsontext.Encoder, []piece) error
-	// grow is about how much a rewritten member gains, so its buffer is sized once.
-	grow int
+	// sizes is what each reference grows to once rendered, so a rewritten member's buffer is sized once.
+	sizes map[string]int
 }
 
 type piece struct {

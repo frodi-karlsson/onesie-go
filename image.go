@@ -98,7 +98,6 @@ func (i Image) encoded() []byte {
 	return i.asset
 }
 
-// base64 is the image's data as standard padded base64, a slice of its encoded asset.
 func (i Image) base64() []byte {
 	return i.asset[i.data.start:i.data.end]
 }

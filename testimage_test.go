@@ -75,8 +75,6 @@ func canvas(width, height int, square image.Rectangle) *image.RGBA {
 	return img
 }
 
-// noisePNG is a side by side PNG of random pixels, which PNG cannot compress, so it is as large as an
-// image of that size gets.
 func noisePNG(t testing.TB, side int) []byte {
 	t.Helper()
 
