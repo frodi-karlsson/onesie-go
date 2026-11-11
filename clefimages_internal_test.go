@@ -130,7 +130,7 @@ func TestAssetsToImages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := inlineRaw(t, assetsToImages, tc.body)
+			got, err := assetsToImagesRaw(t, tc.body)
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want a validation error containing %q", err, tc.wantErr)
@@ -151,7 +151,7 @@ func TestAssetsToImages(t *testing.T) {
 	}
 }
 
-func inlineRaw(t *testing.T, inline func([]member, map[string]string) ([]member, error), body string) ([]member, error) {
+func assetsToImagesRaw(t *testing.T, body string) ([]member, error) {
 	t.Helper()
 
 	read := readBody(t, body)
@@ -161,5 +161,5 @@ func inlineRaw(t *testing.T, inline func([]member, map[string]string) ([]member,
 		return nil, err
 	}
 
-	return inline(read.members, urls)
+	return assetsToImages(read.members, urls)
 }

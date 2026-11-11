@@ -17,7 +17,7 @@ func assetsToImages(members []member, urls map[string]string) ([]member, error) 
 		return nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
 	}
 
-	rewriter := &inliner{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}}
+	rewriter := &labeller{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}}
 
 	rewritten, err := rewriter.rewrite(members)
 	if err != nil {
@@ -32,7 +32,7 @@ func assetsToImages(members []member, urls map[string]string) ([]member, error) 
 	return append(rewritten, member{name: "images", value: images}), nil
 }
 
-func (r *inliner) rewrite(members []member) ([]member, error) {
+func (r *labeller) rewrite(members []member) ([]member, error) {
 	rewritten := make([]member, 0, len(members))
 
 	for _, m := range members {
@@ -143,7 +143,7 @@ func imageList(order []string, urls map[string]string) (jsontext.Value, error) {
 	return withoutNewline(out.Bytes()), nil
 }
 
-func (r *inliner) member(m member) (jsontext.Value, error) {
+func (r *labeller) member(m member) (jsontext.Value, error) {
 	if m.name != "state" && m.name != "questions" {
 		return m.value, nil
 	}
@@ -165,7 +165,7 @@ func (r *inliner) member(m member) (jsontext.Value, error) {
 	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
 }
 
-func (r *inliner) questions(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
+func (r *labeller) questions(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	if dec.PeekKind() != '{' {
 		return r.value(enc, dec)
 	}
@@ -187,7 +187,7 @@ func (r *inliner) questions(enc *jsontext.Encoder, dec *jsontext.Decoder) error 
 	return copyToken(enc, dec)
 }
 
-func (r *inliner) question(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
+func (r *labeller) question(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	if dec.PeekKind() != '{' {
 		return r.value(enc, dec)
 	}
@@ -223,7 +223,7 @@ func (r *inliner) question(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	return copyToken(enc, dec)
 }
 
-func (r *inliner) value(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
+func (r *labeller) value(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	switch dec.PeekKind() {
 	case '{':
 		return r.object(enc, dec)
@@ -241,7 +241,7 @@ func (r *inliner) value(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	}
 }
 
-func (r *inliner) object(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
+func (r *labeller) object(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	if err := copyToken(enc, dec); err != nil {
 		return err
 	}
@@ -259,7 +259,7 @@ func (r *inliner) object(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	return copyToken(enc, dec)
 }
 
-func (r *inliner) array(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
+func (r *labeller) array(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	if err := copyToken(enc, dec); err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func (r *inliner) array(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	return copyToken(enc, dec)
 }
 
-func (r *inliner) text(enc *jsontext.Encoder, raw jsontext.Value) error {
+func (r *labeller) text(enc *jsontext.Encoder, raw jsontext.Value) error {
 	var text string
 	if err := json.Unmarshal(raw, &text); err != nil {
 		return err
@@ -287,7 +287,7 @@ func (r *inliner) text(enc *jsontext.Encoder, raw jsontext.Value) error {
 	return r.labels(enc, pieces)
 }
 
-func (r *inliner) split(text string) []piece {
+func (r *labeller) split(text string) []piece {
 	var pieces []piece
 
 	start := 0
@@ -322,7 +322,7 @@ func (r *inliner) split(text string) []piece {
 	return pieces
 }
 
-func (r *inliner) labels(enc *jsontext.Encoder, pieces []piece) error {
+func (r *labeller) labels(enc *jsontext.Encoder, pieces []piece) error {
 	var text strings.Builder
 
 	for _, p := range pieces {
@@ -338,7 +338,7 @@ func (r *inliner) labels(enc *jsontext.Encoder, pieces []piece) error {
 	return enc.WriteToken(jsontext.String(text.String()))
 }
 
-type inliner struct {
+type labeller struct {
 	matcher assetMatcher
 	used    map[string]bool
 	order   []string

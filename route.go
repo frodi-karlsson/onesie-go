@@ -7,9 +7,8 @@ func oneRoute(r route) func(string) route {
 }
 
 type route struct {
-	path  string
-	takes capabilities
-	// alwaysLongContext is a route that reads a state past the usual limit without being asked.
+	path              string
+	takes             capabilities
 	alwaysLongContext bool
 	images            func(members []member, urls map[string]string) ([]member, error)
 	imagesHeader      bool
