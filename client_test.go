@@ -2200,7 +2200,7 @@ func TestClientSystemOne(t *testing.T) {
 		}
 	})
 
-	t.Run("should send inline parts and no assets or images header to openrouter", func(t *testing.T) {
+	t.Run("should send assets as written and no images header to openrouter", func(t *testing.T) {
 		t.Parallel()
 
 		img, err := onesie.NewImage(squarePNG(t))
@@ -2222,12 +2222,8 @@ func TestClientSystemOne(t *testing.T) {
 		}
 
 		body := transport.lastBody()
-		if !strings.Contains(body, `"state":{"photo":{"type":"image_url","image_url":{"url":"data:image/png;base64,`) {
-			t.Errorf("body = %.200s, want the image as an inline part", body)
-		}
-
-		if strings.Contains(body, `"assets"`) {
-			t.Errorf("body = %.200s, want no assets", body)
+		if !strings.Contains(body, `"state":{"photo":"image-a"}`) || !strings.Contains(body, `"assets":{"image-a":{"type":"image"`) {
+			t.Errorf("body = %.200s, want the reference in the state and the image in assets", body)
 		}
 
 		if got := transport.last().Header.Get(onesie.HeaderImages); got != "" {
@@ -3627,7 +3623,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 		}
 	})
 
-	t.Run("should rewrite a raw body into inline parts for openrouter", func(t *testing.T) {
+	t.Run("should send a raw body with assets to openrouter as written", func(t *testing.T) {
 		t.Parallel()
 
 		transport := &recordingTransport{body: shortAnswer}
@@ -3638,10 +3634,8 @@ func TestClientSystemOneRaw(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		want := `{"state":{"photo":{"type":"image_url","image_url":{"url":"data:image/png;base64,AQ=="}}},` +
-			`"model":"m","questions":{"q":{"type":"noul","instructions":"q"}}}`
-		if got := transport.lastBody(); got != want {
-			t.Errorf("body\ngot  %s\nwant %s", got, want)
+		if got := transport.lastBody(); got != string(withAssets) {
+			t.Errorf("body = %s, want it as sent", got)
 		}
 	})
 

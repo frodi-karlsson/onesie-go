@@ -95,7 +95,8 @@ func TypeSafe() Provider {
 	}
 }
 
-// OpenRouter serves the same model and wire protocol through OpenRouter.
+// OpenRouter serves the same model and wire protocol through OpenRouter. It reads a long state in full
+// whether or not long context is asked for.
 func OpenRouter() Provider {
 	return Provider{
 		name:            "openrouter",
@@ -108,13 +109,13 @@ func OpenRouter() Provider {
 		decodeModels:    decodeOpenRouterModels,
 		keyCheck:        keyCheck{by: keyCheckByEndpoint, path: "/v1/key"},
 		routeFor: oneRoute(route{
-			path:          systemOnePath,
-			takes:         takesEverything(),
-			images:        inlineParts,
-			encode:        encodeAsIs,
-			decode:        identity,
-			describeError: readOpenRouterMessage,
-			forwarded:     openRouterForwarded,
+			path:              systemOnePath,
+			takes:             takesEverything(),
+			alwaysLongContext: true,
+			encode:            encodeAsIs,
+			decode:            identity,
+			describeError:     readOpenRouterMessage,
+			forwarded:         openRouterForwarded,
 			classifyError: classifyBy(
 				unknownModel("Unknown model"), unknownModel("does not exist"), contextTooLong, boxNotServed,
 				countDetail, questionLimit,

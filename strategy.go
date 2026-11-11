@@ -21,6 +21,16 @@ func (p Provider) Refuse(model string, needs Needs) error {
 	return p.route(model).refuse(p.name, model, needs.capabilities())
 }
 
+// AlwaysLongContext reports whether model reads a state past the usual context limit without long
+// context, so asking for it changes nothing there.
+func (p Provider) AlwaysLongContext(model string) bool {
+	if p.check() != nil {
+		return false
+	}
+
+	return p.route(modelOr(model, p.defaultModel)).alwaysLongContext
+}
+
 // Needs is what a request asks of the model it is sent to.
 type Needs struct {
 	Images      bool

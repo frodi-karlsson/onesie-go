@@ -119,6 +119,35 @@ func TestProviderRefuse(t *testing.T) {
 	}
 }
 
+func TestProviderAlwaysLongContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider onesie.Provider
+		model    string
+		want     bool
+	}{
+		{name: "should read a long state in full on openrouter", provider: onesie.OpenRouter(), want: true},
+		{name: "should read past the limit only when asked on typesafe", provider: onesie.TypeSafe()},
+		{name: "should read past the limit only when asked on berget", provider: onesie.Berget()},
+		{name: "should read past the limit only when asked on levanto", provider: onesie.Levanto()},
+		{name: "should keep the usual limit on cloudflare", provider: onesie.Cloudflare()},
+		{name: "should keep the usual limit on a clef model", provider: onesie.Cloudflare(), model: "clef-flash"},
+		{name: "should answer false for the zero provider", provider: onesie.Provider{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.provider.AlwaysLongContext(tc.model); got != tc.want {
+				t.Errorf("AlwaysLongContext(%q) = %v, want %v", tc.model, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProviderPinned(t *testing.T) {
 	t.Parallel()
 
@@ -487,7 +516,7 @@ func TestProviderPrepare(t *testing.T) {
 			bodies   float64
 		}{
 			{name: "typesafe", provider: onesie.TypeSafe(), bodies: 1.5},
-			{name: "openrouter", provider: onesie.OpenRouter(), bodies: 5},
+			{name: "openrouter", provider: onesie.OpenRouter(), bodies: 1.5},
 			{name: "cloudflare", provider: onesie.Cloudflare(), bodies: 4},
 			{name: "cloudflare clef", provider: onesie.Cloudflare(), model: "clef-flash", bodies: 6.3},
 		} {
@@ -545,12 +574,6 @@ func TestProviderPrepare(t *testing.T) {
 
 	box := onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug in image-a"}}}
 	photo := onesie.Request{State: "image-a", Questions: box, Assets: onesie.Assets{"image-a": square}}
-	padded, err := onesie.NewImage(append(squarePNG(t), bytes.Repeat([]byte{0}, onesie.MaxBodyBytes/1200)...))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	repeated := onesie.Request{State: strings.Repeat("img-a ", 1000), Questions: oneNoul(), Assets: onesie.Assets{"img-a": padded}}
 	noBoxes := "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do"
 
 	tests := []struct {
@@ -588,10 +611,6 @@ func TestProviderPrepare(t *testing.T) {
 			name: "should refuse a blank model as the built in default refuses it", provider: onesie.Cloudflare(),
 			req:     onesie.Request{Model: " ", State: "s", Questions: oneNoul(), LongContext: true},
 			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
-		},
-		{
-			name: "should refuse a body openrouter would inline past the limit", provider: onesie.OpenRouter(), req: repeated,
-			wantErr: "This provider takes an image once per place it is named, so name each image once",
 		},
 		{
 			name: "should refuse long context from WithLongContext as SystemOne does", provider: onesie.Cloudflare(),

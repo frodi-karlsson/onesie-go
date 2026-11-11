@@ -12,44 +12,12 @@ import (
 	"strings"
 )
 
-func inlineParts(members []member, urls map[string]string) ([]member, error) {
-	sizes := make(map[string]int, len(urls))
-	for ref, url := range urls {
-		sizes[ref] = len(url) + len(`{"type":"image_url","image_url":{"url":""}}`)
-	}
-
-	rewriter := &inliner{
-		matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}, render: partsRenderer(urls),
-		sizes: sizes,
-	}
-
-	rewritten, err := rewriter.rewrite(members)
-	if err != nil {
-		return nil, err
-	}
-
-	size, err := encodedSize(rewritten)
-	if err != nil {
-		return nil, err
-	}
-
-	if size > MaxBodyBytes {
-		return nil, &ValidationError{Message: fmt.Sprintf(
-			"the request body is %d bytes once each image is placed where it is named, and the API takes "+
-				"at most %d. This provider takes an image once per place it is named, so name each image once",
-			size, MaxBodyBytes)}
-	}
-
-	return rewritten, nil
-}
-
 func assetsToImages(members []member, urls map[string]string) ([]member, error) {
 	if slices.ContainsFunc(members, named("images")) {
 		return nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
 	}
 
 	rewriter := &inliner{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}}
-	rewriter.render = rewriter.labels
 
 	rewritten, err := rewriter.rewrite(members)
 	if err != nil {
@@ -185,16 +153,8 @@ func (r *inliner) member(m member) (jsontext.Value, error) {
 		write = r.questions
 	}
 
-	// Room for each image the member names. A miss, as with an escaped reference, only means the buffer
-	// grows as it is written.
-	grow := 0
-	for ref, size := range r.sizes {
-		if bytes.Contains(m.value, []byte(ref)) {
-			grow += size
-		}
-	}
-
-	out := encodeBuffer(len(m.value) + grow)
+	// A label is rarely longer than the reference it replaces, and one that is only grows the buffer.
+	out := encodeBuffer(len(m.value))
 
 	enc := jsontext.NewEncoder(out, rawOptions()...)
 	if err := write(enc, jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)); err != nil {
@@ -324,7 +284,7 @@ func (r *inliner) text(enc *jsontext.Encoder, raw jsontext.Value) error {
 		return enc.WriteValue(raw)
 	}
 
-	return r.render(enc, pieces)
+	return r.labels(enc, pieces)
 }
 
 func (r *inliner) split(text string) []piece {
@@ -362,34 +322,6 @@ func (r *inliner) split(text string) []piece {
 	return pieces
 }
 
-func partsRenderer(urls map[string]string) func(*jsontext.Encoder, []piece) error {
-	write := func(enc *jsontext.Encoder, p piece) error {
-		if p.ref != "" {
-			return writePart(enc, urls[p.ref])
-		}
-
-		return enc.WriteToken(jsontext.String(p.text))
-	}
-
-	return func(enc *jsontext.Encoder, pieces []piece) error {
-		if len(pieces) == 1 {
-			return write(enc, pieces[0])
-		}
-
-		if err := enc.WriteToken(jsontext.BeginArray); err != nil {
-			return err
-		}
-
-		for _, p := range pieces {
-			if err := write(enc, p); err != nil {
-				return err
-			}
-		}
-
-		return enc.WriteToken(jsontext.EndArray)
-	}
-}
-
 func (r *inliner) labels(enc *jsontext.Encoder, pieces []piece) error {
 	var text strings.Builder
 
@@ -410,9 +342,6 @@ type inliner struct {
 	matcher assetMatcher
 	used    map[string]bool
 	order   []string
-	render  func(*jsontext.Encoder, []piece) error
-	// sizes is what each reference grows to once rendered, so a rewritten member's buffer is sized once.
-	sizes map[string]int
 }
 
 type piece struct {
@@ -436,19 +365,4 @@ func copyValue(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	}
 
 	return enc.WriteValue(raw)
-}
-
-func writePart(enc *jsontext.Encoder, url string) error {
-	// Tokens rather than prebuilt bytes, so the encoder escapes a URL read from a raw body whatever it holds.
-	for _, token := range []jsontext.Token{
-		jsontext.BeginObject, jsontext.String("type"), jsontext.String("image_url"),
-		jsontext.String("image_url"), jsontext.BeginObject, jsontext.String("url"), jsontext.String(url),
-		jsontext.EndObject, jsontext.EndObject,
-	} {
-		if err := enc.WriteToken(token); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
