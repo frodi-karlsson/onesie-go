@@ -89,3 +89,25 @@ func TestClientVerifyKey(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultHTTPClient(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should keep enough idle connections for calls run at once, and leave Go's default transport alone", func(t *testing.T) {
+		t.Parallel()
+
+		client, err := New(WithAPIKey("k"), WithEnv(func(string) (string, bool) { return "", false }))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		transport, ok := client.httpClient.Transport.(*http.Transport)
+		if !ok || transport.MaxIdleConnsPerHost != idleConnsPerHost {
+			t.Errorf("transport = %#v, want MaxIdleConnsPerHost %d", client.httpClient.Transport, idleConnsPerHost)
+		}
+
+		if transport == http.DefaultTransport || http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost != 0 {
+			t.Error("New changed http.DefaultTransport, want a clone")
+		}
+	})
+}

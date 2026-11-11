@@ -123,7 +123,7 @@ func WithUserAgent(name string) Option {
 }
 
 // WithHTTPClient replaces the HTTP client. New uses a copy that refuses redirects, and leaves the one
-// passed in as it was.
+// passed in as it was. Size its transport's MaxIdleConnsPerHost to the calls run at once.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) error {
 		if hc == nil {
