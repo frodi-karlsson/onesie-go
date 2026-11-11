@@ -405,7 +405,7 @@ func TestLiveClientSystemOne(t *testing.T) {
 		}
 	})
 
-	t.Run("should see the red square through openrouter's inline parts", func(t *testing.T) {
+	t.Run("should see the red square through openrouter's assets", func(t *testing.T) {
 		t.Parallel()
 
 		square, err := onesie.NewImage(squarePNG(t))
@@ -424,6 +424,7 @@ func TestLiveClientSystemOne(t *testing.T) {
 			Questions: onesie.Questions{
 				{ID: "in_square", Question: onesie.Noul{Instructions: "Is there a red square in `square`?"}},
 				{ID: "in_empty", Question: onesie.Noul{Instructions: "Is there a red square in `empty`?"}},
+				{ID: "named_again", Question: onesie.Noul{Instructions: "Is there a red square in image-square?"}},
 				{ID: "box", Question: onesie.Box{Instructions: "the red square in `square`"}},
 			},
 			Assets: onesie.Assets{"image-square": square, "image-empty": empty},
@@ -442,6 +443,10 @@ func TestLiveClientSystemOne(t *testing.T) {
 
 		if got, _ := result.Noul("in_empty"); got == nil || got.Noul > 0.2 {
 			t.Errorf("in_empty = %+v, want a clear no", got)
+		}
+
+		if got, _ := result.Noul("named_again"); got == nil || got.Noul < 0.8 {
+			t.Errorf("named_again = %+v, want a clear yes for an image named a second time", got)
 		}
 
 		box, err := result.Box("box")

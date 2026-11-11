@@ -7,17 +7,18 @@ func oneRoute(r route) func(string) route {
 }
 
 type route struct {
-	path            string
-	takes           capabilities
-	images          func(members []member, urls map[string]string) ([]member, error)
-	imagesHeader    bool
-	encode          func(body jsonBody) ([]byte, error)
-	decode          func(body []byte) ([]byte, error)
-	wrapResult      func(result []byte) ([]byte, error)
-	requestIDHeader string
-	describeError   func(body any) string
-	forwarded       func(body any) any
-	classifyError   func(r reply) error
+	path              string
+	takes             capabilities
+	alwaysLongContext bool
+	images            func(members []member, urls map[string]string) ([]member, error)
+	imagesHeader      bool
+	encode            func(body jsonBody) ([]byte, error)
+	decode            func(body []byte) ([]byte, error)
+	wrapResult        func(result []byte) ([]byte, error)
+	requestIDHeader   string
+	describeError     func(body any) string
+	forwarded         func(body any) any
+	classifyError     func(r reply) error
 }
 
 func (r route) refuse(provider, model string, needs capabilities) error {
