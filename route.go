@@ -9,7 +9,7 @@ func oneRoute(r route) func(string) route {
 type route struct {
 	path            string
 	takes           capabilities
-	images          func(members []member) ([]member, error)
+	images          func(members []member, urls map[string]string) ([]member, error)
 	imagesHeader    bool
 	encode          func(body jsonBody) ([]byte, error)
 	decode          func(body []byte) ([]byte, error)

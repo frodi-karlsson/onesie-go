@@ -142,6 +142,29 @@ func TestImageMarshalJSON(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("should hand out a copy, so a caller changing it changes nothing", func(t *testing.T) {
+		t.Parallel()
+
+		img, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		first, err := img.MarshalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := string(first)
+		for i := range first {
+			first[i] = 'x'
+		}
+
+		if again, err := img.MarshalJSON(); err != nil || string(again) != want {
+			t.Errorf("MarshalJSON after a caller changed its result = %.60s, %v, want %.60s", again, err, want)
+		}
+	})
 }
 
 func imageOf(t testing.TB, data []byte) onesie.Image {

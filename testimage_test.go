@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"math/rand/v2"
 	"testing"
 )
 
@@ -72,4 +73,19 @@ func canvas(width, height int, square image.Rectangle) *image.RGBA {
 	}
 
 	return img
+}
+
+func noisePNG(t testing.TB, side int) []byte {
+	t.Helper()
+
+	random := rand.New(rand.NewPCG(1, 2))
+	img := image.NewRGBA(image.Rect(0, 0, side, side))
+
+	for y := range side {
+		for x := range side {
+			img.Set(x, y, color.RGBA{uint8(random.UintN(256)), uint8(random.UintN(256)), uint8(random.UintN(256)), 255})
+		}
+	}
+
+	return encodePNG(t, img)
 }

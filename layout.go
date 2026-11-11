@@ -1,7 +1,6 @@
 package onesie
 
 import (
-	"bytes"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"slices"
@@ -24,9 +23,17 @@ func bodyOf(req Request, model string, shape layout) (jsonBody, error) {
 }
 
 func writeBody(req Request, model string, shape layout) (jsonBody, error) {
-	var out bytes.Buffer
+	images := shape.images(req)
 
-	enc := jsontext.NewEncoder(&out, bodyOptions)
+	// The assets are most of an image body and their length is known, so the buffer never doubles past them.
+	size := 1024
+	for ref, img := range images {
+		size += len(ref) + len(`"":,`) + len(img.encoded())
+	}
+
+	out := encodeBuffer(size)
+
+	enc := jsontext.NewEncoder(out, bodyOptions)
 	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
 		return jsonBody{}, err
 	}
@@ -64,7 +71,15 @@ func writeBody(req Request, model string, shape layout) (jsonBody, error) {
 		members = append(members, member{name: s.name, value: raw[s.start+1 : s.end]})
 	}
 
-	return jsonBody{members: members, raw: raw}, nil
+	return jsonBody{members: members, raw: raw, images: images}, nil
+}
+
+func (shape layout) images(req Request) Assets {
+	if _, kept := shape.member("assets", req, ""); !kept {
+		return nil
+	}
+
+	return req.Assets
 }
 
 type layout int

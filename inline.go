@@ -12,19 +12,15 @@ import (
 	"strings"
 )
 
-func inlineParts(members []member) ([]member, error) {
-	urls, err := dataURLsOf(members)
-	if err != nil {
-		return nil, err
-	}
-
-	parts, err := partsFrom(urls)
-	if err != nil {
-		return nil, err
+func inlineParts(members []member, urls map[string]string) ([]member, error) {
+	sizes := make(map[string]int, len(urls))
+	for ref, url := range urls {
+		sizes[ref] = len(url) + len(`{"type":"image_url","image_url":{"url":""}}`)
 	}
 
 	rewriter := &inliner{
-		matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}, render: partsRenderer(parts),
+		matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}, render: partsRenderer(urls),
+		sizes: sizes,
 	}
 
 	rewritten, err := rewriter.rewrite(members)
@@ -47,14 +43,9 @@ func inlineParts(members []member) ([]member, error) {
 	return rewritten, nil
 }
 
-func assetsToImages(members []member) ([]member, error) {
+func assetsToImages(members []member, urls map[string]string) ([]member, error) {
 	if slices.ContainsFunc(members, named("images")) {
 		return nil, &ValidationError{Message: "a body for clef carries assets or images, not both"}
-	}
-
-	urls, err := dataURLsOf(members)
-	if err != nil {
-		return nil, err
 	}
 
 	rewriter := &inliner{matcher: assetMatcher{refs: slices.Sorted(maps.Keys(urls))}, used: map[string]bool{}}
@@ -65,12 +56,7 @@ func assetsToImages(members []member) ([]member, error) {
 		return nil, err
 	}
 
-	ordered := make([]string, 0, len(rewriter.order))
-	for _, ref := range rewriter.order {
-		ordered = append(ordered, urls[ref])
-	}
-
-	images, err := json.Marshal(ordered)
+	images, err := imageList(rewriter.order, urls)
 	if err != nil {
 		return nil, err
 	}
@@ -142,36 +128,51 @@ func dataURLOf(ref string, asset rawAsset) (string, error) {
 		return "", validationOr(err, fmt.Sprintf("asset '%s' needs data_base64 as a string", printable(ref)))
 	}
 
-	mime := "image/png"
-	if wireFormat(asset.format) == "jpg" {
-		mime = "image/jpeg"
-	}
-
-	return "data:" + mime + ";base64," + encoded, nil
+	return "data:" + mimeOf(wireFormat(asset.format)) + ";base64," + encoded, nil
 }
 
-func partsFrom(urls map[string]string) (map[string]jsontext.Value, error) {
-	parts := make(map[string]jsontext.Value, len(urls))
+func dataURLsFrom(assets Assets) map[string]string {
+	urls := make(map[string]string, len(assets))
+	for ref, img := range assets {
+		// Converted inside the join, so the base64 is copied once.
+		urls[ref] = "data:" + mimeOf(img.format) + ";base64," + string(img.base64())
+	}
 
-	for ref, url := range urls {
-		part, err := json.Marshal(imagePart{Type: "image_url", ImageURL: imageURL{URL: url}})
-		if err != nil {
+	return urls
+}
+
+func mimeOf(format string) string {
+	if format == "jpg" {
+		return "image/jpeg"
+	}
+
+	return "image/png"
+}
+
+func imageList(order []string, urls map[string]string) (jsontext.Value, error) {
+	size := len("[]")
+	for _, ref := range order {
+		size += len(urls[ref]) + len(`"",`)
+	}
+
+	out := encodeBuffer(size)
+
+	enc := jsontext.NewEncoder(out, rawOptions()...)
+	if err := enc.WriteToken(jsontext.BeginArray); err != nil {
+		return nil, err
+	}
+
+	for _, ref := range order {
+		if err := enc.WriteToken(jsontext.String(urls[ref])); err != nil {
 			return nil, err
 		}
-
-		parts[ref] = part
 	}
 
-	return parts, nil
-}
+	if err := enc.WriteToken(jsontext.EndArray); err != nil {
+		return nil, err
+	}
 
-type imagePart struct {
-	Type     string   `json:"type"`
-	ImageURL imageURL `json:"image_url"`
-}
-
-type imageURL struct {
-	URL string `json:"url"`
+	return withoutNewline(out.Bytes()), nil
 }
 
 func (r *inliner) member(m member) (jsontext.Value, error) {
@@ -184,9 +185,18 @@ func (r *inliner) member(m member) (jsontext.Value, error) {
 		write = r.questions
 	}
 
-	var out bytes.Buffer
+	// Room for each image the member names. A miss, as with an escaped reference, only means the buffer
+	// grows as it is written.
+	grow := 0
+	for ref, size := range r.sizes {
+		if bytes.Contains(m.value, []byte(ref)) {
+			grow += size
+		}
+	}
 
-	enc := jsontext.NewEncoder(&out, rawOptions()...)
+	out := encodeBuffer(len(m.value) + grow)
+
+	enc := jsontext.NewEncoder(out, rawOptions()...)
 	if err := write(enc, jsontext.NewDecoder(bytes.NewBuffer(m.value), rawOptions()...)); err != nil {
 		return nil, err
 	}
@@ -352,10 +362,10 @@ func (r *inliner) split(text string) []piece {
 	return pieces
 }
 
-func partsRenderer(parts map[string]jsontext.Value) func(*jsontext.Encoder, []piece) error {
+func partsRenderer(urls map[string]string) func(*jsontext.Encoder, []piece) error {
 	write := func(enc *jsontext.Encoder, p piece) error {
 		if p.ref != "" {
-			return enc.WriteValue(parts[p.ref])
+			return writePart(enc, urls[p.ref])
 		}
 
 		return enc.WriteToken(jsontext.String(p.text))
@@ -401,6 +411,8 @@ type inliner struct {
 	used    map[string]bool
 	order   []string
 	render  func(*jsontext.Encoder, []piece) error
+	// sizes is what each reference grows to once rendered, so a rewritten member's buffer is sized once.
+	sizes map[string]int
 }
 
 type piece struct {
@@ -424,4 +436,19 @@ func copyValue(enc *jsontext.Encoder, dec *jsontext.Decoder) error {
 	}
 
 	return enc.WriteValue(raw)
+}
+
+func writePart(enc *jsontext.Encoder, url string) error {
+	// Tokens rather than prebuilt bytes, so the encoder escapes a URL read from a raw body whatever it holds.
+	for _, token := range []jsontext.Token{
+		jsontext.BeginObject, jsontext.String("type"), jsontext.String("image_url"),
+		jsontext.String("image_url"), jsontext.BeginObject, jsontext.String("url"), jsontext.String(url),
+		jsontext.EndObject, jsontext.EndObject,
+	} {
+		if err := enc.WriteToken(token); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
