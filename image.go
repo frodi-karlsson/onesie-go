@@ -3,7 +3,7 @@ package onesie
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -58,7 +58,7 @@ func NewImage(data []byte) (Image, error) {
 			config.Width, config.Height, MinImageSide, MaxImageSide)}
 	}
 
-	return Image{format: format, data: bytes.Clone(data)}, nil
+	return encodedImage(format, data), nil
 }
 
 // Assets maps a reference string to the image it stands for. The API puts the image wherever the
@@ -68,7 +68,10 @@ type Assets map[string]Image
 // Image is one PNG or JPEG file the API takes, built by NewImage. A request with a zero Image is refused.
 type Image struct {
 	format string
-	data   []byte
+	// asset is the JSON object the API reads, encoded once. The encode is the image's only copy of the file.
+	asset []byte
+	// data is where the base64 sits in asset, so a data URL reads it without a copy.
+	data struct{ start, end int }
 }
 
 // Format is the image's format, png or jpg, as read from its header.
@@ -76,13 +79,49 @@ func (i Image) Format() string {
 	return i.format
 }
 
-// MarshalJSON writes the asset shape the API reads, with the bytes as standard padded base64.
+// MarshalJSON writes the asset shape the API reads, with the bytes as standard padded base64. It
+// returns a copy, so a caller cannot change the image.
 func (i Image) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Type   string `json:"type"`
-		Format string `json:"format"`
-		Data   string `json:"data_base64"`
-	}{Type: "image", Format: i.format, Data: base64.StdEncoding.EncodeToString(i.data)})
+	return bytes.Clone(i.encoded()), nil
+}
+
+// MarshalJSONTo writes what MarshalJSON returns to enc, without a copy.
+func (i Image) MarshalJSONTo(enc *jsontext.Encoder) error {
+	return enc.WriteValue(i.encoded())
+}
+
+func (i Image) encoded() []byte {
+	if i.asset == nil {
+		return encodedImage(i.format, nil).asset
+	}
+
+	return i.asset
+}
+
+// base64 is the image's data as standard padded base64, a slice of its encoded asset.
+func (i Image) base64() []byte {
+	return i.asset[i.data.start:i.data.end]
+}
+
+func encodedImage(format string, data []byte) Image {
+	// Every byte written here is plain ASCII that JSON needs no escape for: the format is png, jpg or
+	// empty, and base64 uses letters, digits, plus, slash and equals.
+	const head, middle, tail = `{"type":"image","format":"`, `","data_base64":"`, `"}`
+
+	size := base64.StdEncoding.EncodedLen(len(data))
+	asset := make([]byte, 0, len(head)+len(format)+len(middle)+size+len(tail))
+	asset = append(asset, head...)
+	asset = append(asset, format...)
+	asset = append(asset, middle...)
+	start := len(asset)
+	asset = base64.StdEncoding.AppendEncode(asset, data)
+	end := len(asset)
+	asset = append(asset, tail...)
+
+	img := Image{format: format, asset: asset}
+	img.data.start, img.data.end = start, end
+
+	return img
 }
 
 func (i Image) built() bool {

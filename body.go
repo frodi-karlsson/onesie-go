@@ -16,10 +16,21 @@ type jsonBody struct {
 	members []member
 	raw     []byte
 	changed bool
+	// images are the Images a typed body was written from, so a route reads them, not the bytes.
+	images Assets
 }
 
 func (b jsonBody) with(members []member) jsonBody {
-	return jsonBody{members: members, raw: b.raw, changed: true}
+	return jsonBody{members: members, raw: b.raw, changed: true, images: b.images}
+}
+
+func (b jsonBody) dataURLs() (map[string]string, error) {
+	if b.images != nil {
+		return dataURLsFrom(b.images), nil
+	}
+
+	// A raw body has only its bytes, so its assets are read and checked here.
+	return dataURLsOf(b.members)
 }
 
 func encodeAsIs(b jsonBody) ([]byte, error) {
@@ -93,9 +104,15 @@ func named(name string) func(member) bool {
 }
 
 func writeMembers(members []member) ([]byte, error) {
-	var out bytes.Buffer
+	// Sized from the members, which an image body makes large, so the buffer never doubles.
+	size, err := encodedSize(members)
+	if err != nil {
+		size = 0
+	}
 
-	enc := jsontext.NewEncoder(&out, rawOptions()...)
+	out := encodeBuffer(size)
+
+	enc := jsontext.NewEncoder(out, rawOptions()...)
 	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
 		return nil, err
 	}
@@ -139,4 +156,10 @@ func encodedSize(members []member) (int, error) {
 
 func rawOptions() []jsontext.Options {
 	return []jsontext.Options{jsontext.AllowDuplicateNames(true), jsontext.PreserveRawStrings(true)}
+}
+
+func encodeBuffer(size int) *bytes.Buffer {
+	// A jsontext encoder writing into a bytes.Buffer keeps a quarter of what it wrote free, and grows the
+	// buffer, doubling it, whenever it is not. So the buffer holds that quarter from the start.
+	return bytes.NewBuffer(make([]byte, 0, size+size/4+64))
 }

@@ -149,7 +149,7 @@ func TestLayoutParts(t *testing.T) {
 
 	full := Request{
 		State: "s", Questions: Questions{{ID: "q", Question: Noul{Instructions: "q"}}}, LongContext: true,
-		Assets: Assets{"r": Image{format: "png", data: []byte{1}}},
+		Assets: Assets{"r": encodedImage("png", []byte{1})},
 	}
 
 	t.Run("should write every member the body order names", func(t *testing.T) {

@@ -30,6 +30,11 @@ func TestInlineParts(t *testing.T) {
 			want: `{"state":{"p":` + a + `,"q":` + b + `},"model":"m","questions":{}}`,
 		},
 		{
+			name: "should escape what JSON needs in base64 text a raw body wraps or garbles",
+			body: `{"state":"img-a","questions":{},"assets":{"img-a":{"type":"image","format":"png","data_base64":"ab\ncd<x>&\"q\\ é"}}}`,
+			want: `{"state":{"type":"image_url","image_url":{"url":"data:image/png;base64,ab\ncd<x>&\"q\\ é"}},"questions":{}}`,
+		},
+		{
 			name: "should read assets that come before the state",
 			body: `{` + assets + `,"state":["img-ab","img-a"],"questions":{}}`,
 			want: `{"state":[` + b + `,` + a + `],"questions":{}}`,
@@ -93,7 +98,7 @@ func TestInlineParts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := inlineParts(readBody(t, tc.body).members)
+			got, err := inlineRaw(t, inlineParts, tc.body)
 			if tc.wantErr != "" {
 				if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error = %v, want a validation error containing %q", err, tc.wantErr)
@@ -128,6 +133,11 @@ func TestAssetsToImages(t *testing.T) {
 		want    string
 		wantErr string
 	}{
+		{
+			name: "should escape what JSON needs in base64 text a raw body wraps or garbles",
+			body: `{"state":"img-a","questions":{},"assets":{"img-a":{"type":"image","format":"png","data_base64":"ab\ncd<x>&\"q\\ é"}}}`,
+			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,ab\ncd<x>&\"q\\ é"]}`,
+		},
 		{
 			name: "should number the images by first reference and write them last",
 			body: `{"state":{"a":"r2","b":"r1"},"questions":{"q":{"type":"noul","instructions":"is r1 a dog"}},` +
@@ -181,7 +191,7 @@ func TestAssetsToImages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := assetsToImages(readBody(t, tc.body).members)
+			got, err := inlineRaw(t, assetsToImages, tc.body)
 			if tc.wantErr != "" {
 				if err == nil || err.Error() != tc.wantErr {
 					t.Fatalf("error = %v, want %q", err, tc.wantErr)
@@ -200,4 +210,17 @@ func TestAssetsToImages(t *testing.T) {
 			}
 		})
 	}
+}
+
+func inlineRaw(t *testing.T, inline func([]member, map[string]string) ([]member, error), body string) ([]member, error) {
+	t.Helper()
+
+	read := readBody(t, body)
+
+	urls, err := read.dataURLs()
+	if err != nil {
+		return nil, err
+	}
+
+	return inline(read.members, urls)
 }

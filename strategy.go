@@ -136,7 +136,12 @@ func encodeBody(via route, needs capabilities, b jsonBody) (encoded, error) {
 	withImages := needs.images || needs.box
 
 	if withImages && via.images != nil {
-		members, err := via.images(b.members)
+		urls, err := b.dataURLs()
+		if err != nil {
+			return encoded{}, err
+		}
+
+		members, err := via.images(b.members, urls)
 		if err != nil {
 			return encoded{}, err
 		}
