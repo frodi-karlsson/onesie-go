@@ -138,6 +138,11 @@ func (b *PreparedBody) Bytes() json.RawMessage {
 	return bytes.Clone(b.shown)
 }
 
+// WriteTo writes the bytes Bytes returns to w without copying them, as io.WriterTo does.
+func (b *PreparedBody) WriteTo(w io.Writer) (int64, error) {
+	return bytes.NewReader(b.shown).WriteTo(w)
+}
+
 // Model is the model the send names, the body's own or the default it was prepared with.
 func (b *PreparedBody) Model() string {
 	return b.model

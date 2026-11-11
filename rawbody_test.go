@@ -1,15 +1,19 @@
 package onesie_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/frodi-karlsson/onesie-go"
 )
+
+var errWriteFailed = errors.New("write failed")
 
 func TestProviderPrepareRaw(t *testing.T) {
 	t.Parallel()
@@ -297,4 +301,52 @@ func TestPreparedBodyCheckResult(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPreparedBodyWriteTo(t *testing.T) {
+	t.Parallel()
+
+	prepared, err := onesie.TypeSafe().PrepareRaw(json.RawMessage("{ \"state\": \"s\", \"model\": \"m\" }"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("should write the bytes Bytes returns", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+
+		n, err := prepared.WriteTo(&out)
+		if err != nil || n != int64(out.Len()) || !bytes.Equal(out.Bytes(), prepared.Bytes()) {
+			t.Errorf("WriteTo = %d, %v, wrote %s, want %s", n, err, out.Bytes(), prepared.Bytes())
+		}
+	})
+
+	t.Run("should report a writer that takes fewer bytes as a short write", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := prepared.WriteTo(shortWriter{}); !errors.Is(err, io.ErrShortWrite) {
+			t.Errorf("WriteTo error = %v, want %v", err, io.ErrShortWrite)
+		}
+	})
+
+	t.Run("should return the writer's error", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := prepared.WriteTo(failingWriter{}); !errors.Is(err, errWriteFailed) {
+			t.Errorf("WriteTo error = %v, want %v", err, errWriteFailed)
+		}
+	})
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errWriteFailed
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	return len(p) / 2, nil
 }
