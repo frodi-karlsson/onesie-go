@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -465,6 +466,76 @@ func TestCapabilityError(t *testing.T) {
 }
 
 func TestProviderPrepare(t *testing.T) {
+	// Before t.Parallel, so the allocation count runs while no other test does, since it reads the
+	// whole process.
+	t.Run("should allocate about one request body per route stage for an image", func(t *testing.T) {
+		file := noisePNG(t, 600)
+
+		fixed, err := onesie.NewImage(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		questions := onesie.Questions{{ID: "red", Question: onesie.Noul{Instructions: "is there red in the photo"}}}
+
+		// Bodies allocated per prepare, a little above what each route needs, so one more copy of the
+		// image fails. A per-record image adds its encoded asset, one body more.
+		for _, tc := range []struct {
+			name     string
+			provider onesie.Provider
+			model    string
+			bodies   float64
+		}{
+			{name: "typesafe", provider: onesie.TypeSafe(), bodies: 1.5},
+			{name: "openrouter", provider: onesie.OpenRouter(), bodies: 5},
+			{name: "cloudflare", provider: onesie.Cloudflare(), bodies: 4},
+			{name: "cloudflare clef", provider: onesie.Cloudflare(), model: "clef-flash", bodies: 6.3},
+		} {
+			for _, perRecord := range []bool{false, true} {
+				prepare := func() *onesie.PreparedBody {
+					photo := fixed
+					if perRecord {
+						if photo, err = onesie.NewImage(file); err != nil {
+							t.Fatal(err)
+						}
+					}
+
+					prepared, prepareErr := tc.provider.Prepare(onesie.Request{
+						State: map[string]any{"photo": "img-1"}, Model: tc.model, Questions: questions,
+						Assets: onesie.Assets{"img-1": photo},
+					})
+					if prepareErr != nil {
+						t.Fatal(prepareErr)
+					}
+
+					return prepared
+				}
+
+				body := float64(len(prepare().Bytes()))
+				limit := tc.bodies
+				if perRecord {
+					limit++
+				}
+
+				const runs = 5
+
+				var before, after runtime.MemStats
+
+				runtime.ReadMemStats(&before)
+
+				for range runs {
+					prepare()
+				}
+
+				runtime.ReadMemStats(&after)
+
+				if got := float64(after.TotalAlloc-before.TotalAlloc) / runs / body; got > limit {
+					t.Errorf("%s, per-record %v: %.2f bodies allocated per prepare, want at most %.1f", tc.name, perRecord, got, limit)
+				}
+			}
+		}
+	})
+
 	t.Parallel()
 
 	square, err := onesie.NewImage(squarePNG(t))
