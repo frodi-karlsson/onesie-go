@@ -20,18 +20,27 @@ func TestLiveTextOnlyVercelModels(t *testing.T) {
 		// The catalogue says text only for these, and both answer a request with an image.
 		readImagesAnyway := []string{"openai/gpt-6-luna-decisions", "typesafe-ai/jev"}
 
-		var textOnly []string
+		var textOnly, exceptions []string
 
 		for _, model := range gatewayCatalogue(t) {
-			if model.Type == "evaluation" && !slices.Contains(model.Modalities.Input, "image") && !slices.Contains(readImagesAnyway, model.ID) {
+			switch {
+			case model.Type != "evaluation" || slices.Contains(model.Modalities.Input, "image"):
+			case slices.Contains(readImagesAnyway, model.ID):
+				exceptions = append(exceptions, model.ID)
+			default:
 				textOnly = append(textOnly, model.ID)
 			}
 		}
 
 		slices.Sort(textOnly)
+		slices.Sort(exceptions)
 
-		if !slices.Equal(textOnly, textOnlyVercelModels) {
-			t.Errorf("the catalogue's text only decision models are %q, want %q", textOnly, textOnlyVercelModels)
+		if listed := slices.Sorted(slices.Values(textOnlyVercelModels)); !slices.Equal(textOnly, listed) {
+			t.Errorf("the catalogue's text only decision models are %q, want %q", textOnly, listed)
+		}
+
+		if kept := slices.Sorted(slices.Values(readImagesAnyway)); !slices.Equal(exceptions, kept) {
+			t.Errorf("the catalogue lists %q of the exceptions %q as text only, so drop the others", exceptions, kept)
 		}
 	})
 }
