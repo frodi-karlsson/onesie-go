@@ -1526,11 +1526,35 @@ func TestAnswerErrorReason(t *testing.T) {
 func TestCapabilityErrorReason(t *testing.T) {
 	t.Parallel()
 
-	t.Run("should give the message", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name         string
+		takers       []string
+		defaultModel string
+		want         string
+	}{
+		{name: "should say the provider takes none when no other model of it does", want: "the levanto provider takes no images"},
+		{name: "should name the one provider that does", takers: []string{"typesafe"}, want: "the levanto provider takes no images. The typesafe provider does"},
+		{
+			name: "should name the model and its default when the default does", defaultModel: "d",
+			want: "the levanto model m takes no images. The default model d does",
+		},
+		{
+			name: "should name the default before the one provider that does", takers: []string{"typesafe"}, defaultModel: "d",
+			want: "the levanto model m takes no images. The default model d does, and so does the typesafe provider",
+		},
+		{
+			name: "should name the default before the providers that do", takers: []string{"typesafe", "openrouter"}, defaultModel: "d",
+			want: "the levanto model m takes no images. The default model d does, and so do the typesafe and openrouter providers",
+		},
+	}
 
-		checkReason(t, newCapabilityError("levanto", "m", Needs{Images: true}, nil), "the levanto provider takes no images")
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			checkReason(t, newCapabilityError("levanto", "m", Needs{Images: true}, tc.takers, tc.defaultModel), tc.want)
+		})
+	}
 }
 
 func checkReason(t *testing.T, err reasoner, want string) {

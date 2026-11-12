@@ -5,9 +5,23 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
+
+// A model is listed when the gateway catalogue says it reads text only and a live request with an
+// image was refused. The gateway forwards such a request anyway, and each vendor fails it differently.
+var textOnlyVercelModels = []string{
+	"baseten/elephant-1",
+	"baseten/joey-1",
+	"baseten/mammoth-1",
+	"convaiinnovations/laya",
+	"microsoft/microsoft-decision-1",
+	"nace-ai/drex-v2.0",
+	"parallel/parallel-decisions-fast",
+	"scaledown/scaledown-classify-1",
+}
 
 // Vercel serves TypeSafe's Jev and the decision models of other vendors, such as
 // google/gemini-decision-1, through Vercel AI Gateway on the System One wire protocol.
@@ -21,21 +35,28 @@ func Vercel() Provider {
 		requestIDHeader: "X-Vercel-Id",
 		modelsPath:      "/v1/models",
 		decodeModels:    decodeTypeSafeModels,
-		routeFor: oneRoute(route{
-			path:          systemOnePath,
-			takes:         takesEverything(),
-			imagesHeader:  true,
-			encode:        encodeAsIs,
-			decode:        withGatewayCost,
-			wrapResult:    gatewayResult,
-			describeError: readVercelMessage,
-			forwarded:     vercelForwarded,
-			classifyError: classifyBy(
-				errorType("model_not_found", ErrUnknownModel),
-				errorType("AI_DecisionUnsupportedQuestionTypeError", ErrNotServed),
-				contextTooLong, boxNotServed, countDetail, arrayLimit, questionLimit,
-			),
-		}),
+		routeFor:        vercelRoute,
+	}
+}
+
+func vercelRoute(model string) route {
+	takes := takesEverything()
+	takes.images = !slices.Contains(textOnlyVercelModels, model)
+
+	return route{
+		path:          systemOnePath,
+		takes:         takes,
+		imagesHeader:  true,
+		encode:        encodeAsIs,
+		decode:        withGatewayCost,
+		wrapResult:    gatewayResult,
+		describeError: readVercelMessage,
+		forwarded:     vercelForwarded,
+		classifyError: classifyBy(
+			errorType("model_not_found", ErrUnknownModel),
+			errorType("AI_DecisionUnsupportedQuestionTypeError", ErrNotServed),
+			contextTooLong, boxNotServed, countDetail, arrayLimit, questionLimit,
+		),
 	}
 }
 
