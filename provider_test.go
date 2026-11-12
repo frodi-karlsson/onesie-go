@@ -27,6 +27,7 @@ func TestProviderNamed(t *testing.T) {
 		{name: "should return berget for berget", input: "berget", want: "berget"},
 		{name: "should return levanto for levanto", input: "levanto", want: "levanto"},
 		{name: "should return cloudflare for cloudflare", input: "cloudflare", want: "cloudflare"},
+		{name: "should return vercel for vercel", input: "vercel", want: "vercel"},
 		{name: "should trim the name", input: " openrouter ", want: "openrouter"},
 	}
 
@@ -53,7 +54,7 @@ func TestProviderNamed(t *testing.T) {
 			t.Fatalf("error got %v, want ErrValidation", err)
 		}
 
-		const want = "onesie: unknown provider 'nope'. Use typesafe, openrouter, berget, levanto or cloudflare"
+		const want = "onesie: unknown provider 'nope'. Use typesafe, openrouter, berget, levanto, cloudflare or vercel"
 		if err.Error() != want {
 			t.Errorf("error = %q, want %q", err.Error(), want)
 		}
@@ -64,8 +65,8 @@ func TestProviderRefuse(t *testing.T) {
 	t.Parallel()
 
 	const (
-		noImages = "onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do"
-		noBox    = "onesie: the levanto provider takes no box questions. The typesafe and openrouter providers do"
+		noImages = "onesie: the levanto provider takes no images. The typesafe, openrouter, cloudflare and vercel providers do"
+		noBox    = "onesie: the levanto provider takes no box questions. The typesafe, openrouter and vercel providers do"
 	)
 
 	everything := onesie.Needs{Images: true, Box: true, LongContext: true}
@@ -79,10 +80,11 @@ func TestProviderRefuse(t *testing.T) {
 	}{
 		{name: "should take everything on typesafe", provider: onesie.TypeSafe(), needs: everything},
 		{name: "should take everything on openrouter", provider: onesie.OpenRouter(), needs: everything},
+		{name: "should take everything on vercel", provider: onesie.Vercel(), needs: everything},
 		{name: "should refuse images on levanto", provider: onesie.Levanto(), needs: onesie.Needs{Images: true}, wantErr: noImages},
 		{
 			name: "should refuse images on berget", provider: onesie.Berget(), needs: onesie.Needs{Images: true, Box: true},
-			wantErr: "onesie: the berget provider takes no images or box questions. The typesafe and openrouter providers do",
+			wantErr: "onesie: the berget provider takes no images or box questions. The typesafe, openrouter and vercel providers do",
 		},
 		{name: "should take long context on levanto", provider: onesie.Levanto(), needs: onesie.Needs{LongContext: true}},
 		{name: "should read a blank model as the default", provider: onesie.Levanto(), model: "  ", needs: onesie.Needs{Box: true}, wantErr: noBox},
@@ -90,12 +92,12 @@ func TestProviderRefuse(t *testing.T) {
 		{
 			name: "should refuse a box question on cloudflare", provider: onesie.Cloudflare(), model: "clef-flash",
 			needs:   onesie.Needs{Images: true, Box: true},
-			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do",
+			wantErr: "onesie: the cloudflare provider takes no box questions. The typesafe, openrouter and vercel providers do",
 		},
 		{
 			name: "should refuse long context on cloudflare", provider: onesie.Cloudflare(),
 			needs:   onesie.Needs{LongContext: true},
-			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget, levanto and vercel providers do",
 		},
 	}
 
@@ -132,6 +134,7 @@ func TestProviderAlwaysLongContext(t *testing.T) {
 		{name: "should read past the limit only when asked on typesafe", provider: onesie.TypeSafe()},
 		{name: "should read past the limit only when asked on berget", provider: onesie.Berget()},
 		{name: "should read past the limit only when asked on levanto", provider: onesie.Levanto()},
+		{name: "should read past the limit only when asked on vercel", provider: onesie.Vercel()},
 		{name: "should keep the usual limit on cloudflare", provider: onesie.Cloudflare()},
 		{name: "should keep the usual limit on a clef model", provider: onesie.Cloudflare(), model: "clef-flash"},
 		{name: "should answer false for the zero provider", provider: onesie.Provider{}},
@@ -176,6 +179,7 @@ func TestProviderPinned(t *testing.T) {
 		{name: "should not pin a versioned name on levanto", provider: onesie.Levanto(), model: "levanto-sage-v1.4"},
 		{name: "should not pin jev on cloudflare", provider: onesie.Cloudflare(), model: "typesafe/jev"},
 		{name: "should not pin a versioned name on cloudflare", provider: onesie.Cloudflare(), model: "jev-1.13.0"},
+		{name: "should not pin a versioned name on vercel, where the gateway chooses what serves it", provider: onesie.Vercel(), model: "jev-1.14.0"},
 		{name: "should not pin anything on a zero provider", model: "jev-1.13.0"},
 	}
 
@@ -207,6 +211,7 @@ func TestProviderCustomBaseURL(t *testing.T) {
 		{name: "should treat the default as not custom on openrouter", provider: onesie.OpenRouter(), baseURL: "https://openrouter.ai/api"},
 		{name: "should treat the default as not custom on berget", provider: onesie.Berget(), baseURL: "https://api.berget.ai"},
 		{name: "should treat the default as not custom on levanto", provider: onesie.Levanto(), baseURL: "https://sage.levanto.ai"},
+		{name: "should treat the default as not custom on vercel", provider: onesie.Vercel(), baseURL: "https://ai-gateway.vercel.sh/typesafe"},
 		{name: "should ignore a trailing slash", provider: onesie.TypeSafe(), baseURL: "https://api.typesafe.ai//"},
 		{name: "should treat another host as custom", provider: onesie.TypeSafe(), baseURL: "http://localhost:8080", want: true},
 		{name: "should treat another provider's default as custom", provider: onesie.TypeSafe(), baseURL: "https://openrouter.ai/api", want: true},
@@ -260,6 +265,7 @@ func TestProviderBoxModel(t *testing.T) {
 	}{
 		{name: "should name jev-preview on typesafe", provider: onesie.TypeSafe(), want: "jev-preview"},
 		{name: "should name jev-preview on openrouter", provider: onesie.OpenRouter(), want: "jev-preview"},
+		{name: "should name jev-latest on vercel, which serves no jev-preview", provider: onesie.Vercel(), want: "jev-latest"},
 		{name: "should name no model on berget", provider: onesie.Berget()},
 		{name: "should name no model on levanto", provider: onesie.Levanto()},
 		{name: "should name no model on cloudflare", provider: onesie.Cloudflare()},
@@ -404,7 +410,7 @@ func TestProviders(t *testing.T) {
 			names = append(names, provider.Name())
 		}
 
-		if got := strings.Join(names, " "); got != "typesafe openrouter berget levanto cloudflare" {
+		if got := strings.Join(names, " "); got != "typesafe openrouter berget levanto cloudflare vercel" {
 			t.Errorf("providers = %s", got)
 		}
 	})
@@ -444,12 +450,12 @@ func TestCapabilityError(t *testing.T) {
 
 		if refused.Provider != "cloudflare" || refused.Model != "clef-flash" ||
 			refused.Missing != (onesie.Needs{Box: true, LongContext: true}) ||
-			strings.Join(refused.Takers, " ") != "typesafe openrouter" {
+			strings.Join(refused.Takers, " ") != "typesafe openrouter vercel" {
 			t.Errorf("error = %+v", refused)
 		}
 
 		const want = "onesie: the cloudflare provider takes no box questions or long context. " +
-			"The typesafe and openrouter providers do"
+			"The typesafe, openrouter and vercel providers do"
 		if err.Error() != want {
 			t.Errorf("message = %q, want %q", err.Error(), want)
 		}
@@ -574,7 +580,7 @@ func TestProviderPrepare(t *testing.T) {
 
 	box := onesie.Questions{{ID: "mug", Question: onesie.Box{Instructions: "the mug in image-a"}}}
 	photo := onesie.Request{State: "image-a", Questions: box, Assets: onesie.Assets{"image-a": square}}
-	noBoxes := "onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do"
+	noBoxes := "onesie: the cloudflare provider takes no box questions. The typesafe, openrouter and vercel providers do"
 
 	tests := []struct {
 		name     string
@@ -596,7 +602,7 @@ func TestProviderPrepare(t *testing.T) {
 		{
 			name: "should refuse what the provider's route does not take", provider: onesie.Levanto(),
 			req:     onesie.Request{State: "image-a", Questions: oneNoul(), Assets: onesie.Assets{"image-a": square}},
-			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do",
+			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter, cloudflare and vercel providers do",
 		},
 		{name: "should refuse a box question on a route that takes none", provider: onesie.Cloudflare(), req: photo, wantErr: noBoxes},
 		{
@@ -610,12 +616,12 @@ func TestProviderPrepare(t *testing.T) {
 		{
 			name: "should refuse a blank model as the built in default refuses it", provider: onesie.Cloudflare(),
 			req:     onesie.Request{Model: " ", State: "s", Questions: oneNoul(), LongContext: true},
-			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget, levanto and vercel providers do",
 		},
 		{
 			name: "should refuse long context from WithLongContext as SystemOne does", provider: onesie.Cloudflare(),
 			req: onesie.Request{State: "s", Questions: oneNoul()}, opts: []onesie.RequestOption{onesie.WithLongContext()},
-			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget, levanto and vercel providers do",
 		},
 		{
 			name: "should take WithLongContext on a provider that takes long context", provider: onesie.TypeSafe(),
@@ -761,6 +767,10 @@ func TestProvider(t *testing.T) {
 			wantName: "cloudflare", envAPIKey: "CLOUDFLARE_API_TOKEN", envAccountID: "CLOUDFLARE_ACCOUNT_ID",
 			defaultModel: "typesafe/jev",
 		},
+		{
+			name: "should describe vercel", provider: onesie.Vercel(), wantName: "vercel",
+			envAPIKey: "AI_GATEWAY_API_KEY", defaultModel: "jev-latest", defaultBaseURL: "https://ai-gateway.vercel.sh/typesafe",
+		},
 	}
 
 	for _, tc := range tests {
@@ -780,7 +790,7 @@ func TestProvider(t *testing.T) {
 	t.Run("should refuse a zero provider alike everywhere", func(t *testing.T) {
 		t.Parallel()
 
-		const want = "onesie: the provider is empty. Use ProviderNamed with typesafe, openrouter, berget, levanto or cloudflare"
+		const want = "onesie: the provider is empty. Use ProviderNamed with typesafe, openrouter, berget, levanto, cloudflare or vercel"
 
 		var zero onesie.Provider
 

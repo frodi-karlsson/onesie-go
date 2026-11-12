@@ -65,7 +65,8 @@ func (c *Client) do(ctx context.Context, cfg requestConfig, req call) (*rawRespo
 
 		apiErr := c.apiError(req, res)
 
-		if retriesLeft <= 0 || !cfg.retry.RetryStatus(res.status) {
+		// A reply the route recognised says what is wrong with the request, so sending it again cannot help.
+		if retriesLeft <= 0 || !cfg.retry.RetryStatus(res.status) || apiErr.sentinel != nil {
 			return nil, apiErr
 		}
 

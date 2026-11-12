@@ -12,16 +12,17 @@ encoding made on purpose, rewrite them with `go test -run 'TestMarshalBody|TestC
 and review the diff, which shows exactly what a provider receives.
 
 Run `make test-integration` for the live API suite. It reads `TYPESAFE_API_KEY`,
-`OPENROUTER_API_KEY`, `BERGET_API_KEY`, `LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID` from the environment or a local `.env` file, and skips the cases whose keys
+`OPENROUTER_API_KEY`, `BERGET_API_KEY`, `LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID` and `AI_GATEWAY_API_KEY` from the environment or a local `.env` file, and skips the cases whose keys
 are missing.
 
 ## Repository settings
 
 The scheduled integration workflow reads `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`,
-`LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. They must be configured as
-Actions secrets in this repository. The Cloudflare Jev cases spend AI Gateway credits on every run,
-and fail with 402 when the credits run out.
+`LEVANTO_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` and `AI_GATEWAY_API_KEY`. They
+must be configured as Actions secrets in this repository. The Cloudflare Jev cases spend AI Gateway
+credits on every run, and fail with 402 when the credits run out. The Vercel cases spend Vercel AI
+Gateway credits, and fail with 403 when the team has no paid credits.
 
 The repository has no variables or environments.
 

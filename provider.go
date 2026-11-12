@@ -57,7 +57,7 @@ func providerNames() []string {
 
 // Providers lists every provider this package serves, TypeSafe first, in the order a refusal names them.
 func Providers() []Provider {
-	return []Provider{TypeSafe(), OpenRouter(), Berget(), Levanto(), Cloudflare()}
+	return []Provider{TypeSafe(), OpenRouter(), Berget(), Levanto(), Cloudflare(), Vercel()}
 }
 
 func joinNames(names []string, conjunction string) string {

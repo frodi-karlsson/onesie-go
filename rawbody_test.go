@@ -64,7 +64,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{
 			name: "should refuse images the provider does not take", provider: onesie.Levanto(),
 			body:    `{"state":"r","questions":{},` + asset + `}`,
-			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do",
+			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter, cloudflare and vercel providers do",
 		},
 		{
 			name:    "should refuse an image a send refuses",
@@ -112,7 +112,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 		},
 		{
 			name: "should refuse long context the provider does not take", provider: onesie.Cloudflare(), body: `{"state":"s"}`, opts: longContext,
-			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget and levanto providers do",
+			wantErr: "onesie: the cloudflare provider takes no long context. The typesafe, openrouter, berget, levanto and vercel providers do",
 		},
 		{
 			name:    "should refuse a raw score over the levels limit",

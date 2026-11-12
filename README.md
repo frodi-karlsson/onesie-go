@@ -40,7 +40,7 @@ fmt.Println(urgent.Noul)
 ## Providers
 
 The client talks to TypeSafe by default. Pass `onesie.WithProvider` with `onesie.ProviderNamed` or
-a constructor such as `onesie.OpenRouter()` to use OpenRouter, Berget, Levanto or Cloudflare.
+a constructor such as `onesie.OpenRouter()` to use OpenRouter, Berget, Levanto, Cloudflare or Vercel.
 Each provider reads its key from the variable `Provider.EnvAPIKey` names, unless
 `onesie.WithAPIKey` or `onesie.WithAPIKeyFunc` supplies it. Cloudflare also needs an account, from
 `onesie.WithAccountID` or the variable `Provider.EnvAccountID` names.

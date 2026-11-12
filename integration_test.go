@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -285,6 +286,50 @@ func TestLiveClientSystemOne(t *testing.T) {
 
 		if result.Usage.Cost == nil {
 			t.Error("the usage carries no cost")
+		}
+	})
+
+	t.Run("should answer all three question types with a request id and a cost under vercel", func(t *testing.T) {
+		t.Parallel()
+
+		for _, model := range []string{"", "perplexity/pplx-decider-flash-v1.2"} {
+			result, err := liveVercelClient(t).SystemOne(liveContext(t, time.Minute), onesie.Request{
+				State: urgentState,
+				Model: model,
+				Questions: onesie.Questions{
+					{ID: "urgent", Question: onesie.Noul{Instructions: "Does this message convey urgency?"}},
+					{
+						ID: "team",
+						Question: onesie.Choice{
+							Instructions: "Which team should handle this?",
+							Criteria: onesie.Criteria{
+								{Name: "billing", Desc: "Payments, invoicing, payouts, refunds"},
+								{Name: "technical", Desc: "Bugs, outages, integrations"},
+							},
+						},
+					},
+					{
+						ID: "frustration",
+						Question: onesie.Score{
+							Instructions: "How frustrated is the customer?",
+							Criteria:     onesie.Levels("Calm", "Frustrated", "Very angry"),
+						},
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error on %q: %v", model, err)
+			}
+
+			for _, id := range []string{"urgent", "team", "frustration"} {
+				if _, ok := result.Answers[id]; !ok {
+					t.Errorf("no answer for %s on %q", id, model)
+				}
+			}
+
+			if result.RequestID == "" || result.Usage.Cost == nil {
+				t.Errorf("request id %q, usage %+v on %q, want both from the gateway", result.RequestID, result.Usage, model)
+			}
 		}
 	})
 
@@ -677,6 +722,24 @@ func TestLiveClientListModels(t *testing.T) {
 		}
 	})
 
+	t.Run("should list the decision models under vercel, jev and another vendor's among them", func(t *testing.T) {
+		t.Parallel()
+
+		models, err := liveVercelClient(t).ListModels(liveContext(t, 30*time.Second))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		names := make([]string, 0, len(models))
+		for _, model := range models {
+			names = append(names, model.Name)
+		}
+
+		if !slices.Contains(names, "jev") || !slices.Contains(names, "google/gemini-decision-1") {
+			t.Errorf("models = %v, want jev and google/gemini-decision-1 among them", names)
+		}
+	})
+
 	t.Run("should list the models under levanto, the default alias among them", func(t *testing.T) {
 		t.Parallel()
 
@@ -857,6 +920,26 @@ func TestLiveAPIError(t *testing.T) {
 		}
 	})
 
+	t.Run("should return ErrAuthentication for a bad key under vercel", func(t *testing.T) {
+		t.Parallel()
+
+		_ = vercelKey(t)
+
+		client, err := onesie.New(
+			onesie.WithProvider(onesie.Vercel()),
+			onesie.WithAPIKey("vck_definitely-not-a-real-key"),
+			onesie.WithUserAgent("onesie-integration"),
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		_, err = client.VerifyKey(liveContext(t, 30*time.Second))
+		if !errors.Is(err, onesie.ErrAuthentication) {
+			t.Fatalf("error got %v, want ErrAuthentication", err)
+		}
+	})
+
 	t.Run("should return ErrAuthentication for a bad key under levanto", func(t *testing.T) {
 		t.Parallel()
 
@@ -939,18 +1022,21 @@ func TestLiveAPIError(t *testing.T) {
 			}
 		}
 
-		boxOnLatest := func(t *testing.T) onesie.Request {
-			square, err := onesie.NewImage(squarePNG(t))
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+		boxOn := func(model string) func(*testing.T) onesie.Request {
+			return func(t *testing.T) onesie.Request {
+				square, err := onesie.NewImage(squarePNG(t))
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
 
-			return onesie.Request{
-				State: map[string]any{"photo": "image-square"}, Model: "jev-latest",
-				Questions: onesie.Questions{{ID: "square", Question: onesie.Box{Instructions: "the red square in `photo`"}}},
-				Assets:    onesie.Assets{"image-square": square},
+				return onesie.Request{
+					State: map[string]any{"photo": "image-square"}, Model: model,
+					Questions: onesie.Questions{{ID: "square", Question: onesie.Box{Instructions: "the red square in `photo`"}}},
+					Assets:    onesie.Assets{"image-square": square},
+				}
 			}
 		}
+		boxOnLatest := boxOn("jev-latest")
 
 		tests := []struct {
 			name     string
@@ -969,6 +1055,9 @@ func TestLiveAPIError(t *testing.T) {
 			{name: "should match ErrContextTooLong for a long state on typesafe", fixture: "typesafe-context-too-long", client: typesafe, req: ask("", long), sentinel: onesie.ErrContextTooLong},
 			{name: "should match ErrContextTooLong for a long state on openrouter", fixture: "openrouter-context-too-long", client: liveOpenRouterClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
 			{name: "should match ErrContextTooLong for a long state on the cloudflare gateway", fixture: "gateway-context-too-long", client: liveCloudflareClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
+			{name: "should match ErrUnknownModel for an unknown model on vercel", fixture: "vercel-unknown-model", client: liveVercelClient, req: ask("onesie-does-not-exist", "x"), sentinel: onesie.ErrUnknownModel},
+			{name: "should match ErrContextTooLong for a long state on vercel", fixture: "vercel-context-too-long", client: liveVercelClient, req: ask("", long), sentinel: onesie.ErrContextTooLong},
+			{name: "should match ErrNotServed for a box on a vercel model that serves none", fixture: "vercel-question-type-not-served", client: liveVercelClient, req: boxOn("google/gemini-decision-1"), sentinel: onesie.ErrNotServed},
 			{name: "should match ErrNotServed for a box on typesafe's latest model", fixture: "typesafe-box-not-served", client: typesafe, req: boxOnLatest, sentinel: onesie.ErrNotServed, mayServe: true},
 			{name: "should match ErrNotServed for a box on openrouter's latest model", fixture: "openrouter-box-not-served", client: liveOpenRouterClient, req: boxOnLatest, sentinel: onesie.ErrNotServed, mayServe: true},
 		}
@@ -1030,6 +1119,13 @@ func TestLiveAPIError(t *testing.T) {
 						`{"model":"typesafe/jev","input":{"state":"x",` + questions + `}}`
 				},
 			},
+			{
+				fixture:  "vercel-question-limit",
+				provider: onesie.Vercel(),
+				target: func(t *testing.T) (string, string, string) {
+					return "https://ai-gateway.vercel.sh/typesafe/v1/systemone", vercelKey(t), `{"state":"x","model":"jev-latest",` + questions + `}`
+				},
+			},
 		} {
 			t.Run("should refuse eleven levels for "+tc.fixture, func(t *testing.T) {
 				t.Parallel()
@@ -1070,6 +1166,21 @@ func liveOpenRouterClient(t *testing.T) *onesie.Client {
 	client, err := onesie.New(
 		onesie.WithProvider(onesie.OpenRouter()),
 		onesie.WithAPIKey(openRouterKey(t)),
+		onesie.WithUserAgent("onesie-integration"),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	return client
+}
+
+func liveVercelClient(t *testing.T) *onesie.Client {
+	t.Helper()
+
+	client, err := onesie.New(
+		onesie.WithProvider(onesie.Vercel()),
+		onesie.WithAPIKey(vercelKey(t)),
 		onesie.WithUserAgent("onesie-integration"),
 	)
 	if err != nil {

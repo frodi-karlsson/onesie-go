@@ -1,1 +1,1 @@
-onesie: the levanto provider takes no images. The typesafe, openrouter and cloudflare providers do
+onesie: the levanto provider takes no images. The typesafe, openrouter, cloudflare and vercel providers do
