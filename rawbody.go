@@ -183,6 +183,11 @@ func (b *PreparedBody) LongContext() bool {
 	return b.sent.needs.longContext
 }
 
+// Images reports whether the body carries assets, the images its questions read.
+func (b *PreparedBody) Images() bool {
+	return b.sent.needs.images
+}
+
 // Box reports whether the body asks a box question.
 func (b *PreparedBody) Box() bool {
 	return b.sent.needs.box
