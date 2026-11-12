@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -30,6 +31,7 @@ func TestNewAPIError(t *testing.T) {
 	openrouter := OpenRouter().route(jevLatest)
 	gateway := Cloudflare().route(cloudflareJev)
 	workers := Cloudflare().route("clef")
+	vercel := Vercel().route(jevLatest)
 
 	tests := []struct {
 		name     string
@@ -622,6 +624,11 @@ func TestNewAPIError(t *testing.T) {
 		{name: "should read the gateway's count refusal", file: "gateway-question-limit.json", status: 400, via: gateway, sentinel: ErrQuestionLimit, reason: "400 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"},
 		{name: "should read cloudflare's refused token", file: "cloudflare-auth.json", status: 401, via: gateway, sentinel: ErrAuthentication, reason: "401 Authentication error"},
 		{name: "should read the models search's refused token", file: "cloudflare-models-auth.json", status: 400, via: workers, sentinel: ErrAuthentication, reason: "400 Authentication failed (status: 400)"},
+		{name: "should read vercel's unknown model", file: "vercel-unknown-model.json", status: 404, via: vercel, sentinel: ErrUnknownModel, reason: "404 Model 'typesafe-ai/onesie-does-not-exist' not found"},
+		{name: "should read vercel's context limit", file: "vercel-context-too-long.json", status: 400, via: vercel, sentinel: ErrContextTooLong, reason: "400 max_tokens_exceeded"},
+		{name: "should read vercel's context limit from typesafe's attempt after a fallback", file: "vercel-context-too-long-fallback.json", status: 400, via: vercel, sentinel: ErrContextTooLong, reason: "400 max_tokens_exceeded"},
+		{name: "should read vercel's question type refusal", file: "vercel-question-type-not-served.json", status: 500, via: vercel, needs: boxed, sentinel: ErrNotServed, reason: `500 Question "shape" has type "box", which is not supported by provider "google.decision" and model "gemini-decision-1".`},
+		{name: "should read vercel's count refusal", file: "vercel-question-limit.json", status: 400, via: vercel, sentinel: ErrQuestionLimit, reason: "400 questions.rate.criteria: Too big: expected array to have <=10 items"},
 		{name: "should read workers ai's unknown model", file: "workers-unknown-model.json", status: 400, via: workers, sentinel: ErrUnknownModel, reason: "400 No such model: No such model @cf/cloudflare/clef-nope or task (72980980-d159-4205-859d-0aca1986d075)"},
 	}
 
@@ -630,7 +637,7 @@ func TestNewAPIError(t *testing.T) {
 
 		routes := map[string]route{
 			"typesafe": typesafe, "openrouter": openrouter, "berget": Berget().route(bergetModel),
-			"levanto": Levanto().route(levantoModel), "gateway": gateway, "workers": workers,
+			"levanto": Levanto().route(levantoModel), "gateway": gateway, "workers": workers, "vercel": vercel,
 		}
 		const hostile = `"a\u001b[31mb\nline2"`
 		bodies := []string{`{"error":` + hostile + `}`, `{"error":{"message":` + hostile + `}}`, `{"errors":[{"message":` + hostile + `}]}`}
@@ -645,6 +652,36 @@ func TestNewAPIError(t *testing.T) {
 	})
 
 	refusals := []error{ErrUnknownModel, ErrContextTooLong, ErrNotServed, ErrQuestionLimit}
+
+	t.Run("should read a body vercel forwards from typesafe as typesafe's own", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"error":{"message":"{\"detail\":[{\"type\":\"too_long\",\"loc\":[\"body\",\"questions\",\"rate\",\"score\",\"criteria\"],` +
+			`\"msg\":\"List should have at most 10 items after validation, not 11\"}]}","type":"AI_APICallError"}}`
+
+		got := newAPIError(vercel, Needs{}, 400, http.Header{}, []byte(body), time.Now())
+		if want := "400 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"; !errors.Is(got, ErrQuestionLimit) || got.Reason() != want {
+			t.Errorf("error = %v, want ErrQuestionLimit reading %q", got, want)
+		}
+	})
+
+	t.Run("should read vercel's first attempt only when its status is about the body", func(t *testing.T) {
+		t.Parallel()
+
+		attempts := func(first int) string {
+			return `{"error":{"message":"fallback failed","type":"AI_APICallError"},"providerMetadata":{"gateway":{"routing":{"modelAttempts":` +
+				`[{"providerAttempts":[{"error":"slow down","statusCode":` + strconv.Itoa(first) + `},{"error":"fallback failed","statusCode":502}]}]}}}}`
+		}
+
+		for status, want := range map[int]string{
+			429: "400 fallback failed", 401: "400 fallback failed", 408: "400 fallback failed",
+			400: "400 slow down", 413: "400 slow down",
+		} {
+			if got := newAPIError(vercel, Needs{}, 400, http.Header{}, []byte(attempts(status)), time.Now()).Reason(); got != want {
+				t.Errorf("Reason with a first attempt of %d = %q, want %q", status, got, want)
+			}
+		}
+	})
 
 	for _, tc := range classified {
 		t.Run(tc.name, func(t *testing.T) {
@@ -680,6 +717,8 @@ func TestNewAPIError(t *testing.T) {
 		{name: "should not read levanto's wording as an unknown model on typesafe", file: "levanto-unknown-model.json", status: 422, via: typesafe, not: ErrUnknownModel},
 		{name: "should not read an invalid request as a box refusal without a box", file: "typesafe-box-not-served.json", status: 400, via: typesafe, not: ErrNotServed},
 		{name: "should not read an unknown model from a server error", file: "typesafe-unknown-model.json", status: 500, via: typesafe, not: ErrUnknownModel},
+		{name: "should not read vercel's question type refusal on typesafe", file: "vercel-question-type-not-served.json", status: 500, via: typesafe, needs: boxed, not: ErrNotServed},
+		{name: "should not read vercel's model_not_found on cloudflare", file: "vercel-unknown-model.json", status: 404, via: gateway, not: ErrUnknownModel},
 		{name: "should not read typesafe's count wording on berget", file: "typesafe-question-limit.json", status: 422, via: Berget().route(bergetModel), not: ErrQuestionLimit},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -847,6 +886,7 @@ func TestDescribe(t *testing.T) {
 		{name: "should keep a body that is not JSON as the detail", status: 529, body: "overloaded", want: description{lead: "529 status code, with a response body that is not JSON: ", detail: "overloaded"}},
 		{name: "should lead with the whole message when there is no body", status: 500, want: description{lead: "500 status code, no body"}},
 		{name: "should keep a message that repeats the status as an unsaid detail", status: 401, body: `{"error":"Unauthorized"}`, want: description{lead: "401 ", detail: "Unauthorized", unsaid: true}},
+		{name: "should read a top level error_type when the body has no message", status: 400, body: `{"error_type":"max_tokens_exceeded"}`, want: description{lead: "400 ", detail: "max_tokens_exceeded"}},
 		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`, unsaid: true}},
 	}
 

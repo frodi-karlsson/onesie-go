@@ -226,7 +226,15 @@ func readMessage(body any) string {
 		return describeValidation(list)
 	}
 
-	return firstError(fields)
+	if text := firstError(fields); text != "" {
+		return text
+	}
+
+	if text, ok := fields["error_type"].(string); ok {
+		return text
+	}
+
+	return ""
 }
 
 func firstError(fields map[string]any) string {

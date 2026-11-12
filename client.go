@@ -215,7 +215,7 @@ func (c *Client) AttemptTimeout() time.Duration {
 	return c.attemptTimeout
 }
 
-// VerifyKey lists the models, which proves the key on TypeSafe, Levanto and Cloudflare, or lists them with no
+// VerifyKey lists the models, which proves the key on TypeSafe, Levanto, Cloudflare and Vercel, or lists them with no
 // key on a keyless client. Berget also answers one question that spends a few tokens, OpenRouter its key endpoint.
 func (c *Client) VerifyKey(ctx context.Context, opts ...RequestOption) ([]ModelCard, error) {
 	models, err := c.ListModels(ctx, opts...)

@@ -216,6 +216,7 @@ func TestProviderRoute(t *testing.T) {
 		{name: "should give openrouter one route that takes everything", provider: OpenRouter(), want: images},
 		{name: "should give berget one route that takes long context only", provider: Berget(), want: text},
 		{name: "should give levanto one route that takes long context only", provider: Levanto(), want: text},
+		{name: "should give vercel one route that takes everything", provider: Vercel(), want: images},
 	}
 
 	for _, tc := range tests {

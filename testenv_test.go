@@ -57,6 +57,22 @@ func levantoKey(t *testing.T) string {
 	return ""
 }
 
+func vercelKey(t *testing.T) string {
+	t.Helper()
+
+	if key := strings.TrimSpace(os.Getenv("AI_GATEWAY_API_KEY")); key != "" {
+		return key
+	}
+
+	if key := fromDotEnv(t, "AI_GATEWAY_API_KEY"); key != "" {
+		return key
+	}
+
+	t.Skip("no AI_GATEWAY_API_KEY in the environment or .env, skipping the Vercel live cases")
+
+	return ""
+}
+
 func bergetKey(t *testing.T) string {
 	t.Helper()
 

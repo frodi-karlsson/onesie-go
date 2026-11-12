@@ -114,6 +114,7 @@ func encodeRoutes() []encodeRoute {
 		{name: "levanto", provider: onesie.Levanto()},
 		{name: "cloudflare", provider: onesie.Cloudflare(), model: "typesafe/jev"},
 		{name: "cloudflare-clef", provider: onesie.Cloudflare(), model: "clef"},
+		{name: "vercel", provider: onesie.Vercel()},
 	}
 }
 

@@ -1,1 +1,1 @@
-onesie: the cloudflare provider takes no box questions. The typesafe and openrouter providers do
+onesie: the cloudflare provider takes no box questions. The typesafe, openrouter and vercel providers do

@@ -825,6 +825,37 @@ func TestNew(t *testing.T) {
 		}
 	})
 
+	t.Run("should read AI_GATEWAY_API_KEY and send to the gateway's typesafe path under vercel", func(t *testing.T) {
+		t.Parallel()
+
+		transport := &recordingTransport{body: shortAnswer}
+
+		client, err := onesie.New(
+			onesie.WithEnv(mockEnv(map[string]string{
+				onesie.TypeSafe().EnvAPIKey(): "sk-typesafe",
+				"AI_GATEWAY_API_KEY":          "vck_test",
+			})),
+			onesie.WithProvider(onesie.Vercel()),
+			onesie.WithHTTPClient(&http.Client{Transport: transport}),
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		req := transport.last()
+		if got := req.Header.Get("Authorization"); got != "Bearer vck_test" {
+			t.Errorf("Authorization = %q, want the gateway key", got)
+		}
+
+		if got := req.URL.String(); got != "https://ai-gateway.vercel.sh/typesafe/v1/systemone" {
+			t.Errorf("url = %s, want the gateway's typesafe path", got)
+		}
+	})
+
 	t.Run("should name LEVANTO_API_KEY in the no key error under levanto", func(t *testing.T) {
 		t.Parallel()
 
@@ -1160,6 +1191,29 @@ func TestClientSystemOne(t *testing.T) {
 
 		if result.RequestID != "07114a10" {
 			t.Errorf("request id got %q, want 07114a10", result.RequestID)
+		}
+	})
+
+	t.Run("should fill the request id from x-vercel-id and the cost from the gateway under vercel", func(t *testing.T) {
+		t.Parallel()
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Vercel-Id", "arn1::fra1::m7cg8")
+			_, _ = io.WriteString(w, `{"model":"jev-latest","answers":{"q":{"type":"noul","noul":0.9}},`+
+				`"usage":{"input_tokens":397,"output_tokens":61},"provider_metadata":{"gateway":{"cost":"0.000016674"}}}`)
+		}))
+		defer server.Close()
+
+		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.Vercel()))
+
+		result, err := client.SystemOne(t.Context(), onesie.Request{State: "x", Questions: oneNoul()})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.RequestID != "arn1::fra1::m7cg8" || result.Usage.Cost == nil || *result.Usage.Cost != 0.000016674 {
+			t.Errorf("request id %q, usage %+v, want arn1::fra1::m7cg8 and a cost of 0.000016674", result.RequestID, result.Usage)
 		}
 	})
 
@@ -1788,6 +1842,35 @@ func TestClientSystemOne(t *testing.T) {
 
 			if transport.calls() != 1 {
 				t.Errorf("call count got %d, want 1, %s", transport.calls(), transport.attempts())
+			}
+		})
+
+		t.Run("should not retry a server error the route recognises, on any provider", func(t *testing.T) {
+			t.Parallel()
+
+			for _, tc := range []struct {
+				provider onesie.Provider
+				body     string
+				sentinel error
+			}{
+				{provider: onesie.TypeSafe(), body: `{"detail":{"error_type":"max_tokens_exceeded"}}`, sentinel: onesie.ErrContextTooLong},
+				{
+					provider: onesie.Vercel(), sentinel: onesie.ErrNotServed,
+					body: `{"error":{"message":"Question \"shape\" has type \"box\", which is not supported",` +
+						`"type":"AI_DecisionUnsupportedQuestionTypeError"}}`,
+				},
+			} {
+				client, _, transport := newScriptedClient(t, []scriptedReply{{
+					status: http.StatusInternalServerError, header: http.Header{"Content-Type": {"application/json"}}, body: tc.body,
+				}}, onesie.WithProvider(tc.provider))
+
+				if _, err := client.SystemOne(t.Context(), ask); !errors.Is(err, tc.sentinel) {
+					t.Errorf("error on %s got %v, want %v, %s", tc.provider.Name(), err, tc.sentinel, transport.attempts())
+				}
+
+				if transport.calls() != 1 {
+					t.Errorf("call count on %s got %d, want 1, %s", tc.provider.Name(), transport.calls(), transport.attempts())
+				}
 			}
 		})
 

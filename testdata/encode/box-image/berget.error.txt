@@ -1,1 +1,1 @@
-onesie: the berget provider takes no images or box questions. The typesafe and openrouter providers do
+onesie: the berget provider takes no images or box questions. The typesafe, openrouter and vercel providers do
