@@ -211,6 +211,11 @@ func questionsIn(members []member) (Questions, error) {
 		return nil, err
 	}
 
+	// Every provider refuses an empty questions object, and its refusal reads as a fault in onesie's limits.
+	if len(asked) == 0 {
+		return nil, &ValidationError{Message: "at least one question is required"}
+	}
+
 	return asked, nil
 }
 

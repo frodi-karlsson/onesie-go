@@ -329,7 +329,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 		},
 		{
 			name:    "should refuse images on a route that takes neither",
-			body:    `{"model":"bare","state":"img","questions":{},"assets":{"img":{"format":"png","data_base64":"AQ=="}}}`,
+			body:    `{"model":"bare","state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":{"format":"png","data_base64":"AQ=="}}}`,
 			wantErr: "onesie: the fake provider takes no images. The typesafe, openrouter, cloudflare and vercel providers do",
 		},
 		{
@@ -376,7 +376,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 		client, rec := newFakeClient(t, http.StatusOK, plainAnswer)
 
 		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(
-			`{"model":"bare","state":"img","questions":{},"assets":{"img":{"format":"gif","data_base64":"AQ=="}}}`))
+			`{"model":"bare","state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":{"format":"gif","data_base64":"AQ=="}}}`))
 		if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "image 'img' has format 'gif', and an image must be png or jpg") {
 			t.Fatalf("error = %v, want the asset's own error", err)
 		}

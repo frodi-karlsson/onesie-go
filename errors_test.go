@@ -816,6 +816,47 @@ func TestNewAPIError(t *testing.T) {
 	})
 }
 
+func TestAPIErrorRecognised(t *testing.T) {
+	t.Parallel()
+
+	boxed := Needs{Images: true, Box: true}
+
+	tests := []struct {
+		name   string
+		via    route
+		file   string
+		status int
+		body   string
+		want   bool
+	}{
+		{name: "should recognise vercel's 500 for a question type the model does not serve", via: Vercel().route(jevLatest), file: "vercel-question-type-not-served.json", status: 500, want: true},
+		{name: "should recognise an unknown model whatever its status", via: Vercel().route(jevLatest), file: "vercel-unknown-model.json", status: 404, want: true},
+		{name: "should recognise a refused cloudflare token, which is not a fault in the body", via: Cloudflare().route(cloudflareJev), file: "cloudflare-auth.json", status: 400, want: true},
+		{name: "should not recognise the same 500 on a route with no rule for it", via: TypeSafe().route(jevLatest), file: "vercel-question-type-not-served.json", status: 500},
+		{name: "should not recognise a plain server error", via: TypeSafe().route(jevLatest), status: 500, body: `{"error":"internal"}`},
+		{name: "should not recognise a status the route reads no body for", via: TypeSafe().route(jevLatest), status: 429, body: `{"error":"slow down"}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := []byte(tc.body)
+
+			if tc.file != "" {
+				var err error
+				if body, err = os.ReadFile(filepath.Join("testdata", "errors", tc.file)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if got := newAPIError(tc.via, boxed, tc.status, http.Header{}, body, time.Time{}).Recognised(); got != tc.want {
+				t.Errorf("Recognised = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOversizedAPIError(t *testing.T) {
 	t.Parallel()
 

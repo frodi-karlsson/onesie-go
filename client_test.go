@@ -3361,7 +3361,7 @@ func TestWithAttemptObserver(t *testing.T) {
 			{name: "should use the asset timeout for a raw body with images", raw: rawWithImage, want: onesie.AssetAttemptTimeout},
 			{
 				name: "should use the default for a raw body with empty assets",
-				raw:  json.RawMessage(`{"state":"s","questions":{},"assets":{}}`), want: onesie.DefaultAttemptTimeout,
+				raw:  json.RawMessage(`{"state":"s","questions":{"q":{"type":"noul"}},"assets":{}}`), want: onesie.DefaultAttemptTimeout,
 			},
 			{
 				name: "should let WithAttemptTimeout set both", opts: []onesie.Option{onesie.WithAttemptTimeout(5 * time.Second)},
@@ -3454,7 +3454,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 
 		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.Cloudflare()))
 
-		got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","model":"clef","questions":{},"assets":{}}`))
+		got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","model":"clef","questions":{"q":{"type":"noul"}},"assets":{}}`))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -3463,7 +3463,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 			t.Errorf("body = %s, want the unwrapped result", got)
 		}
 
-		if sent != `{"model":"@cf/cloudflare/clef","input":{"state":"s","questions":{}}}` {
+		if sent != `{"model":"@cf/cloudflare/clef","input":{"state":"s","questions":{"q":{"type":"noul"}}}}` {
 			t.Errorf("sent = %s", sent)
 		}
 	})
@@ -3483,11 +3483,11 @@ func TestClientSystemOneRaw(t *testing.T) {
 		client, _ := newTestClient(t, server.URL, onesie.WithProvider(onesie.Cloudflare()))
 
 		if _, err := client.SystemOneRaw(t.Context(),
-			json.RawMessage(`{"state":"s","model":"clef","questions":{},"images":["data:image/png;base64,AQ=="]}`)); err != nil {
+			json.RawMessage(`{"state":"s","model":"clef","questions":{"q":{"type":"noul"}},"images":["data:image/png;base64,AQ=="]}`)); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		want := `{"model":"@cf/cloudflare/clef","input":{"state":"s","questions":{},"images":["data:image/png;base64,AQ=="]}}`
+		want := `{"model":"@cf/cloudflare/clef","input":{"state":"s","questions":{"q":{"type":"noul"}},"images":["data:image/png;base64,AQ=="]}}`
 		if sent != want {
 			t.Errorf("sent = %s, want %s", sent, want)
 		}
@@ -3537,7 +3537,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 		})
 	}
 
-	compact := json.RawMessage(`{"state":"hi","model":"jev-latest","questions":{}}`)
+	compact := json.RawMessage(`{"state":"hi","model":"jev-latest","questions":{"q":{"type":"noul"}}}`)
 
 	tests := []struct {
 		name     string
@@ -3655,7 +3655,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 				client, _, transport := newScriptedClient(t, []scriptedReply{{status: http.StatusOK, body: body}},
 					onesie.WithProvider(provider))
 
-				got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{}}`))
+				got, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{"q":{"type":"noul"}}}`))
 
 				var respErr *onesie.ResponseError
 				if !errors.As(err, &respErr) || respErr.Status != http.StatusOK || got != nil {
@@ -3676,7 +3676,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 		client, _ := newTestClient(t, "https://api.example",
 			onesie.WithProvider(onesie.Cloudflare()), onesie.WithHTTPClient(&http.Client{Transport: transport}))
 
-		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{}}`))
+		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(`{"state":"s","questions":{"q":{"type":"noul"}}}`))
 
 		var respErr *onesie.ResponseError
 		if !errors.As(err, &respErr) || respErr.Status != http.StatusOK || err.Error() != "onesie: 200 response could not be used: the cloudflare response has no result object, since its result is missing or null" {
@@ -3747,7 +3747,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 			client, _ := newTestClient(t, "https://api.example",
 				onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
 
-			body := json.RawMessage(`{"state":"a < b","model":"m","questions":{},"assets":{}}`)
+			body := json.RawMessage(`{"state":"a < b","model":"m","questions":{"q":{"type":"noul"}},"assets":{}}`)
 			if _, err := client.SystemOneRaw(t.Context(), body); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -3766,12 +3766,12 @@ func TestClientSystemOneRaw(t *testing.T) {
 			client, _ := newTestClient(t, "https://api.example",
 				onesie.WithProvider(provider), onesie.WithHTTPClient(&http.Client{Transport: transport}))
 
-			body := json.RawMessage(`{"state":"s","model":"m","long_context":true,"questions":{}}`)
+			body := json.RawMessage(`{"state":"s","model":"m","long_context":true,"questions":{"q":{"type":"noul"}}}`)
 			if _, err := client.SystemOneRaw(t.Context(), body); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if got := transport.lastBody(); got != `{"state":"s","model":"m","questions":{}}` {
+			if got := transport.lastBody(); got != `{"state":"s","model":"m","questions":{"q":{"type":"noul"}}}` {
 				t.Errorf("body = %s, want it without long_context", got)
 			}
 
@@ -3865,7 +3865,7 @@ func TestClientSystemOneRaw(t *testing.T) {
 			onesie.WithProvider(onesie.Levanto()), onesie.WithHTTPClient(&http.Client{Transport: transport}))
 
 		_, err := client.SystemOneRaw(t.Context(), json.RawMessage(
-			`{"state":"r","questions":{},"long_context":"yes","assets":{"r":{"format":"png","data_base64":"AQ=="}}}`))
+			`{"state":"r","questions":{"q":{"type":"noul"}},"long_context":"yes","assets":{"r":{"format":"png","data_base64":"AQ=="}}}`))
 		if err == nil || !strings.Contains(err.Error(), "long_context must be true or false") {
 			t.Fatalf("error = %v, want the long_context refusal", err)
 		}
@@ -3955,9 +3955,9 @@ func TestClientSystemOneRaw(t *testing.T) {
 	for _, bad := range []struct {
 		name, body, want string
 	}{
-		{name: "a bad format", body: `{"state":"r","questions":{},"assets":{"r":{"format":"gif","data_base64":"AQ=="}}}`, want: "has format 'gif'"},
-		{name: "data that is not a string", body: `{"state":"r","questions":{},"assets":{"r":{"format":"png","data_base64":1}}}`, want: "needs data_base64 as a string"},
-		{name: "assets that are not an object", body: `{"state":"r","questions":{},"assets":[1]}`, want: "assets must be an object of images"},
+		{name: "a bad format", body: `{"state":"r","questions":{"q":{"type":"noul"}},"assets":{"r":{"format":"gif","data_base64":"AQ=="}}}`, want: "has format 'gif'"},
+		{name: "data that is not a string", body: `{"state":"r","questions":{"q":{"type":"noul"}},"assets":{"r":{"format":"png","data_base64":1}}}`, want: "needs data_base64 as a string"},
+		{name: "assets that are not an object", body: `{"state":"r","questions":{"q":{"type":"noul"}},"assets":[1]}`, want: "assets must be an object of images"},
 	} {
 		for _, provider := range []onesie.Provider{onesie.TypeSafe(), onesie.OpenRouter()} {
 			t.Run("should refuse "+bad.name+" in a raw body on "+provider.Name()+" before any request", func(t *testing.T) {

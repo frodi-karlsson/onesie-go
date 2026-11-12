@@ -107,6 +107,12 @@ func (e *APIError) Detail() string {
 	return e.detail
 }
 
+// Recognised reports whether the provider's route read what is wrong from the body, as an unknown
+// model, a question the model does not serve or a refused Cloudflare token, so sending it again cannot help.
+func (e *APIError) Recognised() bool {
+	return e.sentinel != nil
+}
+
 // Is reports whether this error matches one of the package sentinels.
 func (e *APIError) Is(target error) bool {
 	switch target {

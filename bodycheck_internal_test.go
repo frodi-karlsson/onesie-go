@@ -16,47 +16,47 @@ func TestCheckBodyImages(t *testing.T) {
 		body    string
 		wantErr string
 	}{
-		{name: "should accept an asset the state names", body: `{"state":{"p":"img"},"questions":{},"assets":{"img":` + asset + `}}`},
+		{name: "should accept an asset the state names", body: `{"state":{"p":"img"},"questions":{"q":{"type":"noul"}},"assets":{"img":` + asset + `}}`},
 		{
 			name: "should accept an asset named mid sentence in the instructions",
 			body: `{"state":"s","questions":{"q":{"type":"noul","instructions":"is img a dog"}},"assets":{"img":` + asset + `}}`,
 		},
 		{
 			name:    "should refuse a name found only inside a longer one",
-			body:    `{"state":"img2","questions":{},"assets":{"img":` + asset + `,"img2":` + asset + `}}`,
+			body:    `{"state":"img2","questions":{"q":{"type":"noul"}},"assets":{"img":` + asset + `,"img2":` + asset + `}}`,
 			wantErr: "asset 'img' is not referenced in the state or the questions, and the API refuses that",
 		},
 		{
 			name: "should accept nested names each named on its own",
-			body: `{"state":"photo1 and photo10","questions":{},"assets":{"photo1":` + asset + `,"photo10":` + asset + `}}`,
+			body: `{"state":"photo1 and photo10","questions":{"q":{"type":"noul"}},"assets":{"photo1":` + asset + `,"photo10":` + asset + `}}`,
 		},
 		{
 			name:    "should refuse a format that is not a string with the image wording",
-			body:    `{"state":"img","questions":{},"assets":{"img":{"format":1,"data_base64":"AQ=="}}}`,
+			body:    `{"state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":{"format":1,"data_base64":"AQ=="}}}`,
 			wantErr: "image 'img' has format '', and an image must be png or jpg",
 		},
 		{
 			name:    "should read the last of repeated formats, as a send does",
-			body:    `{"state":"img","questions":{},"assets":{"img":{"format":"png","format":1,"data_base64":"AQ=="}}}`,
+			body:    `{"state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":{"format":"png","format":1,"data_base64":"AQ=="}}}`,
 			wantErr: "image 'img' has format '', and an image must be png or jpg",
 		},
 		{
 			name: "should accept a last format that is good after one that is not",
-			body: `{"state":"img","questions":{},"assets":{"img":{"format":1,"format":"png","data_base64":"AQ=="}}}`,
+			body: `{"state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":{"format":1,"format":"png","data_base64":"AQ=="}}}`,
 		},
 		{
 			name:    "should read the last of repeated data, as a send does",
-			body:    `{"state":"img","questions":{},"assets":{"img":{"format":"png","data_base64":"AQ==","data_base64":1}}}`,
+			body:    `{"state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":{"format":"png","data_base64":"AQ==","data_base64":1}}}`,
 			wantErr: "asset 'img' needs data_base64 as a string",
 		},
 		{
 			name:    "should read the last of repeated assets whole",
-			body:    `{"state":"img","questions":{},"assets":{"img":` + asset + `,"img":{"format":"png"}}}`,
+			body:    `{"state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":` + asset + `,"img":{"format":"png"}}}`,
 			wantErr: "asset 'img' needs data_base64 as a string",
 		},
 		{
 			name:    "should refuse an asset named only in a name",
-			body:    `{"state":{"img":"x"},"questions":{},"assets":{"img":` + asset + `}}`,
+			body:    `{"state":{"img":"x"},"questions":{"q":{"type":"noul"}},"assets":{"img":` + asset + `}}`,
 			wantErr: "asset 'img' is not referenced in the state or the questions, and the API refuses that",
 		},
 		{
@@ -66,17 +66,17 @@ func TestCheckBodyImages(t *testing.T) {
 		},
 		{
 			name:    "should refuse a format that is not png or jpg",
-			body:    `{"state":"img","questions":{},"assets":{"img":{"format":"gif","data_base64":"AQ=="}}}`,
+			body:    `{"state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":{"format":"gif","data_base64":"AQ=="}}}`,
 			wantErr: "image 'img' has format 'gif', and an image must be png or jpg",
 		},
 		{
 			name:    "should refuse data that is not a string",
-			body:    `{"state":"img","questions":{},"assets":{"img":{"format":"jpeg","data_base64":1}}}`,
+			body:    `{"state":"img","questions":{"q":{"type":"noul"}},"assets":{"img":{"format":"jpeg","data_base64":1}}}`,
 			wantErr: "asset 'img' needs data_base64 as a string",
 		},
 		{
 			name:    "should refuse assets that are not an object",
-			body:    `{"state":"img","questions":{},"assets":["img"]}`,
+			body:    `{"state":"img","questions":{"q":{"type":"noul"}},"assets":["img"]}`,
 			wantErr: "assets must be an object of images",
 		},
 	}

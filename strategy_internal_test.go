@@ -15,16 +15,16 @@ func TestScanMembers(t *testing.T) {
 		body string
 		want bodyScan
 	}{
-		{name: "should see assets", body: `{"state":"r","questions":{},"assets":{"r":{}}}`, want: bodyScan{assets: true}},
-		{name: "should see assets that are not an object", body: `{"assets":[1],"questions":{}}`, want: bodyScan{assets: true}},
-		{name: "should not see an empty assets object", body: `{"state":"s","questions":{},"assets":{ }}`},
-		{name: "should not see null assets", body: `{"state":"s","questions":{},"assets":null}`},
+		{name: "should see assets", body: `{"state":"r","questions":{"q":{"type":"noul"}},"assets":{"r":{}}}`, want: bodyScan{assets: true}},
+		{name: "should see assets that are not an object", body: `{"assets":[1],"questions":{"q":{"type":"noul"}}}`, want: bodyScan{assets: true}},
+		{name: "should not see an empty assets object", body: `{"state":"s","questions":{"q":{"type":"noul"}},"assets":{ }}`},
+		{name: "should not see null assets", body: `{"state":"s","questions":{"q":{"type":"noul"}},"assets":null}`},
 		{name: "should not see a text body", body: `{"state":"s","questions":{"q":{"type":"noul"}}}`},
-		{name: "should match the assets name exactly", body: `{"state":"s","questions":{},"Assets":{"r":{}}}`},
-		{name: "should read the model", body: `{"model":"clef","questions":{}}`, want: bodyScan{model: "clef"}},
-		{name: "should trim the model", body: `{"model":"  clef ","questions":{}}`, want: bodyScan{model: "clef"}},
-		{name: "should read a blank model as none", body: `{"model":"   ","questions":{}}`},
-		{name: "should read a model that is not a string as none", body: `{"model":1,"questions":{}}`},
+		{name: "should match the assets name exactly", body: `{"state":"s","questions":{"q":{"type":"noul"}},"Assets":{"r":{}}}`},
+		{name: "should read the model", body: `{"model":"clef","questions":{"q":{"type":"noul"}}}`, want: bodyScan{model: "clef"}},
+		{name: "should trim the model", body: `{"model":"  clef ","questions":{"q":{"type":"noul"}}}`, want: bodyScan{model: "clef"}},
+		{name: "should read a blank model as none", body: `{"model":"   ","questions":{"q":{"type":"noul"}}}`},
+		{name: "should read a model that is not a string as none", body: `{"model":1,"questions":{"q":{"type":"noul"}}}`},
 		{
 			name: "should read the model beside assets and leave the questions alone",
 			body: `{"model":"m","assets":{"r":{}},"questions":{"b":{"type":"box"}}}`,
