@@ -31,9 +31,9 @@ func TestProviderPrepareRaw(t *testing.T) {
 		want     string
 		wantErr  string
 	}{
-		{name: "should put the default model first in a body that names none", body: `{"state":"s","questions":{}}`, model: "jev-latest", want: `{"model":"jev-latest","state":"s","questions":{}}`},
+		{name: "should put the default model first in a body that names none", body: `{"state":"s","questions":{"q":{"type":"noul"}}}`, model: "jev-latest", want: `{"model":"jev-latest","state":"s","questions":{"q":{"type":"noul"}}}`},
 		{name: "should fill an empty object", body: ` {} `, model: "jev-latest", want: `{"model":"jev-latest"}`},
-		{name: "should fill an empty model in place", body: `{"state":"s","model":"","questions":{}}`, model: "jev-latest", want: `{"state":"s","model":"jev-latest","questions":{}}`},
+		{name: "should fill an empty model in place", body: `{"state":"s","model":"","questions":{"q":{"type":"noul"}}}`, model: "jev-latest", want: `{"state":"s","model":"jev-latest","questions":{"q":{"type":"noul"}}}`},
 		{name: "should fill a null model in place", body: `{"state":"s","model":null}`, model: "jev-latest", want: `{"state":"s","model":"jev-latest"}`},
 		{name: "should fill a blank model with the provider's own default", provider: onesie.Levanto(), body: `{"state":"s"}`, want: `{"model":"sage-latest","state":"s"}`},
 		{name: "should leave a body that names a model byte for byte", body: "{\n  \"model\": \"m\",\n  \"state\": 1.50\n}", model: "jev-latest", want: "{\n  \"model\": \"m\",\n  \"state\": 1.50\n}"},
@@ -58,17 +58,17 @@ func TestProviderPrepareRaw(t *testing.T) {
 		},
 		{
 			name: "should refuse what the provider refuses while encoding", provider: onesie.Cloudflare(),
-			body:    `{"model":"clef","state":"r","questions":{},` + asset + `,"images":[]}`,
+			body:    `{"model":"clef","state":"r","questions":{"q":{"type":"noul"}},` + asset + `,"images":[]}`,
 			wantErr: "onesie: a body for clef carries assets or images, not both",
 		},
 		{
 			name: "should refuse images the provider does not take", provider: onesie.Levanto(),
-			body:    `{"state":"r","questions":{},` + asset + `}`,
+			body:    `{"state":"r","questions":{"q":{"type":"noul"}},` + asset + `}`,
 			wantErr: "onesie: the levanto provider takes no images. The typesafe, openrouter, cloudflare and vercel providers do",
 		},
 		{
 			name:    "should refuse an image a send refuses",
-			body:    `{"state":"r","questions":{},"assets":{"r":{"format":"gif","data_base64":"AQ=="}}}`,
+			body:    `{"state":"r","questions":{"q":{"type":"noul"}},"assets":{"r":{"format":"gif","data_base64":"AQ=="}}}`,
 			wantErr: "onesie: image 'r' has format 'gif', and an image must be png or jpg",
 		},
 		{
@@ -155,6 +155,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 			body:    `{"state":"s","questions":{"t":{"type":"choice","criteria":["a","b"]}}}`,
 			wantErr: "onesie: choice question 't' needs criteria as an object",
 		},
+		{name: "should refuse an empty questions object, which every provider refuses", body: `{"state":"s","questions":{}}`, wantErr: "onesie: at least one question is required"},
 		{name: "should refuse a failing option", body: `{}`, opts: []onesie.RequestOption{onesie.WithRequestAttemptTimeout(0)}, wantErr: "onesie: attempt timeout must be positive"},
 	}
 

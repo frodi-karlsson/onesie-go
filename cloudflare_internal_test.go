@@ -17,8 +17,8 @@ func TestEnvelope(t *testing.T) {
 	}{
 		{
 			name: "should put the body under input with the wire id",
-			body: `{"state":"s","model":"typesafe/jev","questions":{}}`,
-			want: `{"model":"typesafe/jev","input":{"state":"s","questions":{}}}`,
+			body: `{"state":"s","model":"typesafe/jev","questions":{"q":{"type":"noul"}}}`,
+			want: `{"model":"typesafe/jev","input":{"state":"s","questions":{"q":{"type":"noul"}}}}`,
 		},
 		{
 			name: "should remove every model member",
@@ -153,15 +153,15 @@ func TestCloudflareRoute(t *testing.T) {
 				t.Fatalf("route = path %q takes %+v, want /run taking images only", got.path, got.takes)
 			}
 
-			body := `{"state":"s","model":"x","questions":{},"assets":{}}`
+			body := `{"state":"s","model":"x","questions":{"q":{"type":"noul"}},"assets":{}}`
 			sent, err := got.encode(readBody(t, body))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			want := `{"model":"` + tc.wire + `","input":{"state":"s","questions":{},"assets":{}}}`
+			want := `{"model":"` + tc.wire + `","input":{"state":"s","questions":{"q":{"type":"noul"}},"assets":{}}}`
 			if tc.clef {
-				want = `{"model":"` + tc.wire + `","input":{"state":"s","questions":{}}}`
+				want = `{"model":"` + tc.wire + `","input":{"state":"s","questions":{"q":{"type":"noul"}}}}`
 			}
 
 			if string(sent) != want {
@@ -173,8 +173,8 @@ func TestCloudflareRoute(t *testing.T) {
 	t.Run("should send a body naming no model as the default model", func(t *testing.T) {
 		t.Parallel()
 
-		sent, err := Cloudflare().route(cloudflareJev).encode(readBody(t, `{"state":"s","questions":{}}`))
-		if err != nil || string(sent) != `{"model":"typesafe/jev","input":{"state":"s","questions":{}}}` {
+		sent, err := Cloudflare().route(cloudflareJev).encode(readBody(t, `{"state":"s","questions":{"q":{"type":"noul"}}}`))
+		if err != nil || string(sent) != `{"model":"typesafe/jev","input":{"state":"s","questions":{"q":{"type":"noul"}}}}` {
 			t.Errorf("encode = %s, %v, want the default model's envelope", sent, err)
 		}
 	})

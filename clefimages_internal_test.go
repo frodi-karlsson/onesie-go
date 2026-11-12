@@ -28,8 +28,8 @@ func TestAssetsToImages(t *testing.T) {
 	}{
 		{
 			name: "should escape what JSON needs in base64 text a raw body wraps or garbles",
-			body: `{"state":"img-a","questions":{},"assets":{"img-a":{"type":"image","format":"png","data_base64":"ab\ncd<x>&\"q\\ é"}}}`,
-			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,ab\ncd<x>&\"q\\ é"]}`,
+			body: `{"state":"img-a","questions":{"q":{"type":"noul"}},"assets":{"img-a":{"type":"image","format":"png","data_base64":"ab\ncd<x>&\"q\\ é"}}}`,
+			want: `{"state":"image 1","questions":{"q":{"type":"noul"}},"images":["data:image/png;base64,ab\ncd<x>&\"q\\ é"]}`,
 		},
 		{
 			name: "should number the images by first reference and write them last",
@@ -60,28 +60,28 @@ func TestAssetsToImages(t *testing.T) {
 		},
 		{
 			name: "should read a format by its exact name and the last of repeated ones",
-			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"jpg","format":"png","Format":"jpg","data_base64":"AQ=="}}}`,
-			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
+			body: `{"state":"r1","questions":{"q":{"type":"noul"}},"assets":{"r1":{"format":"jpg","format":"png","Format":"jpg","data_base64":"AQ=="}}}`,
+			want: `{"state":"image 1","questions":{"q":{"type":"noul"}},"images":["data:image/png;base64,AQ=="]}`,
 		},
 		{
 			name: "should read the last of repeated assets whole",
-			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"jpg","data_base64":"Ag=="},"r1":{"format":"png","data_base64":"AQ=="}}}`,
-			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
+			body: `{"state":"r1","questions":{"q":{"type":"noul"}},"assets":{"r1":{"format":"jpg","data_base64":"Ag=="},"r1":{"format":"png","data_base64":"AQ=="}}}`,
+			want: `{"state":"image 1","questions":{"q":{"type":"noul"}},"images":["data:image/png;base64,AQ=="]}`,
 		},
 		{
 			name: "should read data by its exact name",
-			body: `{"state":"r1","questions":{},"assets":{"r1":{"format":"png","data_base64":"AQ==","Data_Base64":"Ag=="}}}`,
-			want: `{"state":"image 1","questions":{},"images":["data:image/png;base64,AQ=="]}`,
+			body: `{"state":"r1","questions":{"q":{"type":"noul"}},"assets":{"r1":{"format":"png","data_base64":"AQ==","Data_Base64":"Ag=="}}}`,
+			want: `{"state":"image 1","questions":{"q":{"type":"noul"}},"images":["data:image/png;base64,AQ=="]}`,
 		},
 		{
 			name: "should read assets that come before the state",
-			body: `{` + prefixed + `,"state":["img-ab","img-a"],"questions":{}}`,
-			want: `{"state":["image 1","image 2"],"questions":{},"images":[` + jpeg + `,` + png + `]}`,
+			body: `{` + prefixed + `,"state":["img-ab","img-a"],"questions":{"q":{"type":"noul"}}}`,
+			want: `{"state":["image 1","image 2"],"questions":{"q":{"type":"noul"}},"images":[` + jpeg + `,` + png + `]}`,
 		},
 		{
 			name: "should split a sentence around the references in it, the longer reference winning",
-			body: `{"state":"see img-a then img-ab.","questions":{},` + prefixed + `}`,
-			want: `{"state":"see image 1 then image 2.","questions":{},"images":[` + png + `,` + jpeg + `]}`,
+			body: `{"state":"see img-a then img-ab.","questions":{"q":{"type":"noul"}},` + prefixed + `}`,
+			want: `{"state":"see image 1 then image 2.","questions":{"q":{"type":"noul"}},"images":[` + png + `,` + jpeg + `]}`,
 		},
 		{
 			name: "should replace references in instructions and criteria",
@@ -100,28 +100,28 @@ func TestAssetsToImages(t *testing.T) {
 		{
 			name: "should keep numbers, escapes and repeated names as written",
 			body: "{\"state\":{\"n\":12345678901234567890123,\"f\":1.50e3,\"u\":\"x\\u00e9 <&>\"," +
-				"\"d\":1,\"d\":2,\"p\":\"img-a\"},\"questions\":{}," + prefixed + "}",
+				"\"d\":1,\"d\":2,\"p\":\"img-a\"},\"questions\":{\"q\":{\"type\":\"noul\"}}," + prefixed + "}",
 			want: "{\"state\":{\"n\":12345678901234567890123,\"f\":1.50e3,\"u\":\"x\\u00e9 <&>\"," +
-				"\"d\":1,\"d\":2,\"p\":\"image 1\"},\"questions\":{},\"images\":[" + png + "]}",
+				"\"d\":1,\"d\":2,\"p\":\"image 1\"},\"questions\":{\"q\":{\"type\":\"noul\"}},\"images\":[" + png + "]}",
 		},
 		{
 			name:    "should refuse an asset whose format is not png or jpg",
-			body:    `{"state":"img-a","questions":{},"assets":{"img-a":{"format":"gif","data_base64":"AQ=="}}}`,
+			body:    `{"state":"img-a","questions":{"q":{"type":"noul"}},"assets":{"img-a":{"format":"gif","data_base64":"AQ=="}}}`,
 			wantErr: "image 'img-a' has format 'gif', and an image must be png or jpg",
 		},
 		{
 			name:    "should refuse an asset whose data is not a string",
-			body:    `{"state":"img-a","questions":{},"assets":{"img-a":{"format":"png","data_base64":1}}}`,
+			body:    `{"state":"img-a","questions":{"q":{"type":"noul"}},"assets":{"img-a":{"format":"png","data_base64":1}}}`,
 			wantErr: "asset 'img-a' needs data_base64 as a string",
 		},
 		{
 			name:    "should refuse assets that are not an object",
-			body:    `{"state":"img-a","questions":{},"assets":[1]}`,
+			body:    `{"state":"img-a","questions":{"q":{"type":"noul"}},"assets":[1]}`,
 			wantErr: "assets must be an object of images",
 		},
 		{
 			name:    "should refuse a body with both assets and images",
-			body:    `{"state":"r1","questions":{},"images":["data:image/png;base64,AQ=="],"assets":{` + r1 + `}}`,
+			body:    `{"state":"r1","questions":{"q":{"type":"noul"}},"images":["data:image/png;base64,AQ=="],"assets":{` + r1 + `}}`,
 			wantErr: "onesie: a body for clef carries assets or images, not both",
 		},
 	}
