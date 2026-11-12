@@ -230,9 +230,11 @@ func readMessage(body any) string {
 		return text
 	}
 
-	text, _ := fields["error_type"].(string)
+	if text, ok := fields["error_type"].(string); ok {
+		return text
+	}
 
-	return text
+	return ""
 }
 
 func firstError(fields map[string]any) string {

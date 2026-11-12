@@ -99,8 +99,9 @@ func gatewayResult(result []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	var cost float64
-	if json.Unmarshal(wire.Usage["cost"], &cost) != nil {
+	cost, costed := numberIn(wire.Usage["cost"])
+	if !costed {
+		// A result without a cost reads the same on the gateway as on TypeSafe.
 		return result, nil
 	}
 
@@ -119,6 +120,15 @@ func gatewayResult(result []byte) ([]byte, error) {
 	fields["usage"], fields["provider_metadata"] = usage, metadata
 
 	return json.Marshal(fields)
+}
+
+func numberIn(raw json.RawMessage) (float64, bool) {
+	var number float64
+	if raw == nil || json.Unmarshal(raw, &number) != nil {
+		return 0, false
+	}
+
+	return number, true
 }
 
 func gatewayCost(raw json.RawMessage) (float64, bool) {
