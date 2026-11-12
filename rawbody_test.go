@@ -246,6 +246,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 		opts          []onesie.RequestOption
 		model         string
 		longContext   bool
+		images        bool
 		box           bool
 		questionCount int
 	}{
@@ -254,7 +255,7 @@ func TestProviderPrepareRaw(t *testing.T) {
 		{name: "should report long context from the body", body: `{"long_context":true}`, model: "jev-latest", longContext: true},
 		{name: "should report long context from WithLongContext", body: `{}`, opts: longContext, model: "jev-latest", longContext: true},
 		{
-			name: "should report a box question", model: "jev-latest", box: true, questionCount: 1,
+			name: "should report a box question and its images", model: "jev-latest", images: true, box: true, questionCount: 1,
 			body: `{"state":"r","questions":{"b":{"type":"box"}},"assets":{"r":{"format":"png","data_base64":"AQ=="}}}`,
 		},
 		{
@@ -273,9 +274,10 @@ func TestProviderPrepareRaw(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if got.Model() != tc.model || got.LongContext() != tc.longContext || got.Box() != tc.box || got.QuestionCount() != tc.questionCount {
-				t.Errorf("facts = %q, %v, %v, %d, want %q, %v, %v, %d", got.Model(), got.LongContext(), got.Box(), got.QuestionCount(),
-					tc.model, tc.longContext, tc.box, tc.questionCount)
+			if got.Model() != tc.model || got.LongContext() != tc.longContext || got.Images() != tc.images || got.Box() != tc.box ||
+				got.QuestionCount() != tc.questionCount {
+				t.Errorf("facts = %q, %v, %v, %v, %d, want %q, %v, %v, %v, %d", got.Model(), got.LongContext(), got.Images(), got.Box(),
+					got.QuestionCount(), tc.model, tc.longContext, tc.images, tc.box, tc.questionCount)
 			}
 		})
 	}
