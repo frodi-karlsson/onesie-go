@@ -88,7 +88,8 @@ func jitter(delay time.Duration, policy RetryPolicy, random func() float64) time
 }
 
 // RetryPolicy controls which failures are retried and how long the client waits between attempts.
-// A RetryStatus predicate must be safe for concurrent use.
+// A reply whose body the provider's route recognises, such as an unknown model, is never retried,
+// whatever RetryStatus says. A RetryStatus predicate must be safe for concurrent use.
 type RetryPolicy struct {
 	MaxRetries        int
 	BackoffInitial    time.Duration

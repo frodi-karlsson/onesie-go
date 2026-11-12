@@ -298,6 +298,7 @@ func TestProviderResponseBody(t *testing.T) {
 	}{
 		{name: "should write the result as it is on typesafe", provider: onesie.TypeSafe(), want: answered},
 		{name: "should write the result as it is on berget", provider: onesie.Berget(), want: answered},
+		{name: "should write the result as it is on vercel when it has no cost", provider: onesie.Vercel(), want: answered},
 		{name: "should wrap the result for jev on cloudflare", provider: onesie.Cloudflare(), want: `{"result":` + answered + `}`},
 		{name: "should wrap the result for clef on cloudflare", provider: onesie.Cloudflare(), model: "clef", want: `{"result":` + answered + `}`},
 	}
@@ -338,6 +339,30 @@ func TestProviderResponseBody(t *testing.T) {
 			})
 		}
 	}
+
+	t.Run("should write a cost where the gateway sends it on vercel, so it round trips", func(t *testing.T) {
+		t.Parallel()
+
+		cost := 0.000016674
+		costed := &onesie.Result{Model: "m", Answers: result.Answers, Usage: onesie.Usage{InputTokens: 3, Cost: &cost}}
+
+		body, err := onesie.Vercel().ResponseBody("", costed)
+		want := `{"answers":{"q":{"type":"noul","noul":0.1}},"model":"m","provider_metadata":{"gateway":{"cost":"0.000016674"}},` +
+			`"usage":{"input_tokens":3,"output_tokens":0}}`
+
+		if err != nil || string(body) != want {
+			t.Fatalf("ResponseBody = %s, %v, want %s", body, err, want)
+		}
+
+		transport := &recordingTransport{body: string(body)}
+		client, _ := newTestClient(t, "https://api.example", onesie.WithProvider(onesie.Vercel()),
+			onesie.WithHTTPClient(&http.Client{Transport: transport}))
+
+		got, err := client.SystemOne(t.Context(), onesie.Request{State: "s", Questions: oneNoul()})
+		if err != nil || got.Usage.Cost == nil || *got.Usage.Cost != cost {
+			t.Errorf("result = %+v, %v, want the cost %v back", got, err, cost)
+		}
+	})
 
 	t.Run("should leave the request id to the header, so it round trips", func(t *testing.T) {
 		t.Parallel()

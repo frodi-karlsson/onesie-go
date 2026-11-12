@@ -333,6 +333,56 @@ func TestLiveClientSystemOne(t *testing.T) {
 		}
 	})
 
+	t.Run("should answer a box and an image question on the box model under vercel", func(t *testing.T) {
+		t.Parallel()
+
+		square, err := onesie.NewImage(squarePNG(t))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		result, err := liveVercelClient(t).SystemOne(liveContext(t, time.Minute), onesie.Request{
+			State: map[string]any{"photo": "image-square"},
+			Model: onesie.Vercel().BoxModel(),
+			Questions: onesie.Questions{
+				{ID: "square", Question: onesie.Box{Instructions: "the red square in `photo`"}},
+				{ID: "red", Question: onesie.Noul{Instructions: "Is there a red square in `photo`?"}},
+			},
+			Assets: onesie.Assets{"image-square": square},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got, _ := result.Box("square"); got == nil || math.Abs(got.Edges.Top-0.25) > 0.05 || math.Abs(got.Edges.Right-0.5) > 0.05 {
+			t.Errorf("square = %+v, want edges near 0.25, 0.25, 0.5 and 0.5", got)
+		}
+
+		if got, _ := result.Noul("red"); got == nil || got.Noul < 0.8 {
+			t.Errorf("red = %+v, want a clear yes", got)
+		}
+	})
+
+	t.Run("should read a state past the usual limit only with long context under vercel", func(t *testing.T) {
+		t.Parallel()
+
+		client := liveVercelClient(t)
+		req := onesie.Request{
+			State:     strings.Repeat("The payout failed again and the customer is angry about it. ", 3000),
+			Questions: onesie.Questions{{ID: "urgent", Question: onesie.Noul{Instructions: "Is this urgent?"}}},
+		}
+
+		if _, err := client.SystemOne(liveContext(t, time.Minute), req); !errors.Is(err, onesie.ErrContextTooLong) {
+			t.Fatalf("error without long context = %v, want ErrContextTooLong, so the state is past the usual limit", err)
+		}
+
+		req.LongContext = true
+
+		if _, err := client.SystemOne(liveContext(t, 2*time.Minute), req); err != nil {
+			t.Fatalf("unexpected error with long context: %v", err)
+		}
+	})
+
 	t.Run("should answer all three question types in request order under levanto", func(t *testing.T) {
 		t.Parallel()
 

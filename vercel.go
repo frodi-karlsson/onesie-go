@@ -27,7 +27,9 @@ func Vercel() Provider {
 			imagesHeader:  true,
 			encode:        encodeAsIs,
 			decode:        withGatewayCost,
+			wrapResult:    gatewayResult,
 			describeError: readVercelMessage,
+			forwarded:     vercelForwarded,
 			classifyError: classifyBy(
 				errorType("model_not_found", ErrUnknownModel),
 				errorType("AI_DecisionUnsupportedQuestionTypeError", ErrNotServed),
@@ -82,6 +84,43 @@ func liftedCost(body []byte) ([]byte, bool) {
 	return lifted, err == nil
 }
 
+func gatewayResult(result []byte) ([]byte, error) {
+	var fields map[string]json.RawMessage
+
+	var wire struct {
+		Usage map[string]json.RawMessage `json:"usage"`
+	}
+
+	if err := json.Unmarshal(result, &fields); err != nil {
+		return nil, err
+	}
+
+	if err := json.Unmarshal(result, &wire); err != nil {
+		return nil, err
+	}
+
+	var cost float64
+	if json.Unmarshal(wire.Usage["cost"], &cost) != nil {
+		return result, nil
+	}
+
+	delete(wire.Usage, "cost")
+
+	usage, err := json.Marshal(wire.Usage)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata, err := json.Marshal(map[string]any{"gateway": map[string]string{"cost": strconv.FormatFloat(cost, 'f', -1, 64)}})
+	if err != nil {
+		return nil, err
+	}
+
+	fields["usage"], fields["provider_metadata"] = usage, metadata
+
+	return json.Marshal(fields)
+}
+
 func gatewayCost(raw json.RawMessage) (float64, bool) {
 	// The gateway sends the cost in USD as a decimal string, such as "0.00001155".
 	var text string
@@ -100,20 +139,18 @@ func gatewayCost(raw json.RawMessage) (float64, bool) {
 func readVercelMessage(body any) string {
 	// A fallback provider's error replaces the model's own in the message, so the first attempt
 	// the request itself failed says more.
-	text := cmp.Or(refusedAttempt(body), readMessage(body))
+	return cmp.Or(refusedAttempt(body), readMessage(body))
+}
 
+func vercelForwarded(body any) any {
 	// The gateway forwards some TypeSafe errors as a JSON object, such as
 	// {"error_type":"max_tokens_exceeded"} for a state past the context limit.
-	var forwarded struct {
-		Message   string `json:"message"`
-		ErrorType string `json:"error_type"`
+	text := readVercelMessage(body)
+	if !strings.HasPrefix(text, "{") {
+		return nil
 	}
 
-	if !strings.HasPrefix(text, "{") || json.Unmarshal([]byte(text), &forwarded) != nil {
-		return text
-	}
-
-	return cmp.Or(forwarded.Message, forwarded.ErrorType, text)
+	return decodeBody([]byte(text))
 }
 
 func refusedAttempt(body any) string {
@@ -143,7 +180,7 @@ func refusedAttempt(body any) string {
 
 	for _, model := range wire.Metadata.Gateway.Routing.ModelAttempts {
 		for _, attempt := range model.ProviderAttempts {
-			if attempt.StatusCode >= 400 && attempt.StatusCode < 500 && attempt.Error != "" {
+			if aboutTheBody(attempt.StatusCode) && attempt.Error != "" {
 				return attempt.Error
 			}
 		}
@@ -179,4 +216,13 @@ func arrayLimit(r reply) error {
 	}
 
 	return nil
+}
+
+func aboutTheBody(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return true
+	default:
+		return false
+	}
 }

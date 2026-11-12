@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -652,6 +653,36 @@ func TestNewAPIError(t *testing.T) {
 
 	refusals := []error{ErrUnknownModel, ErrContextTooLong, ErrNotServed, ErrQuestionLimit}
 
+	t.Run("should read a body vercel forwards from typesafe as typesafe's own", func(t *testing.T) {
+		t.Parallel()
+
+		body := `{"error":{"message":"{\"detail\":[{\"type\":\"too_long\",\"loc\":[\"body\",\"questions\",\"rate\",\"score\",\"criteria\"],` +
+			`\"msg\":\"List should have at most 10 items after validation, not 11\"}]}","type":"AI_APICallError"}}`
+
+		got := newAPIError(vercel, Needs{}, 400, http.Header{}, []byte(body), time.Now())
+		if want := "400 questions.rate.score.criteria: List should have at most 10 items after validation, not 11"; !errors.Is(got, ErrQuestionLimit) || got.Reason() != want {
+			t.Errorf("error = %v, want ErrQuestionLimit reading %q", got, want)
+		}
+	})
+
+	t.Run("should read vercel's first attempt only when its status is about the body", func(t *testing.T) {
+		t.Parallel()
+
+		attempts := func(first int) string {
+			return `{"error":{"message":"fallback failed","type":"AI_APICallError"},"providerMetadata":{"gateway":{"routing":{"modelAttempts":` +
+				`[{"providerAttempts":[{"error":"slow down","statusCode":` + strconv.Itoa(first) + `},{"error":"fallback failed","statusCode":502}]}]}}}}`
+		}
+
+		for status, want := range map[int]string{
+			429: "400 fallback failed", 401: "400 fallback failed", 408: "400 fallback failed",
+			400: "400 slow down", 413: "400 slow down",
+		} {
+			if got := newAPIError(vercel, Needs{}, 400, http.Header{}, []byte(attempts(status)), time.Now()).Reason(); got != want {
+				t.Errorf("Reason with a first attempt of %d = %q, want %q", status, got, want)
+			}
+		}
+	})
+
 	for _, tc := range classified {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -855,6 +886,7 @@ func TestDescribe(t *testing.T) {
 		{name: "should keep a body that is not JSON as the detail", status: 529, body: "overloaded", want: description{lead: "529 status code, with a response body that is not JSON: ", detail: "overloaded"}},
 		{name: "should lead with the whole message when there is no body", status: 500, want: description{lead: "500 status code, no body"}},
 		{name: "should keep a message that repeats the status as an unsaid detail", status: 401, body: `{"error":"Unauthorized"}`, want: description{lead: "401 ", detail: "Unauthorized", unsaid: true}},
+		{name: "should read a top level error_type when the body has no message", status: 400, body: `{"error_type":"max_tokens_exceeded"}`, want: description{lead: "400 ", detail: "max_tokens_exceeded"}},
 		{name: "should keep a body with no message as the detail", status: 418, body: `{"a":1}`, want: description{lead: "418 ", detail: `{"a":1}`, unsaid: true}},
 	}
 
