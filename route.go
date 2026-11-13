@@ -30,13 +30,19 @@ func (r route) refuse(provider, model string, needs capabilities) error {
 
 	var takers []string
 
+	var defaultModel string
+
 	for _, candidate := range Providers() {
-		if candidate.name != provider && candidate.route(candidate.defaultModel).lacks(missing) == (capabilities{}) {
+		switch {
+		case candidate.route(candidate.defaultModel).lacks(missing) != (capabilities{}):
+		case candidate.name != provider:
 			takers = append(takers, candidate.name)
+		case model != candidate.defaultModel:
+			defaultModel = candidate.defaultModel
 		}
 	}
 
-	return newCapabilityError(provider, model, missing.asNeeds(), takers)
+	return newCapabilityError(provider, model, missing.asNeeds(), takers, defaultModel)
 }
 
 func (r route) lacks(needs capabilities) capabilities {

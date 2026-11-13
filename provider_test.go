@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/frodi-karlsson/onesie-go"
@@ -493,6 +494,55 @@ func TestCapabilityError(t *testing.T) {
 		if err := onesie.Cloudflare().Refuse(" ", onesie.Needs{LongContext: true}); !errors.As(err, &refused) ||
 			refused.Model != onesie.Cloudflare().DefaultModel() {
 			t.Errorf("error = %+v, want the default model named", err)
+		}
+	})
+
+	t.Run("should name the vercel default model and the other providers for a model that reads no images", func(t *testing.T) {
+		t.Parallel()
+
+		err := onesie.Vercel().Refuse("microsoft/microsoft-decision-1", onesie.Needs{Images: true})
+
+		var refused *onesie.CapabilityError
+		if !errors.As(err, &refused) {
+			t.Fatalf("error = %v, want a CapabilityError", err)
+		}
+
+		if refused.Provider != "vercel" || refused.Model != "microsoft/microsoft-decision-1" ||
+			refused.Missing != (onesie.Needs{Images: true}) || refused.DefaultModel != "jev-latest" ||
+			strings.Join(refused.Takers, " ") != "typesafe openrouter cloudflare" {
+			t.Errorf("error = %+v", refused)
+		}
+
+		const want = "onesie: the vercel model microsoft/microsoft-decision-1 takes no images. " +
+			"The default model jev-latest does, and so do the typesafe, openrouter and cloudflare providers"
+		if err.Error() != want {
+			t.Errorf("message = %q, want %q", err.Error(), want)
+		}
+	})
+
+	t.Run("should send nothing for an image to a vercel model that reads none", func(t *testing.T) {
+		t.Parallel()
+
+		var sent atomic.Int32
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			sent.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		t.Cleanup(srv.Close)
+
+		client, err := onesie.New(onesie.WithAPIKey("k"), onesie.WithProvider(onesie.Vercel()), onesie.WithBaseURL(srv.URL),
+			onesie.WithEnv(func(string) (string, bool) { return "", false }))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		_, err = client.SystemOneRaw(t.Context(), []byte(`{"state":"r","model":"baseten/joey-1",`+
+			`"questions":{"q":{"type":"noul","instructions":"x"}},"assets":{"r":{"format":"png","data_base64":"AQ=="}}}`))
+
+		var refused *onesie.CapabilityError
+		if !errors.As(err, &refused) || !refused.Missing.Images || sent.Load() != 0 {
+			t.Errorf("error = %v after %d requests, want a CapabilityError for the images and none sent", err, sent.Load())
 		}
 	})
 

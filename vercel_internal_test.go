@@ -62,3 +62,37 @@ func TestWithGatewayCost(t *testing.T) {
 		})
 	}
 }
+
+func TestVercelRoute(t *testing.T) {
+	t.Parallel()
+
+	for _, model := range textOnlyVercelModels {
+		t.Run("should refuse images and box questions on "+model+" and take a plain request", func(t *testing.T) {
+			t.Parallel()
+
+			via := vercelRoute(model)
+
+			if missing := via.lacks(capabilities{images: true}); missing != (capabilities{images: true}) {
+				t.Errorf("lacks images = %+v, want images", missing)
+			}
+
+			if missing := via.lacks(capabilities{box: true}); missing != (capabilities{box: true}) {
+				t.Errorf("lacks box = %+v, want box", missing)
+			}
+
+			if missing := via.lacks(capabilities{longContext: true}); missing != (capabilities{}) {
+				t.Errorf("lacks long context = %+v, want nothing", missing)
+			}
+		})
+	}
+
+	for _, model := range []string{jevLatest, "google/gemini-decision-1", "openai/gpt-6-luna-decisions", "vendor/unknown-model"} {
+		t.Run("should take everything on "+model, func(t *testing.T) {
+			t.Parallel()
+
+			if missing := vercelRoute(model).lacks(takesEverything()); missing != (capabilities{}) {
+				t.Errorf("lacks = %+v, want nothing", missing)
+			}
+		})
+	}
+}

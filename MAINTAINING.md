@@ -16,6 +16,11 @@ Run `make test-integration` for the live API suite. It reads `TYPESAFE_API_KEY`,
 `CLOUDFLARE_ACCOUNT_ID` and `AI_GATEWAY_API_KEY` from the environment or a local `.env` file, and skips the cases whose keys
 are missing.
 
+The suite also reads the Vercel AI Gateway catalogue, which needs no key, and fails when the decision
+models it lists as text only differ from `textOnlyVercelModels` in `vercel.go`. Send a new model a
+request with an image before adding it, since the catalogue says text only for some models that read
+images. Those go in the exception list beside the check, with the reason.
+
 ## Repository settings
 
 The scheduled integration workflow reads `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`,

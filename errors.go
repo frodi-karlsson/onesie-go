@@ -293,7 +293,7 @@ func (e *ResponseError) Is(target error) bool {
 	return target == ErrResponse
 }
 
-func newCapabilityError(provider, model string, missing Needs, takers []string) *CapabilityError {
+func newCapabilityError(provider, model string, missing Needs, takers []string, defaultModel string) *CapabilityError {
 	var lacking []string
 
 	if missing.Images {
@@ -308,19 +308,15 @@ func newCapabilityError(provider, model string, missing Needs, takers []string) 
 		lacking = append(lacking, "long context")
 	}
 
-	message := fmt.Sprintf("the %s provider takes no %s", provider, joinNames(lacking, "or"))
-
-	switch len(takers) {
-	case 0:
-	case 1:
-		message += ". The " + takers[0] + " provider does"
-	default:
-		message += ". The " + joinNames(takers, "and") + " providers do"
+	message := fmt.Sprintf("the %s provider takes no %s", provider, joinNames(lacking, "or")) + providersThatDo(takers)
+	if defaultModel != "" {
+		message = fmt.Sprintf("the %s model %s takes no %s. The default model %s does",
+			provider, model, joinNames(lacking, "or"), defaultModel) + providersThatDoToo(takers)
 	}
 
 	return &CapabilityError{
 		ValidationError: ValidationError{Message: message, kind: ErrNotServed},
-		Provider:        provider, Model: model, Missing: missing, Takers: takers,
+		Provider:        provider, Model: model, Missing: missing, Takers: takers, DefaultModel: defaultModel,
 	}
 }
 
@@ -333,6 +329,31 @@ type CapabilityError struct {
 	Model    string
 	Missing  Needs
 	Takers   []string
+
+	// DefaultModel is the provider's default model when it takes all of Missing, and empty otherwise.
+	DefaultModel string
+}
+
+func providersThatDo(takers []string) string {
+	switch len(takers) {
+	case 0:
+		return ""
+	case 1:
+		return ". The " + takers[0] + " provider does"
+	default:
+		return ". The " + joinNames(takers, "and") + " providers do"
+	}
+}
+
+func providersThatDoToo(takers []string) string {
+	switch len(takers) {
+	case 0:
+		return ""
+	case 1:
+		return ", and so does the " + takers[0] + " provider"
+	default:
+		return ", and so do the " + joinNames(takers, "and") + " providers"
+	}
 }
 
 // Unwrap returns the embedded ValidationError, so errors.As reaches it.
